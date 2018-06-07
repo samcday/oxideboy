@@ -76,6 +76,7 @@ pub mod lr35902 {
         CALL(Option<ConditionFlag>, u16),
         RET(Option<ConditionFlag>),
         PUSH(Register16),
+        POP(Register16),
 
         LD_r_d8(Register8, u8),
         LD_rr_d16(Register16, u16),
@@ -156,6 +157,7 @@ pub mod lr35902 {
                 Instruction::CALL(cc, addr) => self.call(cc, addr),
                 Instruction::RET(cc) => self.ret(cc),
                 Instruction::PUSH(r) => self.push(r),
+                Instruction::POP(r) => self.pop(r),
             };
         }
 
@@ -357,13 +359,19 @@ pub mod lr35902 {
                 0xBF => Instruction::CP_r(Register8::A),
 
                 0xC0 => Instruction::RET(Some(ConditionFlag::NZ)),
-                0xCB => self.decode_extended(),
+                0xC1 => Instruction::POP(Register16::BC),
+                0xC5 => Instruction::PUSH(Register16::BC),
                 0xC8 => Instruction::RET(Some(ConditionFlag::Z)),
                 0xC9 => Instruction::RET(None),
+                0xCB => self.decode_extended(),
                 0xD0 => Instruction::RET(Some(ConditionFlag::NC)),
+                0xD1 => Instruction::POP(Register16::DE),
+                0xD5 => Instruction::PUSH(Register16::DE),
                 0xD8 => Instruction::RET(Some(ConditionFlag::C)),
 
                 0xE0 => Instruction::LDH_n_A(self.fetch8()),
+                0xE1 => Instruction::POP(Register16::HL),
+                0xE5 => Instruction::PUSH(Register16::HL),
                 0xE2 => Instruction::LD_C_A,
                 0xF0 => Instruction::LDH_A_n(self.fetch8()),
 
@@ -877,6 +885,13 @@ pub mod lr35902 {
             self.sp -= 2;
             self.mmu.write16(self.sp, v);
             16
+        }
+
+        fn pop(&mut self, r: Register16) -> u32 {
+            let v = self.mmu.read16(self.sp);
+            self.sp += 2;
+            self.set_reg16(r, v);
+            12
         }
 
         fn jr_n(&mut self, n: u8) -> u32 {
