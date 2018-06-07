@@ -33,7 +33,7 @@ pub mod lr35902 {
         SP,
     }
 
-    enum ConditionFlags {
+    enum ConditionFlag {
         NZ,
         Z,
         NC,
@@ -43,37 +43,30 @@ pub mod lr35902 {
     #[allow(non_camel_case_types)]
     enum Instruction {
         NOP,
+
+        ADD_A_r(Register8),
+        ADD_A_HL,
+        ADC_A_r(Register8),
+        ADC_A_HL,
         INC_r(Register8),
         INC_rr(Register16),
         DEC_r(Register8),
         DEC_rr(Register16),
+        XOR_r(Register8),
+
+        JR_cc_n(ConditionFlag, u8),
+        JR_n(u8),
+
         LD_r_d8(Register8, u8),
         LD_rr_d16(Register16, u16),
-        XOR_r(Register8),
+        LD_r16_r(Register16, Register8),
+        LD_r_r(Register8, Register8),
+        LD_r_HL(Register8),
         LDD_HL_A,
         LDI_HL_A,
+
         BIT_b_r(u8, Register8),
         BIT_b_HL(u8),
-    }
-
-    impl Instruction {
-        fn num_cycles(&self) -> u8 {
-            match self {
-                Instruction::NOP => 4,
-                Instruction::INC_r(_) => 4,
-                Instruction::INC_rr(_) => 8,
-                Instruction::DEC_r(_) => 4,
-                Instruction::DEC_rr(_) => 8,
-                Instruction::LD_r_d8(_, _) => 8,
-                Instruction::LD_rr_d16(_, _) => 12,
-                Instruction::XOR_r(_) => 4,
-                Instruction::LDD_HL_A => 8,
-                Instruction::LDI_HL_A => 8,
-
-                Instruction::BIT_b_r(_, _) => 8,
-                Instruction::BIT_b_HL(_) => 16,
-            }
-        }
     }
 
     pub struct CPU<'a> {
@@ -96,11 +89,14 @@ pub mod lr35902 {
         // This is the main "Fetch, decode, execute" cycle
         pub fn run(&mut self) {
             let inst = self.decode();
-            self.ic += inst.num_cycles() as u32;
 
-            match inst {
-                Instruction::NOP => (),
+            self.ic += match inst {
+                Instruction::NOP => 4,
 
+                Instruction::ADD_A_r(r) => self.add_r(r, false),
+                Instruction::ADD_A_HL => self.add_hl(false),
+                Instruction::ADC_A_r(r) => self.add_r(r, true),
+                Instruction::ADC_A_HL => self.add_hl(true),
                 Instruction::INC_r(r) => self.inc_r(r),
                 Instruction::INC_rr(r) => self.inc_rr(r),
                 Instruction::DEC_r(r) => self.dec_r(r),
@@ -109,11 +105,17 @@ pub mod lr35902 {
 
                 Instruction::LD_r_d8(r, v) => self.ld_r_d8(r, v),
                 Instruction::LD_rr_d16(r, v) => self.ld_rr_d16(r, v),
+                Instruction::LD_r16_r(r16, r) => self.ld_r16_r(r16, r),
+                Instruction::LD_r_r(to, from) => self.ld_r_r(to, from),
+                Instruction::LD_r_HL(r) => self.ld_r_hl(r),
                 Instruction::LDD_HL_A => self.ldd_hl_a(),
                 Instruction::LDI_HL_A => self.ldi_hl_a(),
 
                 Instruction::BIT_b_r(b, r) => self.bit_b_r(b, r),
                 Instruction::BIT_b_HL(b) => self.bit_b_hl(b),
+
+                Instruction::JR_n(n) => self.jr_n(n),
+                Instruction::JR_cc_n(cc, n) => self.jr_cc_n(cc, n),
             };
         }
 
@@ -132,58 +134,149 @@ pub mod lr35902 {
         // Decodes the next instruction located at PC.
         fn decode(&mut self) -> Instruction {
             match self.fetch8() {
-                // LD nn,d16 instructions
+                0x00 => Instruction::NOP,
                 0x01 => Instruction::LD_rr_d16(Register16::BC, self.fetch16()),
-                0x11 => Instruction::LD_rr_d16(Register16::DE, self.fetch16()),
-                0x21 => Instruction::LD_rr_d16(Register16::HL, self.fetch16()),
-                0x31 => Instruction::LD_rr_d16(Register16::SP, self.fetch16()),
-                // LD n, d8 instructions
-                0x06 => Instruction::LD_r_d8(Register8::B, self.fetch8()),
-                0x0E => Instruction::LD_r_d8(Register8::C, self.fetch8()),
-                0x16 => Instruction::LD_r_d8(Register8::D, self.fetch8()),
-                0x1E => Instruction::LD_r_d8(Register8::E, self.fetch8()),
-                0x26 => Instruction::LD_r_d8(Register8::H, self.fetch8()),
-                0x2E => Instruction::LD_r_d8(Register8::L, self.fetch8()),
-                // INC n instructions
-                0x04 => Instruction::INC_r(Register8::B),
-                0x0C => Instruction::INC_r(Register8::C),
-                0x14 => Instruction::INC_r(Register8::D),
-                0x1C => Instruction::INC_r(Register8::E),
-                0x24 => Instruction::INC_r(Register8::H),
-                0x2C => Instruction::INC_r(Register8::L),
-                0x3C => Instruction::INC_r(Register8::A),
-                // INC nn instructions
+                0x02 => Instruction::LD_r16_r(Register16::BC, Register8::A),
                 0x03 => Instruction::INC_rr(Register16::BC),
-                0x13 => Instruction::INC_rr(Register16::DE),
-                0x23 => Instruction::INC_rr(Register16::HL),
-                0x33 => Instruction::INC_rr(Register16::SP),
-                // DEC n instructions
+                0x04 => Instruction::INC_r(Register8::B),
                 0x05 => Instruction::DEC_r(Register8::B),
-                0x0D => Instruction::DEC_r(Register8::C),
-                0x15 => Instruction::DEC_r(Register8::D),
-                0x1D => Instruction::DEC_r(Register8::E),
-                0x25 => Instruction::DEC_r(Register8::H),
-                0x2D => Instruction::DEC_r(Register8::L),
-                0x3D => Instruction::DEC_r(Register8::A),
-                // DEC nn instructions
+                0x06 => Instruction::LD_r_d8(Register8::B, self.fetch8()),
+
                 0x0B => Instruction::DEC_rr(Register16::BC),
+                0x0C => Instruction::INC_r(Register8::C),
+                0x0D => Instruction::DEC_r(Register8::C),
+                0x0E => Instruction::LD_r_d8(Register8::C, self.fetch8()),
+
+                0x11 => Instruction::LD_rr_d16(Register16::DE, self.fetch16()),
+                0x12 => Instruction::LD_r16_r(Register16::DE, Register8::A),
+                0x13 => Instruction::INC_rr(Register16::DE),
+                0x14 => Instruction::INC_r(Register8::D),
+                0x15 => Instruction::DEC_r(Register8::D),
+                0x16 => Instruction::LD_r_d8(Register8::D, self.fetch8()), 
+
+                0x18 => Instruction::JR_n(self.fetch8()),
+
                 0x1B => Instruction::DEC_rr(Register16::DE),
+                0x1C => Instruction::INC_r(Register8::E),
+                0x1D => Instruction::DEC_r(Register8::E),
+                0x1E => Instruction::LD_r_d8(Register8::E, self.fetch8()),
+
+                0x20 => Instruction::JR_cc_n(ConditionFlag::NZ, self.fetch8()),
+                0x21 => Instruction::LD_rr_d16(Register16::HL, self.fetch16()),
+                0x22 => Instruction::LDI_HL_A,
+                0x23 => Instruction::INC_rr(Register16::HL),
+                0x24 => Instruction::INC_r(Register8::H),
+                0x25 => Instruction::DEC_r(Register8::H),
+                0x26 => Instruction::LD_r_d8(Register8::H, self.fetch8()),
+
+                0x28 => Instruction::JR_cc_n(ConditionFlag::Z, self.fetch8()),
+
                 0x2B => Instruction::DEC_rr(Register16::HL),
+                0x2C => Instruction::INC_r(Register8::L),
+                0x2D => Instruction::DEC_r(Register8::L),
+                0x2E => Instruction::LD_r_d8(Register8::L, self.fetch8()),
+
+                0x30 => Instruction::JR_cc_n(ConditionFlag::NC, self.fetch8()),
+                0x31 => Instruction::LD_rr_d16(Register16::SP, self.fetch16()),
+                0x32 => Instruction::LDD_HL_A,
+                0x33 => Instruction::INC_rr(Register16::SP),
+
+                0x38 => Instruction::JR_cc_n(ConditionFlag::C, self.fetch8()),
+
                 0x3B => Instruction::DEC_rr(Register16::SP),
-                // XOR instructions
+                0x3C => Instruction::INC_r(Register8::A),
+                0x3D => Instruction::DEC_r(Register8::A),
+
+                0x40 => Instruction::LD_r_r(Register8::B, Register8::B),
+                0x41 => Instruction::LD_r_r(Register8::B, Register8::C),
+                0x42 => Instruction::LD_r_r(Register8::B, Register8::D),
+                0x43 => Instruction::LD_r_r(Register8::B, Register8::E),
+                0x44 => Instruction::LD_r_r(Register8::B, Register8::H),
+                0x45 => Instruction::LD_r_r(Register8::B, Register8::L),
+                0x46 => Instruction::LD_r_HL(Register8::B),
+                0x47 => Instruction::LD_r_r(Register8::B, Register8::A),
+                0x48 => Instruction::LD_r_r(Register8::C, Register8::B),
+                0x49 => Instruction::LD_r_r(Register8::C, Register8::C),
+                0x4A => Instruction::LD_r_r(Register8::C, Register8::D),
+                0x4B => Instruction::LD_r_r(Register8::C, Register8::E),
+                0x4C => Instruction::LD_r_r(Register8::C, Register8::H),
+                0x4D => Instruction::LD_r_r(Register8::C, Register8::L),
+                0x4E => Instruction::LD_r_HL(Register8::C),
+                0x4F => Instruction::LD_r_r(Register8::C, Register8::A),
+                0x50 => Instruction::LD_r_r(Register8::D, Register8::B),
+                0x51 => Instruction::LD_r_r(Register8::D, Register8::C),
+                0x52 => Instruction::LD_r_r(Register8::D, Register8::D),
+                0x53 => Instruction::LD_r_r(Register8::D, Register8::E),
+                0x54 => Instruction::LD_r_r(Register8::D, Register8::H),
+                0x55 => Instruction::LD_r_r(Register8::D, Register8::L),
+                0x56 => Instruction::LD_r_HL(Register8::D),
+                0x57 => Instruction::LD_r_r(Register8::D, Register8::A),
+                0x58 => Instruction::LD_r_r(Register8::E, Register8::B),
+                0x59 => Instruction::LD_r_r(Register8::E, Register8::C),
+                0x5A => Instruction::LD_r_r(Register8::E, Register8::D),
+                0x5B => Instruction::LD_r_r(Register8::E, Register8::E),
+                0x5C => Instruction::LD_r_r(Register8::E, Register8::H),
+                0x5D => Instruction::LD_r_r(Register8::E, Register8::L),
+                0x5E => Instruction::LD_r_HL(Register8::E),
+                0x5F => Instruction::LD_r_r(Register8::E, Register8::A),
+                0x60 => Instruction::LD_r_r(Register8::H, Register8::B),
+                0x61 => Instruction::LD_r_r(Register8::H, Register8::C),
+                0x62 => Instruction::LD_r_r(Register8::H, Register8::D),
+                0x63 => Instruction::LD_r_r(Register8::H, Register8::E),
+                0x64 => Instruction::LD_r_r(Register8::H, Register8::H),
+                0x65 => Instruction::LD_r_r(Register8::H, Register8::L),
+                0x66 => Instruction::LD_r_HL(Register8::H),
+                0x67 => Instruction::LD_r_r(Register8::H, Register8::A),
+                0x68 => Instruction::LD_r_r(Register8::L, Register8::B),
+                0x69 => Instruction::LD_r_r(Register8::L, Register8::C),
+                0x6A => Instruction::LD_r_r(Register8::L, Register8::D),
+                0x6B => Instruction::LD_r_r(Register8::L, Register8::E),
+                0x6C => Instruction::LD_r_r(Register8::L, Register8::H),
+                0x6D => Instruction::LD_r_r(Register8::L, Register8::L),
+                0x6E => Instruction::LD_r_HL(Register8::L),
+                0x6F => Instruction::LD_r_r(Register8::L, Register8::A),
+                0x70 => Instruction::LD_r16_r(Register16::HL, Register8::B),
+                0x71 => Instruction::LD_r16_r(Register16::HL, Register8::C),
+                0x72 => Instruction::LD_r16_r(Register16::HL, Register8::D),
+                0x73 => Instruction::LD_r16_r(Register16::HL, Register8::E),
+                0x74 => Instruction::LD_r16_r(Register16::HL, Register8::H),
+                0x75 => Instruction::LD_r16_r(Register16::HL, Register8::L),
+
+                0x77 => Instruction::LD_r16_r(Register16::HL, Register8::A),
+                0x78 => Instruction::LD_r_r(Register8::A, Register8::B),
+                0x79 => Instruction::LD_r_r(Register8::A, Register8::C),
+                0x7A => Instruction::LD_r_r(Register8::A, Register8::D),
+                0x7B => Instruction::LD_r_r(Register8::A, Register8::E),
+                0x7C => Instruction::LD_r_r(Register8::A, Register8::H),
+                0x7D => Instruction::LD_r_r(Register8::A, Register8::L),
+                0x7E => Instruction::LD_r_HL(Register8::A),
+                0x7F => Instruction::LD_r_r(Register8::A, Register8::A),
+                0x80 => Instruction::ADD_A_r(Register8::B),
+                0x81 => Instruction::ADD_A_r(Register8::C),
+                0x82 => Instruction::ADD_A_r(Register8::D),
+                0x83 => Instruction::ADD_A_r(Register8::E),
+                0x84 => Instruction::ADD_A_r(Register8::H),
+                0x85 => Instruction::ADD_A_r(Register8::L),
+                0x86 => Instruction::ADD_A_HL,
+                0x87 => Instruction::ADD_A_r(Register8::A),
+                0x88 => Instruction::ADC_A_r(Register8::B),
+                0x89 => Instruction::ADC_A_r(Register8::C),
+                0x8A => Instruction::ADC_A_r(Register8::D),
+                0x8B => Instruction::ADC_A_r(Register8::E),
+                0x8C => Instruction::ADC_A_r(Register8::H),
+                0x8D => Instruction::ADC_A_r(Register8::L),
+                0x8E => Instruction::ADC_A_HL,
+                0x8F => Instruction::ADC_A_r(Register8::A),
+
                 0xA8 => Instruction::XOR_r(Register8::B),
                 0xA9 => Instruction::XOR_r(Register8::C),
                 0xAA => Instruction::XOR_r(Register8::D),
                 0xAB => Instruction::XOR_r(Register8::E),
                 0xAC => Instruction::XOR_r(Register8::H),
                 0xAD => Instruction::XOR_r(Register8::L),
+
                 0xAF => Instruction::XOR_r(Register8::A),
 
-                // LDD/LDI instructions
-                0x22 => Instruction::LDI_HL_A,
-                0x32 => Instruction::LDD_HL_A,
-
-                // Extended instruction set.
                 0xCB => self.decode_extended(),
 
                 n => {
@@ -309,13 +402,22 @@ pub mod lr35902 {
             };
         }
 
+        fn check_jmp_condition(&self, cc: ConditionFlag) -> bool {
+            match cc {
+                ConditionFlag::NZ => (self.f & FLAG_ZERO) == 0,
+                ConditionFlag::Z  => (self.f & FLAG_ZERO) != 0,
+                ConditionFlag::NC => (self.f & FLAG_CARRY) == 0,
+                ConditionFlag::C  => (self.f & FLAG_CARRY) != 0,
+            }
+        }
+
         // INC r
         // Flags:
         // Z N H C
         // * 0 * -
-        fn inc_r(&mut self, reg: Register8) {
-            let mut v = self.get_reg8(reg);
-            v += 1;
+        fn inc_r(&mut self, reg: Register8) -> u32 {
+            let v = self.get_reg8(reg);
+            let (v, _) = v.overflowing_add(1);
             self.set_reg8(reg, v);
 
             // Clear Z, N, H flags. If we overflowed top or bottom nibbles
@@ -331,25 +433,30 @@ pub mod lr35902 {
             if (v & 0x0F) == 0 {
                 self.f |= FLAG_HALF_CARRY;
             }
+
+            4
         }
 
         // INC rr
         // Flags:
         // Z N H C
         // - - - -
-        fn inc_rr(&mut self, reg: Register16) {
-            let v = self.get_reg16(reg);
-            self.set_reg16(reg, v + 1);
+        fn inc_rr(&mut self, r: Register16) -> u32 {
+            let v = self.get_reg16(r);
+            let (v, _) = v.overflowing_add(1);
+            self.set_reg16(r, v);
+
+            8
         }
 
         // DEC r
         // Flags:
         // Z N H C
         // * 1 * -
-        fn dec_r(&mut self, reg: Register8) {
-            let mut v = self.get_reg8(reg);
-            v -= 1;
-            self.set_reg8(reg, v);
+        fn dec_r(&mut self, r: Register8) -> u32 {
+            let v = self.get_reg8(r);
+            let (v, _) = v.overflowing_sub(1);
+            self.set_reg8(r, v);
 
             // Clear Z, N, H flags. If we overflowed top or bottom nibbles
             // we'll set the appropriate flags below.
@@ -362,60 +469,159 @@ pub mod lr35902 {
             if (v & 0x0F) == 0 {
                 self.f |= FLAG_HALF_CARRY;
             }
+
+            4
         }
 
         // DEC rr
         // Flags:
         // Z N H C
         // - - - -
-        fn dec_rr(&mut self, reg: Register16) {
-            let v = self.get_reg16(reg);
-            self.set_reg16(reg, v - 1);
+        fn dec_rr(&mut self, r: Register16) -> u32 {
+            let v = self.get_reg16(r);
+            let (v, _) = v.overflowing_sub(1);
+            self.set_reg16(r, v);
+
+            8
+        }
+
+        // Raw ADD instruction used by both add_r and add_hl
+        fn add(&mut self, v: u8, carry: bool) {
+            let a = self.get_reg8(Register8::A);
+            
+            let carry = if carry && (self.f & FLAG_CARRY != 0) { 1 } else { 0 };
+
+            let (new_a, overflow) = a.overflowing_add(v + carry);
+            self.set_reg8(Register8::A, new_a);
+
+            self.f = 0;
+
+            if new_a == 0 {
+                self.f |= FLAG_ZERO;
+            }
+
+            if overflow {
+                self.f |= FLAG_CARRY;
+            }
+
+            if ((a & 0xF) + (v & 0xF)) & 0x10 == 0x10 {
+                self.f |= FLAG_HALF_CARRY;
+            }
+        }
+
+        // ADD A, r
+        // ADC A, r
+        // Flags:
+        // Z N H C
+        // * 0 * *
+        fn add_r(&mut self, r: Register8, carry: bool) -> u32 {
+            let v = self.get_reg8(r);
+            self.add(v, carry);
+
+            4
+        }
+
+        // ADD A, (HL)
+        // ADC A, (HL)
+        // Flags:
+        // Z N H C
+        // * 0 * *
+        fn add_hl(&mut self, carry: bool) -> u32 {
+            let v = self.mmu.read8(self.get_reg16(Register16::HL));
+            self.add(v, carry);
+
+            8
+        }
+
+        // LD r, r
+        // Flags:
+        // Z N H C
+        // - - - -
+        fn ld_r_r(&mut self, to: Register8, from: Register8) -> u32 {
+            let v = self.get_reg8(from);
+            self.set_reg8(to, v);
+            4
+        }
+
+        // LD r, (HL)
+        // Flags:
+        // Z N H C
+        // - - - -
+        fn ld_r_hl(&mut self, r: Register8) -> u32 {
+            let v = self.mmu.read8(self.get_reg16(Register16::HL));
+            self.set_reg8(r, v);
+            8
         }
 
         // LD r, d8
         // Flags:
         // Z N H C
         // - - - -
-        fn ld_r_d8(&mut self, reg: Register8, d: u8) {
+        fn ld_r_d8(&mut self, reg: Register8, d: u8) -> u32 {
             self.set_reg8(reg, d);
+
+            8
         }
 
         // LD rr, d16
         // Flags:
         // Z N H C
         // - - - -
-        fn ld_rr_d16(&mut self, reg: Register16, d: u16) {
+        fn ld_rr_d16(&mut self, reg: Register16, d: u16) -> u32 {
             self.set_reg16(reg, d);
+
+            12
+        }
+
+        // LD (rr), r
+        // Flags:
+        // Z N H C
+        // - - - -
+        fn ld_r16_r(&mut self, r16: Register16, r: Register8) -> u32 {
+            self.mmu.write8(self.get_reg16(r16), self.get_reg8(r));
+            8
         }
 
         // LD (HL-), A
         // Flags:
         // Z N H C
         // - - - -
-        fn ldd_hl_a(&mut self) {
+        fn ldd_hl_a(&mut self) -> u32 {
             let mut addr = self.get_reg16(Register16::HL);
             self.mmu.write8(addr, self.get_reg8(Register8::A));
             addr -= 1;
             self.set_reg16(Register16::HL, addr);
+
+            8
         }
 
         // LD (HL+), A
         // Flags:
         // Z N H C
         // - - - -
-        fn ldi_hl_a(&mut self) {
+        fn ldi_hl_a(&mut self) -> u32 {
             let mut addr = self.get_reg16(Register16::HL);
             self.mmu.write8(addr, self.get_reg8(Register8::A));
             addr += 1;
             self.set_reg16(Register16::HL, addr);
+
+            8
+        }
+
+        // LD (C), A
+        // LD (A), C
+        // a.k.a LD A,($FF00+C) / LD ($FF00+C),A
+        // Z N H C
+        // - - - -
+        fn ld_r2mem(&mut self) -> u32 {
+            0
         }
 
         // XOR n
         // Flags:
         // Z N H C
         // * 0 0 0
-        fn xor_r(&mut self, reg: Register8) {
+        fn xor_r(&mut self, reg: Register8) -> u32 {
             let mut a = self.get_reg8(Register8::A);
             let v = self.get_reg8(reg);
             a ^= v;
@@ -425,27 +631,51 @@ pub mod lr35902 {
             if a == 0 {
                 self.f |= FLAG_ZERO;
             }
+
+            4
         }
 
         // BIT b, r
         // Flags:
         // Z N H C
         // * 0 1 -
-        fn bit_b_r(&mut self, b: u8, reg: Register8) {
+        fn bit_b_r(&mut self, b: u8, reg: Register8) -> u32 {
             let v = self.get_reg8(reg) & (1 << b);
             self.f = FLAG_HALF_CARRY;
             if v == 0 {
                 self.f |= FLAG_ZERO;
             }
+
+            8
         }
 
         // BIT b, (HL)
-        fn bit_b_hl(&mut self, b: u8) {
+        fn bit_b_hl(&mut self, b: u8) -> u32 {
             let v = self.mmu.read8(self.get_reg16(Register16::HL)) & (1 << b);
             self.f = FLAG_HALF_CARRY;
             if v == 0 {
                 self.f |= FLAG_ZERO;
             }
+
+            16
+        }
+
+        fn jr_n(&mut self, n: u8) -> u32 {
+            let ns: i8 = n as i8;
+            if ns < 0 {
+                self.pc -= n as u16;
+            } else {
+                self.pc += n as u16;
+            }
+            return 12;
+        }
+
+        fn jr_cc_n(&mut self, cc: ConditionFlag, n: u8) -> u32 {
+            if self.check_jmp_condition(cc) {
+                return self.jr_n(n);
+            }
+
+            8
         }
     }
 }
