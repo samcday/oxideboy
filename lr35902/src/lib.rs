@@ -40,6 +40,12 @@ pub mod lr35902 {
         C,
     }
 
+    enum BitwiseOp {
+        XOR,
+        OR,
+        AND,
+    }
+
     #[allow(non_camel_case_types)]
     enum Instruction {
         NOP,
@@ -52,7 +58,12 @@ pub mod lr35902 {
         INC_rr(Register16),
         DEC_r(Register8),
         DEC_rr(Register16),
+        AND_r(Register8),
+        AND_HL,
+        OR_r(Register8),
+        OR_HL,
         XOR_r(Register8),
+        XOR_HL,
 
         JR_cc_n(ConditionFlag, u8),
         JR_n(u8),
@@ -101,7 +112,12 @@ pub mod lr35902 {
                 Instruction::INC_rr(r) => self.inc_rr(r),
                 Instruction::DEC_r(r) => self.dec_r(r),
                 Instruction::DEC_rr(r) => self.dec_rr(r),
-                Instruction::XOR_r(r) => self.xor_r(r),
+                Instruction::AND_r(r) => self.bitwise_r(BitwiseOp::AND, r),
+                Instruction::XOR_r(r) => self.bitwise_r(BitwiseOp::XOR, r),
+                Instruction::OR_r(r) => self.bitwise_r(BitwiseOp::OR, r),
+                Instruction::AND_HL => self.bitwise_hl(BitwiseOp::AND),
+                Instruction::XOR_HL => self.bitwise_hl(BitwiseOp::XOR),
+                Instruction::OR_HL => self.bitwise_hl(BitwiseOp::OR),
 
                 Instruction::LD_r_d8(r, v) => self.ld_r_d8(r, v),
                 Instruction::LD_rr_d16(r, v) => self.ld_rr_d16(r, v),
@@ -268,14 +284,30 @@ pub mod lr35902 {
                 0x8E => Instruction::ADC_A_HL,
                 0x8F => Instruction::ADC_A_r(Register8::A),
 
-                0xA8 => Instruction::XOR_r(Register8::B),
+                0xA0 => Instruction::AND_r(Register8::B),
+                0xA1 => Instruction::AND_r(Register8::C),
+                0xA2 => Instruction::AND_r(Register8::D),
+                0xA3 => Instruction::AND_r(Register8::E),
+                0xA4 => Instruction::AND_r(Register8::H),
+                0xA5 => Instruction::AND_r(Register8::L),
+                0xA6 => Instruction::AND_HL,
+                0xA7 => Instruction::AND_r(Register8::A),
+                0xA8 => Instruction::XOR_r(Register8::L),
                 0xA9 => Instruction::XOR_r(Register8::C),
                 0xAA => Instruction::XOR_r(Register8::D),
                 0xAB => Instruction::XOR_r(Register8::E),
                 0xAC => Instruction::XOR_r(Register8::H),
                 0xAD => Instruction::XOR_r(Register8::L),
-
+                0xAE => Instruction::XOR_HL,
                 0xAF => Instruction::XOR_r(Register8::A),
+                0xB0 => Instruction::OR_r(Register8::B),
+                0xB1 => Instruction::OR_r(Register8::C),
+                0xB2 => Instruction::OR_r(Register8::D),
+                0xB3 => Instruction::OR_r(Register8::E),
+                0xB4 => Instruction::OR_r(Register8::H),
+                0xB5 => Instruction::OR_r(Register8::L),
+                0xB6 => Instruction::OR_HL,
+                0xB7 => Instruction::OR_r(Register8::A),
 
                 0xCB => self.decode_extended(),
 
@@ -617,22 +649,50 @@ pub mod lr35902 {
             0
         }
 
-        // XOR n
-        // Flags:
-        // Z N H C
-        // * 0 0 0
-        fn xor_r(&mut self, reg: Register8) -> u32 {
-            let mut a = self.get_reg8(Register8::A);
-            let v = self.get_reg8(reg);
-            a ^= v;
-            self.set_reg8(Register8::A, v);
-
+        fn bitwise(&mut self, op: BitwiseOp, v: u8) {
+            let a = self.get_reg8(Register8::A);
+            let a = match op {
+                BitwiseOp::AND => a & v,
+                BitwiseOp::OR => a | v,
+                BitwiseOp::XOR => a ^ v,
+            };
+            self.set_reg8(Register8::A, a);
             self.f = 0;
+            if let BitwiseOp::AND = op {
+                self.f |= FLAG_HALF_CARRY;
+            }
             if a == 0 {
                 self.f |= FLAG_ZERO;
             }
+        }
 
+        // AND r
+        // AND r, (HL)
+        // Flags:
+        // Z N H C
+        // * 0 1 0
+        //
+        // OR r
+        // OR r, (HL)
+        // Flags:
+        // Z N H C
+        // * 0 1 0
+        //
+        // XOR n
+        // XOR n, (HL)
+        // Flags:
+        // Z N H C
+        // * 0 0 0
+        fn bitwise_r(&mut self, op: BitwiseOp, r: Register8) -> u32 {
+            let v = self.get_reg8(r);
+            self.bitwise(op, v);
             4
+        }
+
+        fn bitwise_hl(&mut self, op: BitwiseOp) -> u32 {
+            let v = self.mmu.read8(self.get_reg16(Register16::HL));
+            self.bitwise(op, v);
+            8
         }
 
         // BIT b, r
