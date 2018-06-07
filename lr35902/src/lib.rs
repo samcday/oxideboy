@@ -54,6 +54,10 @@ pub mod lr35902 {
         ADD_A_HL,
         ADC_A_r(Register8),
         ADC_A_HL,
+        SUB_r(Register8),
+        SUB_HL,
+        SBC_r(Register8),
+        SBC_HL,
         INC_r(Register8),
         INC_rr(Register16),
         DEC_r(Register8),
@@ -64,17 +68,25 @@ pub mod lr35902 {
         OR_HL,
         XOR_r(Register8),
         XOR_HL,
+        CP_r(Register8),
+        CP_HL,
 
         JR_cc_n(ConditionFlag, u8),
         JR_n(u8),
+        CALL(Option<ConditionFlag>, u16),
+        RET(Option<ConditionFlag>),
+        PUSH(Register16),
 
         LD_r_d8(Register8, u8),
         LD_rr_d16(Register16, u16),
         LD_r16_r(Register16, Register8),
         LD_r_r(Register8, Register8),
         LD_r_HL(Register8),
+        LD_C_A,
         LDD_HL_A,
         LDI_HL_A,
+        LDH_A_n(u8),
+        LDH_n_A(u8),
 
         BIT_b_r(u8, Register8),
         BIT_b_HL(u8),
@@ -118,20 +130,32 @@ pub mod lr35902 {
                 Instruction::AND_HL => self.bitwise_hl(BitwiseOp::AND),
                 Instruction::XOR_HL => self.bitwise_hl(BitwiseOp::XOR),
                 Instruction::OR_HL => self.bitwise_hl(BitwiseOp::OR),
+                Instruction::SUB_r(r) => self.sub_r(r, false, true),
+                Instruction::SUB_HL => self.sub_hl(false, true),
+                Instruction::SBC_r(r) => self.sub_r(r, true, true),
+                Instruction::SBC_HL => self.sub_hl(true, true),
+                Instruction::CP_r(r) => self.sub_r(r, false, false),
+                Instruction::CP_HL => self.sub_hl(false, false),
 
                 Instruction::LD_r_d8(r, v) => self.ld_r_d8(r, v),
                 Instruction::LD_rr_d16(r, v) => self.ld_rr_d16(r, v),
                 Instruction::LD_r16_r(r16, r) => self.ld_r16_r(r16, r),
                 Instruction::LD_r_r(to, from) => self.ld_r_r(to, from),
                 Instruction::LD_r_HL(r) => self.ld_r_hl(r),
+                Instruction::LD_C_A => self.ldd_c_a(),
                 Instruction::LDD_HL_A => self.ldd_hl_a(),
                 Instruction::LDI_HL_A => self.ldi_hl_a(),
+                Instruction::LDH_n_A(n) => self.ldh_n_a(n),
+                Instruction::LDH_A_n(n) => self.ldh_a_n(n),
 
                 Instruction::BIT_b_r(b, r) => self.bit_b_r(b, r),
                 Instruction::BIT_b_HL(b) => self.bit_b_hl(b),
 
                 Instruction::JR_n(n) => self.jr_n(n),
                 Instruction::JR_cc_n(cc, n) => self.jr_cc_n(cc, n),
+                Instruction::CALL(cc, addr) => self.call(cc, addr),
+                Instruction::RET(cc) => self.ret(cc),
+                Instruction::PUSH(r) => self.push(r),
             };
         }
 
@@ -283,7 +307,22 @@ pub mod lr35902 {
                 0x8D => Instruction::ADC_A_r(Register8::L),
                 0x8E => Instruction::ADC_A_HL,
                 0x8F => Instruction::ADC_A_r(Register8::A),
-
+                0x90 => Instruction::SUB_r(Register8::B),
+                0x91 => Instruction::SUB_r(Register8::C),
+                0x92 => Instruction::SUB_r(Register8::D),
+                0x93 => Instruction::SUB_r(Register8::E),
+                0x94 => Instruction::SUB_r(Register8::H),
+                0x95 => Instruction::SUB_r(Register8::L),
+                0x96 => Instruction::SUB_HL,
+                0x97 => Instruction::SUB_r(Register8::A),
+                0x98 => Instruction::SBC_r(Register8::B),
+                0x99 => Instruction::SBC_r(Register8::C),
+                0x9A => Instruction::SBC_r(Register8::D),
+                0x9B => Instruction::SBC_r(Register8::E),
+                0x9C => Instruction::SBC_r(Register8::H),
+                0x9D => Instruction::SBC_r(Register8::L),
+                0x9E => Instruction::SBC_HL,
+                0x9F => Instruction::SBC_r(Register8::A),
                 0xA0 => Instruction::AND_r(Register8::B),
                 0xA1 => Instruction::AND_r(Register8::C),
                 0xA2 => Instruction::AND_r(Register8::D),
@@ -308,8 +347,25 @@ pub mod lr35902 {
                 0xB5 => Instruction::OR_r(Register8::L),
                 0xB6 => Instruction::OR_HL,
                 0xB7 => Instruction::OR_r(Register8::A),
+                0xB8 => Instruction::CP_r(Register8::B),
+                0xB9 => Instruction::CP_r(Register8::C),
+                0xBA => Instruction::CP_r(Register8::D),
+                0xBB => Instruction::CP_r(Register8::E),
+                0xBC => Instruction::CP_r(Register8::H),
+                0xBD => Instruction::CP_r(Register8::L),
+                0xBE => Instruction::CP_HL,
+                0xBF => Instruction::CP_r(Register8::A),
 
+                0xC0 => Instruction::RET(Some(ConditionFlag::NZ)),
                 0xCB => self.decode_extended(),
+                0xC8 => Instruction::RET(Some(ConditionFlag::Z)),
+                0xC9 => Instruction::RET(None),
+                0xD0 => Instruction::RET(Some(ConditionFlag::NC)),
+                0xD8 => Instruction::RET(Some(ConditionFlag::C)),
+
+                0xE0 => Instruction::LDH_n_A(self.fetch8()),
+                0xE2 => Instruction::LD_C_A,
+                0xF0 => Instruction::LDH_A_n(self.fetch8()),
 
                 n => {
                     panic!("Unexpected opcode {} encountered", n);
@@ -541,6 +597,33 @@ pub mod lr35902 {
             }
         }
 
+        // Raw SUB/CP instruction used by both sub_r and sub_hl
+        fn sub(&mut self, v: u8, carry: bool, store: bool) {
+            let a = self.get_reg8(Register8::A);
+            
+            let carry = if carry && (self.f & FLAG_CARRY != 0) { 1 } else { 0 };
+
+            let (new_a, overflow) = a.overflowing_sub(v + carry);
+
+            if store {
+                self.set_reg8(Register8::A, new_a);
+            }
+
+            self.f = 0;
+
+            if new_a == 0 {
+                self.f |= FLAG_ZERO;
+            }
+
+            if overflow {
+                self.f |= FLAG_CARRY;
+            }
+
+            if (a & 0xF) < (v & 0xF) {
+                self.f |= FLAG_HALF_CARRY;
+            }
+        }
+
         // ADD A, r
         // ADC A, r
         // Flags:
@@ -565,6 +648,28 @@ pub mod lr35902 {
             8
         }
 
+        // SUB r
+        // SBC r
+        // CP r
+        // Flags:
+        // * 1 * *
+        fn sub_hl(&mut self, carry: bool, store: bool) -> u32 {
+            let v = self.mmu.read8(self.get_reg16(Register16::HL));
+            self.sub(v, carry, store);
+            4
+        }
+
+        // SUB (HL)
+        // SBC (HL)
+        // CP (HL)
+        // Flags:
+        // * 1 * *
+        fn sub_r(&mut self, r: Register8, carry: bool, store: bool) -> u32 {
+            let v = self.get_reg8(r);
+            self.sub(v, carry, store);
+            4
+        }
+
         // LD r, r
         // Flags:
         // Z N H C
@@ -582,6 +687,18 @@ pub mod lr35902 {
         fn ld_r_hl(&mut self, r: Register8) -> u32 {
             let v = self.mmu.read8(self.get_reg16(Register16::HL));
             self.set_reg8(r, v);
+            8
+        }
+
+        // LD (C), A
+        // a.k.a LD ($FF00+C),A
+        // Flags:
+        // Z N H C
+        // - - - -
+        fn ldd_c_a(&mut self) -> u32 {
+            let v = self.get_reg8(Register8::A);
+            let addr = (self.get_reg8(Register8::C) as u16) + 0xFF00;
+            self.mmu.write8(addr, v);
             8
         }
 
@@ -640,13 +757,23 @@ pub mod lr35902 {
             8
         }
 
-        // LD (C), A
-        // LD (A), C
-        // a.k.a LD A,($FF00+C) / LD ($FF00+C),A
+        // LD ($FF00+n), A
+        // Flags:
         // Z N H C
         // - - - -
-        fn ld_r2mem(&mut self) -> u32 {
-            0
+        fn ldh_n_a(&mut self, n: u8) -> u32 {
+            self.mmu.write8(0xFF00 + (n as u16), self.get_reg8(Register8::A));
+            12
+        }
+
+        // LD A, ($FF00+n)
+        // Flags:
+        // Z N H C
+        // - - - -
+        fn ldh_a_n(&mut self, n: u8) -> u32 {
+            let v = self.mmu.read8(0xFF00 + (n as u16));
+            self.set_reg8(Register8::A, v);
+            12
         }
 
         fn bitwise(&mut self, op: BitwiseOp, v: u8) {
@@ -720,6 +847,38 @@ pub mod lr35902 {
             16
         }
 
+        fn call(&mut self, cc: Option<ConditionFlag>, addr: u16) -> u32 {
+            if let Some(cc) = cc {
+                if !self.check_jmp_condition(cc) {
+                    return 12;
+                }
+            }
+
+            self.sp -= 2;
+            self.mmu.write16(self.sp, self.pc);
+            self.pc = addr;
+            24
+        }
+
+        fn ret(&mut self, cc: Option<ConditionFlag>) -> u32 {
+            if let Some(cc) = cc {
+                if !self.check_jmp_condition(cc) {
+                    return 8;
+                }
+            }
+
+            self.pc = self.mmu.read16(self.sp);
+            self.sp += 2;
+            20
+        }
+
+        fn push(&mut self, r: Register16) -> u32 {
+            let v = self.get_reg16(r);
+            self.sp -= 2;
+            self.mmu.write16(self.sp, v);
+            16
+        }
+
         fn jr_n(&mut self, n: u8) -> u32 {
             let ns: i8 = n as i8;
             if ns < 0 {
@@ -727,7 +886,8 @@ pub mod lr35902 {
             } else {
                 self.pc += n as u16;
             }
-            return 12;
+            
+            12
         }
 
         fn jr_cc_n(&mut self, cc: ConditionFlag, n: u8) -> u32 {
