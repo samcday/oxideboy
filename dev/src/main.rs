@@ -7,7 +7,6 @@ use std::fs::File;
 struct Mem {
     bootrom: [u8; 0x100],
     rom: [u8; 0x3FFF],
-    lol: [u8; u16::max_value() as usize]
 }
 
 impl lr35902::MMU for Mem {
@@ -16,11 +15,7 @@ impl lr35902::MMU for Mem {
             return self.bootrom[addr as usize];
         }
 
-        if addr < 0x8000 {
-            return self.rom[addr as usize];
-        }
-
-        return self.lol[addr as usize];
+        return self.rom[addr as usize];
     }
 
     fn read16(&self, addr: u16) -> u16 {
@@ -30,14 +25,8 @@ impl lr35902::MMU for Mem {
             return hi << 8 | lo;
         }
 
-        if addr < 0x8000 {
-            let lo: u16 = self.rom[addr as usize].into();
-            let hi: u16 = self.rom[(addr as usize) + 1].into();
-            return hi << 8 | lo;
-        }
-
-        let lo: u16 = self.lol[addr as usize].into();
-        let hi: u16 = self.lol[(addr as usize) + 1].into();
+        let lo: u16 = self.rom[addr as usize].into();
+        let hi: u16 = self.rom[(addr as usize) + 1].into();
         return hi << 8 | lo;
     }
 
@@ -47,9 +36,6 @@ impl lr35902::MMU for Mem {
         }
         else if addr < 0x8000 {
             self.rom[addr as usize] = v;
-        }
-        else {
-            self.lol[addr as usize] = v;
         }
     }
 
@@ -61,10 +47,6 @@ impl lr35902::MMU for Mem {
         else if addr < 0x8000 {
             self.rom[addr as usize] = (v & 0xff) as u8;
             self.rom[(addr+1) as usize] = ((v & 0xff00) >> 8) as u8;
-        }
-        else {
-            self.lol[addr as usize] = (v & 0xff) as u8;
-            self.lol[(addr+1) as usize] = ((v & 0xff00) >> 8) as u8;
         }
     }
 }
@@ -79,8 +61,7 @@ fn main() -> io::Result<()> {
     f.read(&mut rom)?;
 
 
-    let mut mem = Mem{bootrom, rom, lol: [0; u16::max_value() as usize]};
-    mem.lol[0xFF44] = 0x90;
+    let mut mem = Mem{bootrom, rom};
     let mut cpu = lr35902::CPU::new(&mut mem);
 
     loop {

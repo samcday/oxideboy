@@ -50,6 +50,10 @@ enum BitwiseOp {
 enum Instruction {
     NOP,
 
+    EI,
+    DI,
+    RETI,
+
     ADD_A_r(Register8),
     ADD_A_HL,
     ADC_A_r(Register8),
@@ -75,6 +79,7 @@ enum Instruction {
     CP_HL,
     RLA,
 
+    JP(Option<ConditionFlag>, u16),
     JR_cc_n(ConditionFlag, u8),
     JR_n(u8),
     CALL(Option<ConditionFlag>, u16),
@@ -106,6 +111,9 @@ impl ::fmt::Display for Instruction {
     fn fmt(&self, f: &mut ::fmt::Formatter) -> ::fmt::Result {
         match self {
             Instruction::NOP => write!(f,  "NOP"),
+            Instruction::EI => write!(f,  "EI"),
+            Instruction::DI => write!(f,  "DI"),
+            Instruction::RETI => write!(f,  "RETI"),
             Instruction::ADD_A_r(r) => write!(f, "ADD A, {:?}", r),
             Instruction::ADD_A_HL => write!(f, "ADD A, (HL)"),
             Instruction::ADC_A_r(r) => write!(f, "ADC A, {:?}", r),
@@ -130,6 +138,8 @@ impl ::fmt::Display for Instruction {
             Instruction::CP_d8(d) => write!(f, "CP ${:X}", d),
             Instruction::CP_HL => write!(f, "CP (HL)"),
             Instruction::RLA => write!(f, "RLA"),
+            Instruction::JP(None, addr) => write!(f, "JP ${:X}", addr),
+            Instruction::JP(Some(cc), addr) => write!(f, "JP {:?}, ${:X}", cc, addr),
             Instruction::JR_cc_n(cc, n) => write!(f, "JR {:?}, ${:X}", cc, n),
             Instruction::JR_n(n) => write!(f, "JR ${:X}", n),
             Instruction::CALL(Some(cc), n) => write!(f, "CALL {:?} ${:X}", cc, n),
@@ -171,23 +181,51 @@ pub struct CPU<'a> {
     sp: u16,
     pc: u16,
     ic: u32,
+    ime: bool,
+    ime_defer: Option<bool>,
+    wram: [u8; 0x2000],
+    vram: [u8; 0x2000],
+    sram: [u8; 0x7E],
+    oam: [u8; 0x9F],
     mmu: &'a mut (MMU + 'a),
 }
 
 impl <'a> CPU<'a> {
     pub fn new(mmu: &'a mut (MMU + 'a)) -> CPU {
-        CPU{a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, sp: 0, pc: 0, ic: 0, mmu}
+        CPU{
+            a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, sp: 0, pc: 0, ic: 0,
+            ime: false, ime_defer: None,
+            wram: [0; 0x2000],
+            vram: [0; 0x2000],
+            sram: [0; 0x7E],
+            oam: [0; 0x9F],
+            mmu}
     }
 
     // Runs the CPU for a single instruction.
     // This is the main "Fetch, decode, execute" cycle
     pub fn run(&mut self) {
+        let addr = self.pc;
         let inst = self.decode();
 
-        println!("Inst: {}", inst);
+        println!("Inst: {} ; ${:04X}", inst, addr);
+
+        if self.ime {
+            // Service interrupts.
+        }
+
+        // Apply deferred change to IME.
+        if self.ime_defer.is_some() {
+           self.ime = self.ime_defer.unwrap();
+           self.ime_defer = None; 
+        }
 
         self.ic += match inst {
             Instruction::NOP => 4,
+
+            Instruction::DI => self.di(),
+            Instruction::EI => self.ei(),
+            Instruction::RETI => self.reti(),
 
             Instruction::ADD_A_r(r) => self.add_r(r, false),
             Instruction::ADD_A_HL => self.add_hl(false),
@@ -228,6 +266,7 @@ impl <'a> CPU<'a> {
             Instruction::LD_a16_A(a) => self.ld_a16_a(a),
             Instruction::LD_a16_SP(a) => self.ld_a16_sp(a),
 
+            Instruction::JP(cc, n) => self.jp(cc, n),
             Instruction::JR_n(n) => self.jr_n(n),
             Instruction::JR_cc_n(cc, n) => self.jr_cc_n(cc, n),
             Instruction::CALL(cc, addr) => self.call(cc, addr),
@@ -242,16 +281,58 @@ impl <'a> CPU<'a> {
         };
     }
 
+    fn mem_read8(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000 ... 0x7FFF => self.mmu.read8(addr),
+            0x8000 ... 0x9FFF => self.vram[(addr - 0x8000) as usize],
+            0xA000 ... 0xBFFF => self.mmu.read8(addr),
+            0xC000 ... 0xDFFF => self.wram[(addr - 0xC000) as usize],
+            0xE000 ... 0xFDFF => self.wram[(addr - 0xE000) as usize],
+            0xFE00 ... 0xFEFF => self.oam[(addr - 0xFE00) as usize],
+            0xFF44 => 0x90, // temp hack
+            0xFF00 ... 0xFF79 => 0xFF, // TODO
+            0xFF80 ... 0xFFFE => self.sram[(addr - 0xFF80) as usize],
+            0xFFFF            => 0xFF, // TODO
+            _ => panic!("Emulator not designed to run in an environment where the laws of physics no longer apply")
+        }
+    }
+
+    fn mem_read16(&self, addr: u16) -> u16 {
+        let mut v = self.mem_read8(addr) as u16;
+        v |= (self.mem_read8(addr + 1) as u16) << 8;
+        v
+    }
+
+    fn mem_write8(&mut self, addr: u16, v: u8) {
+        match addr {
+            0x0000 ... 0x7FFF => { self.mmu.write8(addr, v) },
+            0x8000 ... 0x9FFF => { self.vram[(addr - 0x8000) as usize] = v },
+            0xA000 ... 0xBFFF => { self.mmu.write8(addr, v) },
+            0xC000 ... 0xDFFF => { self.wram[(addr - 0xC000) as usize] = v },
+            0xE000 ... 0xFDFF => { self.wram[(addr - 0xE000) as usize] = v },
+            0xFE00 ... 0xFEFF => { self.oam[(addr - 0xFE00) as usize] = v },
+            0xFF00 ... 0xFF79 => { }, // TODO
+            0xFF80 ... 0xFFFE => { self.sram[(addr - 0xFF80) as usize] = v },
+            0xFFFF            => { }, // TODO
+            _ => panic!("Emulator not designed to run in an environment where the laws of physics no longer apply")
+        };
+    }
+
+    fn mem_write16(&mut self, addr: u16, v: u16) {
+        self.mem_write8(addr, (v & 0xFF) as u8);
+        self.mem_write8(addr + 1, ((v & 0xFF00) >> 8) as u8);
+    }
+
     // Fetches next byte from PC and increments PC.
     fn fetch8(&mut self) -> u8 {
         self.pc += 1;
-        self.mmu.read8(self.pc - 1)
+        self.mem_read8(self.pc - 1)
     }
 
     // Fetches next short from PC and increments PC by 2.
     fn fetch16(&mut self) -> u16 {
         self.pc += 2;
-        self.mmu.read16(self.pc - 2)
+        self.mem_read16(self.pc - 2)
     }
 
     // Decodes the next instruction located at PC.
@@ -443,15 +524,16 @@ impl <'a> CPU<'a> {
             0xBD => Instruction::CP_r(Register8::L),
             0xBE => Instruction::CP_HL,
             0xBF => Instruction::CP_r(Register8::A),
-
             0xC0 => Instruction::RET(Some(ConditionFlag::NZ)),
             0xC1 => Instruction::POP(Register16::BC),
-
+            0xC2 => Instruction::JP(Some(ConditionFlag::NZ), self.fetch16()),
+            0xC3 => Instruction::JP(None, self.fetch16()),
             0xC4 => Instruction::CALL(Some(ConditionFlag::NZ), self.fetch16()),
             0xC5 => Instruction::PUSH(Register16::BC),
             0xC8 => Instruction::RET(Some(ConditionFlag::Z)),
             0xC7 => Instruction::RST(0x00),
             0xC9 => Instruction::RET(None),
+            0xCA => Instruction::JP(Some(ConditionFlag::Z), self.fetch16()),
             0xCB => self.decode_extended(),
             0xCC => Instruction::CALL(Some(ConditionFlag::Z), self.fetch16()),
             0xCD => Instruction::CALL(None, self.fetch16()),
@@ -459,12 +541,16 @@ impl <'a> CPU<'a> {
             0xCF => Instruction::RST(0x08),
             0xD0 => Instruction::RET(Some(ConditionFlag::NC)),
             0xD1 => Instruction::POP(Register16::DE),
+            0xD2 => Instruction::JP(Some(ConditionFlag::NC), self.fetch16()),
 
             0xD4 => Instruction::CALL(Some(ConditionFlag::NC), self.fetch16()),
             0xD5 => Instruction::PUSH(Register16::DE),
             0xD6 => Instruction::SUB_d8(self.fetch8()),
             0xD7 => Instruction::RST(0x10),
             0xD8 => Instruction::RET(Some(ConditionFlag::C)),
+            0xD9 => Instruction::RETI,
+            0xDA => Instruction::JP(Some(ConditionFlag::C), self.fetch16()),
+
             0xDC => Instruction::CALL(Some(ConditionFlag::C), self.fetch16()),
 
             0xDE => Instruction::SBC_d8(self.fetch8()),
@@ -484,9 +570,12 @@ impl <'a> CPU<'a> {
 
             0xF0 => Instruction::LDH_A_n(self.fetch8()),
 
+            0xF3 => Instruction::DI,
+
             0xF7 => Instruction::RST(0x30),
 
             0xFA => Instruction::LD_A_a16(self.fetch16()),
+            0xFB => Instruction::EI,
 
             0xFE => Instruction::CP_d8(self.fetch8()),
             0xFF => Instruction::RST(0x38),
@@ -629,6 +718,21 @@ impl <'a> CPU<'a> {
             ConditionFlag::NC => (self.f & FLAG_CARRY) == 0,
             ConditionFlag::C  => (self.f & FLAG_CARRY) != 0,
         }
+    }
+
+    fn di(&mut self) -> u32 {
+        self.ime_defer = Some(false);
+        4
+    }
+
+    fn ei(&mut self) -> u32 {
+        self.ime_defer = Some(true);
+        4
+    }
+
+    fn reti(&mut self) -> u32 {
+        self.ime_defer = Some(true);
+        self.ret(None)
     }
 
     // INC r
@@ -774,7 +878,7 @@ impl <'a> CPU<'a> {
     // Z N H C
     // * 0 * *
     fn add_hl(&mut self, carry: bool) -> u32 {
-        let v = self.mmu.read8(self.get_reg16(Register16::HL));
+        let v = self.mem_read8(self.get_reg16(Register16::HL));
         self.add(v, carry);
 
         8
@@ -786,7 +890,7 @@ impl <'a> CPU<'a> {
     // Flags:
     // * 1 * *
     fn sub_hl(&mut self, carry: bool, store: bool) -> u32 {
-        let v = self.mmu.read8(self.get_reg16(Register16::HL));
+        let v = self.mem_read8(self.get_reg16(Register16::HL));
         self.sub(v, carry, store);
         4
     }
@@ -827,7 +931,7 @@ impl <'a> CPU<'a> {
     // Z N H C
     // - - - -
     fn ld_r_rr(&mut self, r: Register8, rr: Register16) -> u32 {
-        let v = self.mmu.read8(self.get_reg16(rr));
+        let v = self.mem_read8(self.get_reg16(rr));
         self.set_reg8(r, v);
         8
     }
@@ -840,7 +944,7 @@ impl <'a> CPU<'a> {
     fn ldd_c_a(&mut self) -> u32 {
         let v = self.get_reg8(Register8::A);
         let addr = (self.get_reg8(Register8::C) as u16) + 0xFF00;
-        self.mmu.write8(addr, v);
+        self.mem_write8(addr, v);
         8
     }
 
@@ -871,7 +975,7 @@ impl <'a> CPU<'a> {
     fn ld_r16_r(&mut self, r16: Register16, r: Register8) -> u32 {
         let addr = self.get_reg16(r16);
         let v = self.get_reg8(r);
-        self.mmu.write8(addr, v);
+        self.mem_write8(addr, v);
         8
     }
 
@@ -882,7 +986,7 @@ impl <'a> CPU<'a> {
     fn ldd_hl_a(&mut self) -> u32 {
         let mut addr = self.get_reg16(Register16::HL);
         let v = self.get_reg8(Register8::A);
-        self.mmu.write8(addr, v);
+        self.mem_write8(addr, v);
         addr -= 1;
         self.set_reg16(Register16::HL, addr);
 
@@ -896,7 +1000,7 @@ impl <'a> CPU<'a> {
     fn ldi_hl_a(&mut self) -> u32 {
         let mut addr = self.get_reg16(Register16::HL);
         let v = self.get_reg8(Register8::A);
-        self.mmu.write8(addr, v);
+        self.mem_write8(addr, v);
         addr += 1;
         self.set_reg16(Register16::HL, addr);
 
@@ -910,7 +1014,7 @@ impl <'a> CPU<'a> {
     fn ldh_n_a(&mut self, n: u8) -> u32 {
         let addr = 0xFF00 + (n as u16);
         let v = self.get_reg8(Register8::A);
-        self.mmu.write8(addr, v);
+        self.mem_write8(addr, v);
         12
     }
 
@@ -919,7 +1023,7 @@ impl <'a> CPU<'a> {
     // Z N H C
     // - - - -
     fn ldh_a_n(&mut self, n: u8) -> u32 {
-        let v = self.mmu.read8(0xFF00 + (n as u16));
+        let v = self.mem_read8(0xFF00 + (n as u16));
         self.set_reg8(Register8::A, v);
         12
     }
@@ -929,7 +1033,7 @@ impl <'a> CPU<'a> {
     // Z N H C
     // - - - -
     fn ld_a_a16(&mut self, a: u16) -> u32 {
-        let v = self.mmu.read8(a);
+        let v = self.mem_read8(a);
         self.set_reg8(Register8::A, v);
         16
     }
@@ -940,7 +1044,7 @@ impl <'a> CPU<'a> {
     // - - - -
     fn ld_a16_a(&mut self, a: u16) -> u32 {
         let v = self.get_reg8(Register8::A);
-        self.mmu.write8(a, v);
+        self.mem_write8(a, v);
         16
     }
 
@@ -950,7 +1054,7 @@ impl <'a> CPU<'a> {
     // - - - -
     fn ld_a16_sp(&mut self, a: u16) -> u32 {
         let v = self.get_reg16(Register16::SP);
-        self.mmu.write16(a, v);
+        self.mem_write16(a, v);
         20
     }
 
@@ -995,7 +1099,7 @@ impl <'a> CPU<'a> {
     }
 
     fn bitwise_hl(&mut self, op: BitwiseOp) -> u32 {
-        let v = self.mmu.read8(self.get_reg16(Register16::HL));
+        let v = self.mem_read8(self.get_reg16(Register16::HL));
         self.bitwise(op, v);
         8
     }
@@ -1016,7 +1120,7 @@ impl <'a> CPU<'a> {
 
     // BIT b, (HL)
     fn bit_b_hl(&mut self, b: u8) -> u32 {
-        let v = self.mmu.read8(self.get_reg16(Register16::HL)) & (1 << b);
+        let v = self.mem_read8(self.get_reg16(Register16::HL)) & (1 << b);
         self.f = FLAG_HALF_CARRY;
         if v == 0 {
             self.f |= FLAG_ZERO;
@@ -1031,7 +1135,6 @@ impl <'a> CPU<'a> {
     // * 0 0 *
     fn rl_r(&mut self, r: Register8, extended: bool) -> u32 {
         let v = self.get_reg8(r);
-        let orig = v;
         let carry = self.f & FLAG_CARRY > 0;
 
         self.f = 0;
@@ -1062,26 +1165,44 @@ impl <'a> CPU<'a> {
         }
 
         self.sp -= 2;
-        self.mmu.write16(self.sp, self.pc);
+        let sp = self.sp;
+        let pc = self.pc;
+        self.mem_write16(sp, pc);
         self.pc = addr;
         24
     }
 
     fn ret(&mut self, cc: Option<ConditionFlag>) -> u32 {
+        let mut ic = 16;
         if let Some(cc) = cc {
             if !self.check_jmp_condition(cc) {
                 return 8;
             }
+            ic += 4;
         }
 
-        self.pc = self.mmu.read16(self.sp);
+        self.pc = self.mem_read16(self.sp);
         self.sp += 2;
-        20
+        ic
+    }
+
+    fn jp(&mut self, cc: Option<ConditionFlag>, a: u16) -> u32 {
+        if let Some(cc) = cc {
+            if !self.check_jmp_condition(cc) {
+                return 12;
+            }
+        }
+
+        self.pc = a;
+
+        16
     }
 
     fn rst(&mut self, a: u8) -> u32 {
         self.sp -= 2;
-        self.mmu.write16(self.sp, self.pc);
+        let sp = self.sp;
+        let pc = self.pc;
+        self.mem_write16(sp, pc);
         self.pc = a as u16;
         16
     }
@@ -1089,12 +1210,13 @@ impl <'a> CPU<'a> {
     fn push(&mut self, r: Register16) -> u32 {
         let v = self.get_reg16(r);
         self.sp -= 2;
-        self.mmu.write16(self.sp, v);
+        let sp = self.sp;
+        self.mem_write16(sp, v);
         16
     }
 
     fn pop(&mut self, r: Register16) -> u32 {
-        let v = self.mmu.read16(self.sp);
+        let v = self.mem_read16(self.sp);
         self.sp += 2;
         self.set_reg16(r, v);
         12
