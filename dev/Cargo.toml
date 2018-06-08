@@ -1,0 +1,9 @@
+[package]
+name = "dev"
+version = "0.1.0"
+authors = ["Sam Day <me@samcday.com>"]
+
+[dependencies]
+
+[dependencies.lr35902]
+path = "../lr35902"
