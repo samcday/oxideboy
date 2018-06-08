@@ -55,8 +55,10 @@ enum Instruction {
     ADC_A_r(Register8),
     ADC_A_HL,
     SUB_r(Register8),
+    SUB_d8(u8),
     SUB_HL,
     SBC_r(Register8),
+    SBC_d8(u8),
     SBC_HL,
     INC_r(Register8),
     INC_rr(Register16),
@@ -69,7 +71,9 @@ enum Instruction {
     XOR_r(Register8),
     XOR_HL,
     CP_r(Register8),
+    CP_d8(u8),
     CP_HL,
+    RLA,
 
     JR_cc_n(ConditionFlag, u8),
     JR_n(u8),
@@ -79,19 +83,23 @@ enum Instruction {
     POP(Register16),
     RST(u8),
 
+    LD_r_rr(Register8, Register16),
     LD_r_d8(Register8, u8),
     LD_rr_d16(Register16, u16),
     LD_r16_r(Register16, Register8),
     LD_r_r(Register8, Register8),
-    LD_r_HL(Register8),
     LD_C_A,
     LDD_HL_A,
     LDI_HL_A,
     LDH_A_n(u8),
     LDH_n_A(u8),
+    LD_a16_SP(u16),
+    LD_a16_A(u16),
+    LD_A_a16(u16),
 
     BIT_b_r(u8, Register8),
     BIT_b_HL(u8),
+    RL_r(Register8),
 }
 
 impl ::fmt::Display for Instruction {
@@ -103,8 +111,10 @@ impl ::fmt::Display for Instruction {
             Instruction::ADC_A_r(r) => write!(f, "ADC A, {:?}", r),
             Instruction::ADC_A_HL => write!(f, "ADC A, (HL)"),
             Instruction::SUB_r(r) => write!(f, "SUB {:?}", r),
+            Instruction::SUB_d8(d) => write!(f, "SUB ${:X}", d),
             Instruction::SUB_HL => write!(f, "SUB (HL)"),
-            Instruction::SBC_r(r) => write!(f, "SBC {:?}", r),
+            Instruction::SBC_r(r) => write!(f, "SBC A, {:?}", r),
+            Instruction::SBC_d8(d) => write!(f, "SBC A, ${:X}", d),
             Instruction::SBC_HL => write!(f, "SBC (HL)"),
             Instruction::INC_r(r) => write!(f, "INC {:?}", r),
             Instruction::INC_rr(rr) => write!(f, "INC {:?}", rr),
@@ -117,19 +127,21 @@ impl ::fmt::Display for Instruction {
             Instruction::XOR_r(r) => write!(f, "XOR {:?}", r),
             Instruction::XOR_HL => write!(f, "XOR (HL)"),
             Instruction::CP_r(r) => write!(f, "CP {:?}", r),
+            Instruction::CP_d8(d) => write!(f, "CP ${:X}", d),
             Instruction::CP_HL => write!(f, "CP (HL)"),
-            Instruction::JR_cc_n(cc, n) => write!(f, "JR {:?} ${:X}", cc, n),
+            Instruction::RLA => write!(f, "RLA"),
+            Instruction::JR_cc_n(cc, n) => write!(f, "JR {:?}, ${:X}", cc, n),
             Instruction::JR_n(n) => write!(f, "JR ${:X}", n),
             Instruction::CALL(Some(cc), n) => write!(f, "CALL {:?} ${:X}", cc, n),
             Instruction::CALL(None, n) => write!(f, "CALL ${:X}", n),
             Instruction::RET(Some(cc)) => write!(f, "RET {:?}", cc),
             Instruction::RET(None) => write!(f, "RET"),
             Instruction::PUSH(rr) => write!(f, "PUSH {:?}", rr),
-            Instruction::POP(rr) => write!(f, "PUSH {:?}", rr),
+            Instruction::POP(rr) => write!(f, "POP {:?}", rr),
             Instruction::RST(n) => write!(f, "RST ${:X}", n),
             Instruction::LD_r_d8(r, n) => write!(f, "LD {:?}, ${:X}", r, n),
             Instruction::LD_r_r(r, r2) => write!(f, "LD {:?}, {:?}", r, r2),
-            Instruction::LD_r_HL(r) => write!(f, "LD {:?}, (HL)", r),
+            Instruction::LD_r_rr(r, rr) => write!(f, "LD {:?}, ({:?})", r, rr),
             Instruction::LD_rr_d16(rr, n) => write!(f, "LD {:?}, ${:X}", rr, n),
             Instruction::LD_r16_r(rr, r) => write!(f, "LD ({:?}), {:?}", rr, r),
             Instruction::LD_C_A => write!(f, "LD (C), A"),
@@ -137,8 +149,12 @@ impl ::fmt::Display for Instruction {
             Instruction::LDI_HL_A => write!(f, "LD (HL+), A"),
             Instruction::LDH_A_n(n) => write!(f, "LDH A, (0xFF00+${:X})", n),
             Instruction::LDH_n_A(n) => write!(f, "LDH (0xFF00+${:X}), A", n),
+            Instruction::LD_a16_SP(a) => write!(f, "LD (${:X}), SP", a),
+            Instruction::LD_a16_A(a) => write!(f, "LD (${:X}), A", a),
+            Instruction::LD_A_a16(a) => write!(f, "LD A, (${:X})", a),
             Instruction::BIT_b_r(b, r) => write!(f, "BIT {}, {:?}", b, r),
             Instruction::BIT_b_HL(b) => write!(f, "BIT {}, (HL)", b),
+            Instruction::RL_r(r) => write!(f, "RL {:?}", r),
         }
     }
 }
@@ -188,25 +204,29 @@ impl <'a> CPU<'a> {
             Instruction::XOR_HL => self.bitwise_hl(BitwiseOp::XOR),
             Instruction::OR_HL => self.bitwise_hl(BitwiseOp::OR),
             Instruction::SUB_r(r) => self.sub_r(r, false, true),
+            Instruction::SUB_d8(d) => self.sub_d8(d, false, true),
             Instruction::SUB_HL => self.sub_hl(false, true),
             Instruction::SBC_r(r) => self.sub_r(r, true, true),
+            Instruction::SBC_d8(d) => self.sub_d8(d, true, true),
             Instruction::SBC_HL => self.sub_hl(true, true),
             Instruction::CP_r(r) => self.sub_r(r, false, false),
+            Instruction::CP_d8(d) => self.sub_d8(d, false, false),
             Instruction::CP_HL => self.sub_hl(false, false),
+            Instruction::RLA => self.rl_r(Register8::A, false),
 
             Instruction::LD_r_d8(r, v) => self.ld_r_d8(r, v),
             Instruction::LD_rr_d16(r, v) => self.ld_rr_d16(r, v),
             Instruction::LD_r16_r(r16, r) => self.ld_r16_r(r16, r),
             Instruction::LD_r_r(to, from) => self.ld_r_r(to, from),
-            Instruction::LD_r_HL(r) => self.ld_r_hl(r),
+            Instruction::LD_r_rr(r, rr) => self.ld_r_rr(r, rr),
             Instruction::LD_C_A => self.ldd_c_a(),
             Instruction::LDD_HL_A => self.ldd_hl_a(),
             Instruction::LDI_HL_A => self.ldi_hl_a(),
             Instruction::LDH_n_A(n) => self.ldh_n_a(n),
             Instruction::LDH_A_n(n) => self.ldh_a_n(n),
-
-            Instruction::BIT_b_r(b, r) => self.bit_b_r(b, r),
-            Instruction::BIT_b_HL(b) => self.bit_b_hl(b),
+            Instruction::LD_A_a16(a) => self.ld_a_a16(a),
+            Instruction::LD_a16_A(a) => self.ld_a16_a(a),
+            Instruction::LD_a16_SP(a) => self.ld_a16_sp(a),
 
             Instruction::JR_n(n) => self.jr_n(n),
             Instruction::JR_cc_n(cc, n) => self.jr_cc_n(cc, n),
@@ -215,6 +235,10 @@ impl <'a> CPU<'a> {
             Instruction::PUSH(r) => self.push(r),
             Instruction::POP(r) => self.pop(r),
             Instruction::RST(a) => self.rst(a),
+
+            Instruction::BIT_b_r(b, r) => self.bit_b_r(b, r),
+            Instruction::BIT_b_HL(b) => self.bit_b_hl(b),
+            Instruction::RL_r(r) => self.rl_r(r, true),
         };
     }
 
@@ -241,6 +265,9 @@ impl <'a> CPU<'a> {
             0x05 => Instruction::DEC_r(Register8::B),
             0x06 => Instruction::LD_r_d8(Register8::B, self.fetch8()),
 
+            0x08 => Instruction::LD_a16_SP(self.fetch16()),
+
+            0x0A => Instruction::LD_r_rr(Register8::A, Register16::BC),
             0x0B => Instruction::DEC_rr(Register16::BC),
             0x0C => Instruction::INC_r(Register8::C),
             0x0D => Instruction::DEC_r(Register8::C),
@@ -252,9 +279,10 @@ impl <'a> CPU<'a> {
             0x14 => Instruction::INC_r(Register8::D),
             0x15 => Instruction::DEC_r(Register8::D),
             0x16 => Instruction::LD_r_d8(Register8::D, self.fetch8()), 
-
+            0x17 => Instruction::RLA,
             0x18 => Instruction::JR_n(self.fetch8()),
 
+            0x1A => Instruction::LD_r_rr(Register8::A, Register16::DE),
             0x1B => Instruction::DEC_rr(Register16::DE),
             0x1C => Instruction::INC_r(Register8::E),
             0x1D => Instruction::DEC_r(Register8::E),
@@ -293,7 +321,7 @@ impl <'a> CPU<'a> {
             0x43 => Instruction::LD_r_r(Register8::B, Register8::E),
             0x44 => Instruction::LD_r_r(Register8::B, Register8::H),
             0x45 => Instruction::LD_r_r(Register8::B, Register8::L),
-            0x46 => Instruction::LD_r_HL(Register8::B),
+            0x46 => Instruction::LD_r_rr(Register8::B, Register16::HL),
             0x47 => Instruction::LD_r_r(Register8::B, Register8::A),
             0x48 => Instruction::LD_r_r(Register8::C, Register8::B),
             0x49 => Instruction::LD_r_r(Register8::C, Register8::C),
@@ -301,7 +329,7 @@ impl <'a> CPU<'a> {
             0x4B => Instruction::LD_r_r(Register8::C, Register8::E),
             0x4C => Instruction::LD_r_r(Register8::C, Register8::H),
             0x4D => Instruction::LD_r_r(Register8::C, Register8::L),
-            0x4E => Instruction::LD_r_HL(Register8::C),
+            0x4E => Instruction::LD_r_rr(Register8::C, Register16::HL),
             0x4F => Instruction::LD_r_r(Register8::C, Register8::A),
             0x50 => Instruction::LD_r_r(Register8::D, Register8::B),
             0x51 => Instruction::LD_r_r(Register8::D, Register8::C),
@@ -309,7 +337,7 @@ impl <'a> CPU<'a> {
             0x53 => Instruction::LD_r_r(Register8::D, Register8::E),
             0x54 => Instruction::LD_r_r(Register8::D, Register8::H),
             0x55 => Instruction::LD_r_r(Register8::D, Register8::L),
-            0x56 => Instruction::LD_r_HL(Register8::D),
+            0x56 => Instruction::LD_r_rr(Register8::D, Register16::HL),
             0x57 => Instruction::LD_r_r(Register8::D, Register8::A),
             0x58 => Instruction::LD_r_r(Register8::E, Register8::B),
             0x59 => Instruction::LD_r_r(Register8::E, Register8::C),
@@ -317,7 +345,7 @@ impl <'a> CPU<'a> {
             0x5B => Instruction::LD_r_r(Register8::E, Register8::E),
             0x5C => Instruction::LD_r_r(Register8::E, Register8::H),
             0x5D => Instruction::LD_r_r(Register8::E, Register8::L),
-            0x5E => Instruction::LD_r_HL(Register8::E),
+            0x5E => Instruction::LD_r_rr(Register8::E, Register16::HL),
             0x5F => Instruction::LD_r_r(Register8::E, Register8::A),
             0x60 => Instruction::LD_r_r(Register8::H, Register8::B),
             0x61 => Instruction::LD_r_r(Register8::H, Register8::C),
@@ -325,7 +353,7 @@ impl <'a> CPU<'a> {
             0x63 => Instruction::LD_r_r(Register8::H, Register8::E),
             0x64 => Instruction::LD_r_r(Register8::H, Register8::H),
             0x65 => Instruction::LD_r_r(Register8::H, Register8::L),
-            0x66 => Instruction::LD_r_HL(Register8::H),
+            0x66 => Instruction::LD_r_rr(Register8::H, Register16::HL),
             0x67 => Instruction::LD_r_r(Register8::H, Register8::A),
             0x68 => Instruction::LD_r_r(Register8::L, Register8::B),
             0x69 => Instruction::LD_r_r(Register8::L, Register8::C),
@@ -333,7 +361,7 @@ impl <'a> CPU<'a> {
             0x6B => Instruction::LD_r_r(Register8::L, Register8::E),
             0x6C => Instruction::LD_r_r(Register8::L, Register8::H),
             0x6D => Instruction::LD_r_r(Register8::L, Register8::L),
-            0x6E => Instruction::LD_r_HL(Register8::L),
+            0x6E => Instruction::LD_r_rr(Register8::L, Register16::HL),
             0x6F => Instruction::LD_r_r(Register8::L, Register8::A),
             0x70 => Instruction::LD_r16_r(Register16::HL, Register8::B),
             0x71 => Instruction::LD_r16_r(Register16::HL, Register8::C),
@@ -349,7 +377,7 @@ impl <'a> CPU<'a> {
             0x7B => Instruction::LD_r_r(Register8::A, Register8::E),
             0x7C => Instruction::LD_r_r(Register8::A, Register8::H),
             0x7D => Instruction::LD_r_r(Register8::A, Register8::L),
-            0x7E => Instruction::LD_r_HL(Register8::A),
+            0x7E => Instruction::LD_r_rr(Register8::A, Register16::HL),
             0x7F => Instruction::LD_r_r(Register8::A, Register8::A),
             0x80 => Instruction::ADD_A_r(Register8::B),
             0x81 => Instruction::ADD_A_r(Register8::C),
@@ -434,10 +462,12 @@ impl <'a> CPU<'a> {
 
             0xD4 => Instruction::CALL(Some(ConditionFlag::NC), self.fetch16()),
             0xD5 => Instruction::PUSH(Register16::DE),
+            0xD6 => Instruction::SUB_d8(self.fetch8()),
             0xD7 => Instruction::RST(0x10),
             0xD8 => Instruction::RET(Some(ConditionFlag::C)),
             0xDC => Instruction::CALL(Some(ConditionFlag::C), self.fetch16()),
 
+            0xDE => Instruction::SBC_d8(self.fetch8()),
             0xDF => Instruction::RST(0x18),
 
             0xE0 => Instruction::LDH_n_A(self.fetch8()),
@@ -448,12 +478,17 @@ impl <'a> CPU<'a> {
 
             0xE7 => Instruction::RST(0x20),
 
+            0xEA => Instruction::LD_a16_A(self.fetch16()),
+
             0xEF => Instruction::RST(0x28),
 
             0xF0 => Instruction::LDH_A_n(self.fetch8()),
 
             0xF7 => Instruction::RST(0x30),
 
+            0xFA => Instruction::LD_A_a16(self.fetch16()),
+
+            0xFE => Instruction::CP_d8(self.fetch8()),
             0xFF => Instruction::RST(0x38),
 
             n => {
@@ -465,7 +500,15 @@ impl <'a> CPU<'a> {
     // Decodes extended instruction following 0xCB instruction.
     fn decode_extended(&mut self) -> Instruction {
         match self.fetch8() {
-            // BIT instructions.
+            0x10 => Instruction::RL_r(Register8::B),
+            0x11 => Instruction::RL_r(Register8::C),
+            0x12 => Instruction::RL_r(Register8::D),
+            0x13 => Instruction::RL_r(Register8::E),
+            0x14 => Instruction::RL_r(Register8::H),
+            0x15 => Instruction::RL_r(Register8::L),
+
+            0x17 => Instruction::RL_r(Register8::A),
+
             0x40 => Instruction::BIT_b_r(0, Register8::B),
             0x41 => Instruction::BIT_b_r(0, Register8::C),
             0x42 => Instruction::BIT_b_r(0, Register8::D),
@@ -532,7 +575,7 @@ impl <'a> CPU<'a> {
             0x7F => Instruction::BIT_b_r(7, Register8::A),
 
             n => {
-                panic!("Unexpected extended opcode {} encountered", n);
+                panic!("Unexpected extended opcode 0x{:X} encountered", n);
             }
         }
     }
@@ -759,6 +802,16 @@ impl <'a> CPU<'a> {
         4
     }
 
+    // SUB d8
+    // SBC A, d8
+    // CP d8
+    // Flags:
+    // * 1 * *
+    fn sub_d8(&mut self, d: u8, carry: bool, store: bool) -> u32 {
+        self.sub(d, carry, store);
+        8
+    }
+
     // LD r, r
     // Flags:
     // Z N H C
@@ -769,12 +822,12 @@ impl <'a> CPU<'a> {
         4
     }
 
-    // LD r, (HL)
+    // LD r, (rr)
     // Flags:
     // Z N H C
     // - - - -
-    fn ld_r_hl(&mut self, r: Register8) -> u32 {
-        let v = self.mmu.read8(self.get_reg16(Register16::HL));
+    fn ld_r_rr(&mut self, r: Register8, rr: Register16) -> u32 {
+        let v = self.mmu.read8(self.get_reg16(rr));
         self.set_reg8(r, v);
         8
     }
@@ -871,6 +924,36 @@ impl <'a> CPU<'a> {
         12
     }
 
+    // LD A, (a16)
+    // Flags:
+    // Z N H C
+    // - - - -
+    fn ld_a_a16(&mut self, a: u16) -> u32 {
+        let v = self.mmu.read8(a);
+        self.set_reg8(Register8::A, v);
+        16
+    }
+
+    // LD (a16), A
+    // Flags:
+    // Z N H C
+    // - - - -
+    fn ld_a16_a(&mut self, a: u16) -> u32 {
+        let v = self.get_reg8(Register8::A);
+        self.mmu.write8(a, v);
+        16
+    }
+
+    // LD (a16), SP
+    // Flags:
+    // Z N H C
+    // - - - -
+    fn ld_a16_sp(&mut self, a: u16) -> u32 {
+        let v = self.get_reg16(Register16::SP);
+        self.mmu.write16(a, v);
+        20
+    }
+
     fn bitwise(&mut self, op: BitwiseOp, v: u8) {
         let a = self.get_reg8(Register8::A);
         let a = match op {
@@ -940,6 +1023,35 @@ impl <'a> CPU<'a> {
         }
 
         16
+    }
+
+    // RL r
+    // Flags:
+    // Z N H C
+    // * 0 0 *
+    fn rl_r(&mut self, r: Register8, extended: bool) -> u32 {
+        let v = self.get_reg8(r);
+        let orig = v;
+        let carry = self.f & FLAG_CARRY > 0;
+
+        self.f = 0;
+        if v & 0x80 > 0 {
+            self.f |= FLAG_CARRY;
+        }
+
+        let mut v = v << 1;
+        // Only extended RL instructions set zero flag.
+        if extended && v == 0 {
+            self.f |= FLAG_ZERO;
+        }
+
+        if carry {
+            v |= 1;
+        }
+
+        self.set_reg8(r, v);
+
+        if extended { 8 } else { 4 }
     }
 
     fn call(&mut self, cc: Option<ConditionFlag>, addr: u16) -> u32 {
