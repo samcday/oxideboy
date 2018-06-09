@@ -6,7 +6,7 @@ use std::fs::File;
 
 struct Mem {
     bootrom: [u8; 0x100],
-    rom: [u8; 0x3FFF],
+    rom: [u8; 0x8000],
 }
 
 impl lr35902::MMU for Mem {
@@ -57,7 +57,7 @@ fn main() -> io::Result<()> {
     f.read(&mut bootrom)?;
 
     let mut f = File::open("game.rom")?;
-    let mut rom = [0; 0x3FFF];
+    let mut rom = [0; 0x8000];
     f.read(&mut rom)?;
 
 
