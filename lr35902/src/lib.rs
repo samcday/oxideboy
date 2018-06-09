@@ -122,6 +122,7 @@ enum Instruction {
     LD_A_HLD,
     LD_A_HLI,
     LD_HL_SP(i8),
+    LD_HL_d8(u8),
     LD_SP_HL,
     LDH_A_n(u8),
     LDH_n_A(u8),
@@ -144,6 +145,10 @@ enum Instruction {
     RR_HL,
     RRC_r(Register8),
     RRC_HL,
+    SLA_r(Register8),
+    SLA_HL,
+    SRA_r(Register8),
+    SRA_HL,
     SWAP_r(Register8),
     SWAP_HL,
 }
@@ -219,6 +224,7 @@ impl ::fmt::Display for Instruction {
             Instruction::LD_A_HLD => write!(f, "LD A, (HL-)"),
             Instruction::LD_A_HLI => write!(f, "LD A, (HL+)"),
             Instruction::LD_HL_SP(d) => write!(f, "LD HL, (SP+${:X})", d),
+            Instruction::LD_HL_d8(d) => write!(f, "LD (HL), ${:X}", d),
             Instruction::LD_SP_HL => write!(f, "LD SP, HL"),
             Instruction::LDH_A_n(n) => write!(f, "LDH A, (0xFF00+${:X})", n),
             Instruction::LDH_n_A(n) => write!(f, "LDH (0xFF00+${:X}), A", n),
@@ -240,6 +246,10 @@ impl ::fmt::Display for Instruction {
             Instruction::RR_HL => write!(f, "RR (HL)"),
             Instruction::RRC_r(r) => write!(f, "RRC {:?}", r),
             Instruction::RRC_HL => write!(f, "RRC (HL)"),
+            Instruction::SLA_r(r) => write!(f, "SLA {:?}", r),
+            Instruction::SLA_HL => write!(f, "SLA (HL)"),
+            Instruction::SRA_r(r) => write!(f, "SRA {:?}", r),
+            Instruction::SRA_HL => write!(f, "SRA (HL)"),
             Instruction::SWAP_r(r) => write!(f, "SWAP {:?}", r),
             Instruction::SWAP_HL => write!(f, "SWAP (HL)"),
         }
@@ -409,6 +419,7 @@ impl <'a> CPU<'a> {
             Instruction::LD_A_HLD => self.ld_a_hld(),
             Instruction::LD_A_HLI => self.ld_a_hli(),
             Instruction::LD_HL_SP(d) => self.ld_hl_sp(d),
+            Instruction::LD_HL_d8(d) => self.ld_hl_d8(d),
             Instruction::LD_SP_HL => self.ld_sp_hl(),
             Instruction::LDH_n_A(n) => self.ldh_n_a(n),
             Instruction::LDH_A_n(n) => self.ldh_a_n(n),
@@ -439,6 +450,10 @@ impl <'a> CPU<'a> {
             Instruction::SRL_HL => self.srl_hl(),
             Instruction::RR_r(r) => self.rr_r(r, true),
             Instruction::RR_HL => self.rr_hl(),
+            Instruction::SLA_r(r) => self.sla_r(r),
+            Instruction::SLA_HL => self.sla_hl(),
+            Instruction::SRA_r(r) => self.sra_r(r),
+            Instruction::SRA_HL => self.sra_hl(),
             Instruction::RRC_r(r) => self.rrc_r(r, true),
             Instruction::RRC_HL => self.rrc_hl(),
             Instruction::SWAP_r(r) => self.swap_r(r),
@@ -570,7 +585,7 @@ impl <'a> CPU<'a> {
             0x33 => Instruction::INC_rr(Register16::SP),
 
             0x35 => Instruction::DEC_HL,
-
+            0x36 => Instruction::LD_HL_d8(self.fetch8()),
             0x37 => Instruction::SCF,
             0x38 => Instruction::JR_cc_n(ConditionFlag::C, self.fetch8()),
             0x39 => Instruction::ADD_HL_rr(Register16::SP),
@@ -812,7 +827,22 @@ impl <'a> CPU<'a> {
             0x1D => Instruction::RR_r(Register8::L),
             0x1E => Instruction::RR_HL,
             0x1F => Instruction::RR_r(Register8::A),
-
+            0x20 => Instruction::SLA_r(Register8::B),
+            0x21 => Instruction::SLA_r(Register8::C),
+            0x22 => Instruction::SLA_r(Register8::D),
+            0x23 => Instruction::SLA_r(Register8::E),
+            0x24 => Instruction::SLA_r(Register8::H),
+            0x25 => Instruction::SLA_r(Register8::L),
+            0x26 => Instruction::SLA_HL,
+            0x27 => Instruction::SLA_r(Register8::A),
+            0x28 => Instruction::SRA_r(Register8::B),
+            0x29 => Instruction::SRA_r(Register8::C),
+            0x2A => Instruction::SRA_r(Register8::D),
+            0x2B => Instruction::SRA_r(Register8::E),
+            0x2C => Instruction::SRA_r(Register8::H),
+            0x2D => Instruction::SRA_r(Register8::L),
+            0x2E => Instruction::SRA_HL,
+            0x2F => Instruction::SRA_r(Register8::A),
             0x30 => Instruction::SWAP_r(Register8::B),
             0x31 => Instruction::SWAP_r(Register8::C),
             0x32 => Instruction::SWAP_r(Register8::D),
@@ -1554,6 +1584,16 @@ impl <'a> CPU<'a> {
         12
     }
 
+    // LD (HL), d8
+    // Flags:
+    // Z N H C
+    // - - - -
+    fn ld_hl_d8(&mut self, d: u8) -> u32 {
+        let addr = self.get_reg16(Register16::HL);
+        self.mem_write8(addr, d);
+        12
+    }
+
     // LD SP, HL
     // Flags:
     // Z N H C
@@ -1854,6 +1894,70 @@ impl <'a> CPU<'a> {
         let v = self.rr(v, true);
         self.mem_write8(addr, v);
         16
+    }
+
+    // SLA r
+    // Flags:
+    // Z N H C
+    // * 0 0 C
+    fn sla_r(&mut self, r: Register8) -> u32 {
+        let v = self.get_reg8(r);
+        self.f = 0;
+        if v & 0x80 > 0 {
+            self.f |= FLAG_CARRY;
+        }
+        let v = v << 1;
+        if v == 0 {
+            self.f |= FLAG_ZERO;
+        }
+        self.set_reg8(r, v);
+        8
+    }
+    fn sla_hl(&mut self) -> u32 {
+        let addr = self.get_reg16(Register16::HL);
+        let v = self.mem_read8(addr);
+        self.f = 0;
+        if v & 0x80 > 0 {
+            self.f |= FLAG_CARRY;
+        }
+        let v = v << 1;
+        if v == 0 {
+            self.f |= FLAG_ZERO;
+        }
+        self.mem_write8(addr, v);
+        8
+    }
+
+    // SRA r
+    // Flags:
+    // Z N H C
+    // * 0 0 *
+    fn sra_r(&mut self, r: Register8) -> u32 {
+        let v = self.get_reg8(r);
+        self.f = 0;
+        if v & 0x01 > 0 {
+            self.f |= FLAG_CARRY;
+        }
+        let v = (v >> 1) | (v & 0x80);
+        if v == 0 {
+            self.f |= FLAG_ZERO;
+        }
+        self.set_reg8(r, v);
+        8
+    }
+    fn sra_hl(&mut self) -> u32 {
+        let addr = self.get_reg16(Register16::HL);
+        let v = self.mem_read8(addr);
+        self.f = 0;
+        if v & 0x01 > 0 {
+            self.f |= FLAG_CARRY;
+        }
+        let v = (v >> 1) | (v & 0x80);
+        if v == 0 {
+            self.f |= FLAG_ZERO;
+        }
+        self.mem_write8(addr, v);
+        8
     }
 
     // RRC r
