@@ -2,6 +2,8 @@ use std::fmt;
 
 use std::io::{self, Write};
 
+static BOOT_ROM: &[u8; 256] = include_bytes!("boot.rom");
+
 const FLAG_ZERO: u8      = 0b10000000;
 const FLAG_SUBTRACT: u8  = 0b01000000;
 const FLAG_HALF_CARRY:u8 = 0b00100000;
@@ -60,6 +62,7 @@ enum Instruction {
     DAA,
     CPL,
     CCF,
+    SCF,
     ADD_A_r(Register8),
     ADD_A_d8(u8),
     ADD_A_HL,
@@ -147,6 +150,7 @@ impl ::fmt::Display for Instruction {
             Instruction::DAA => write!(f, "DAA"),
             Instruction::CPL => write!(f, "CPL"),
             Instruction::CCF => write!(f, "CCF"),
+            Instruction::SCF => write!(f, "SCF"),
             Instruction::ADD_A_r(r) => write!(f, "ADD A, {:?}", r),
             Instruction::ADD_A_d8(d) => write!(f, "ADD A, ${:X}", d),
             Instruction::ADD_A_HL => write!(f, "ADD A, (HL)"),
@@ -238,6 +242,11 @@ pub struct CPU<'a> {
     sp: u16,
     pc: u16,
     ic: u32,
+    bootrom_enabled: bool,
+
+    // Interrupts.
+    ie: u8,
+    if_: u8,
     ime: bool,
     ime_defer: Option<bool>,
 
@@ -257,8 +266,8 @@ pub struct CPU<'a> {
 impl <'a> CPU<'a> {
     pub fn new(mmu: &'a mut (MMU + 'a)) -> CPU {
         CPU{
-            a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, sp: 0, pc: 0, ic: 0,
-            ime: false, ime_defer: None,
+            a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, sp: 0, pc: 0, ic: 0, bootrom_enabled: true,
+            ime: false, ime_defer: None, ie: 0, if_: 0,
             vram: [0; 0x2000],
             ram: [0; 0x2000],
             oam: [0; 0x9F],
@@ -268,21 +277,55 @@ impl <'a> CPU<'a> {
     }
 
     // Runs the CPU for a single instruction.
-    // This is the main "Fetch, decode, execute" cycle
+    // This is the main "Fetch, decode, execute" cycle.
     pub fn run(&mut self) {
-        let addr = self.pc;
-        let inst = self.decode();
-
-        // println!("Inst: {} ; ${:04X}", inst, addr);
         if self.sb > 0 {
             io::stdout().write(&[self.sb]).unwrap();
-            // println!("wooo: {}", self.sb as char);
             self.sb = 0;
         }
 
-        if self.ime {
-            // Service interrupts.
+        // Service interrupts.
+        if self.ime && (self.if_ & self.ie) > 0 {
+            let addr = match self.if_ & self.ie {
+                // P10-P13 input signal goes low
+                0x10 => {
+                    self.if_ ^= 0x10;
+                    0x60
+                },
+                // Serial transfer completion
+                0x8 => {
+                    self.if_ ^= 0x8;
+                    0x58
+                },
+                // Timer overflow
+                0x4 => {
+                    self.if_ ^= 0x4;
+                    0x50
+                },
+                // LCDC status interrupt
+                0x2 => {
+                    self.if_ ^= 0x2;
+                    0x48
+                },
+                // Vertical blanking
+                0x1 => {
+                    self.if_ ^= 0x1;
+                    0x40
+                },
+                _ => unreachable!("Non-existent interrupt ${:X} encountered", 123)
+            };
+
+            // println!("Servicing interrupt");
+            self.sp -= 2;
+            let sp = self.sp;
+            let pc = self.pc;
+            self.mem_write16(sp, pc);
+            self.pc = addr;
         }
+        
+        let _addr = self.pc;
+        let inst = self.decode();
+        // println!("Inst: {} ; ${:04X}", inst, _addr);
 
         // Apply deferred change to IME.
         if self.ime_defer.is_some() {
@@ -300,6 +343,7 @@ impl <'a> CPU<'a> {
             Instruction::DAA => self.daa(),
             Instruction::CPL => self.cpl(),
             Instruction::CCF => self.ccf(),
+            Instruction::SCF => self.scf(),
             Instruction::ADD_A_r(r) => self.add_r(r, false),
             Instruction::ADD_SP_r8(d) => self.add_sp_r8(d),
             Instruction::ADD_A_d8(d) => self.add_d8(d, false),
@@ -380,6 +424,8 @@ impl <'a> CPU<'a> {
 
     fn mem_read8(&self, addr: u16) -> u8 {
         match addr {
+            0x0000 ... 0x100 if self.bootrom_enabled => BOOT_ROM[addr as usize],
+
             0x0000 ... 0x7FFF => self.mmu.read8(addr),
             0x8000 ... 0x9FFF => self.vram[(addr - 0x8000) as usize],
             0xA000 ... 0xBFFF => self.mmu.read8(addr),
@@ -390,10 +436,12 @@ impl <'a> CPU<'a> {
             0xFF00            => 0xFF, // TODO: P1 (joypad info)
             0xFF01            => self.sb,
             0xFF02            => self.sc,
+            0xFF0F            => self.if_,
+            0xFF50            => if self.bootrom_enabled { 0 } else { 1 },
             0xFF03 ... 0xFF79 => 0xFF, // TODO
             0xFF80 ... 0xFFFE => self.wram[(addr - 0xFF80) as usize],
-            0xFFFF            => 0xFF, // TODO
-            _ => panic!("Emulator not designed to run in an environment where the laws of physics no longer apply")
+            0xFFFF            => self.ie,
+            _ => unreachable!("Emulator not designed to run in an environment where the laws of physics no longer apply")
         }
     }
 
@@ -405,6 +453,8 @@ impl <'a> CPU<'a> {
 
     fn mem_write8(&mut self, addr: u16, v: u8) {
         match addr {
+            0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; },
+
             0x0000 ... 0x7FFF => { }, // TODO: this is forwarded to MBC.
             0x8000 ... 0x9FFF => { self.vram[(addr - 0x8000) as usize] = v },
             0xA000 ... 0xBFFF => { }, // TODO: this is forwarded to MBC.
@@ -414,10 +464,11 @@ impl <'a> CPU<'a> {
             0xFF00            => { }, // TODO: P1 (joypad info)
             0xFF01            => { self.sb = v },
             0xFF02            => { self.sc = v },
+            0xFF0F            => { self.if_ = v & 0x1F},
             0xFF03 ... 0xFF79 => { }, // TODO
             0xFF80 ... 0xFFFE => { self.wram[(addr - 0xFF80) as usize] = v },
-            0xFFFF            => { }, // TODO
-            _ => panic!("Emulator not designed to run in an environment where the laws of physics no longer apply")
+            0xFFFF            => { self.ie = v & 0x1F },
+            _ => unreachable!("Emulator not designed to run in an environment where the laws of physics no longer apply")
         };
     }
 
@@ -494,6 +545,7 @@ impl <'a> CPU<'a> {
             0x33 => Instruction::INC_rr(Register16::SP),
 
             0x35 => Instruction::DEC_HL,
+            0x36 => Instruction::SCF,
 
             0x38 => Instruction::JR_cc_n(ConditionFlag::C, self.fetch8()),
             0x39 => Instruction::ADD_HL_rr(Register16::SP),
@@ -1197,6 +1249,16 @@ impl <'a> CPU<'a> {
     fn ccf(&mut self) -> u32 {
         self.f &= !(FLAG_SUBTRACT | FLAG_HALF_CARRY);
         self.f ^= FLAG_CARRY;
+        4
+    }
+
+    // SCF
+    // Flags:
+    // Z N H C
+    // - 0 0 1
+    fn scf(&mut self) -> u32 {
+        self.f &= !(FLAG_SUBTRACT | FLAG_HALF_CARRY);
+        self.f |= FLAG_CARRY;
         4
     }
 
