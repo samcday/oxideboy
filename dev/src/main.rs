@@ -30,7 +30,9 @@ impl lr35902::MMU for Mem {
 }
 
 fn main() -> io::Result<()> {
-    let mut f = File::open("game.rom")?;
+    let args: Vec<String> = std::env::args().collect();
+
+    let mut f = File::open(&args[1])?;
     let mut rom = [0; 0x8000];
     f.read(&mut rom)?;
 
