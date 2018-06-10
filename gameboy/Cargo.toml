@@ -1,5 +1,5 @@
 [package]
-name = "dev"
+name = "gameboy"
 version = "0.1.0"
 authors = ["Sam Day <me@samcday.com>"]
 
@@ -7,6 +7,3 @@ authors = ["Sam Day <me@samcday.com>"]
 
 [dependencies.lr35902]
 path = "../lr35902"
-
-[dependencies.gameboy]
-path = "../gameboy"

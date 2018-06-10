@@ -1,5 +1,4 @@
 use std::fmt;
-
 use std::io::{self, Write};
 
 static BOOT_ROM: &[u8; 256] = include_bytes!("boot.rom");
@@ -16,49 +15,23 @@ enum FlagOp {
     C(bool),
 }
 
-pub trait MMU {
-    fn read8(&self, addr: u16) -> u8;
-    fn write8(&mut self, addr: u16, v: u8);
-
-    fn read16(&self, addr: u16) -> u16;
-    fn write16(&mut self, addr: u16, v: u16);
+pub trait Cartridge {
+    fn read(&self, addr: u16) -> u8;
+    fn write(&mut self, addr: u16, v: u8);
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Reg8 {
-    A,
-    B,
-    C,
-    D,
-    E,
-    H,
-    L,
-}
+enum Reg8 { A, B, C, D, E, H, L }
 use Reg8::{*};
 
 #[derive(Clone, Copy, Debug)]
-enum Reg16 {
-    AF,
-    BC,
-    DE,
-    HL,
-    SP,
-}
+enum Reg16 { AF, BC, DE, HL, SP }
 use Reg16::{*};
 
 #[derive(Clone, Copy, Debug)]
-enum FlagCondition {
-    NZ,
-    Z,
-    NC,
-    C,
-}
+enum FlagCondition { NZ, Z, NC, C }
 
-enum BitwiseOp {
-    XOR,
-    OR,
-    AND,
-}
+enum BitwiseOp { XOR, OR, AND }
 
 #[derive(Clone, Copy, Debug)]
 enum Operand8 {
@@ -200,6 +173,7 @@ enum Inst {
 
     ADD(Operand8),
     ADD16(Reg16),
+    ADD_SP_r8(i8),
     ADC(Operand8),
     SUB(Operand8),
     SBC(Operand8),
@@ -207,31 +181,33 @@ enum Inst {
     DEC8(Operand8),
     INC16(Reg16),
     DEC16(Reg16),
-
-    RLA,
-    RLCA,
-    RRA,
-    RRCA,
+    DAA,
 
     LD8(Operand8, Operand8),
     LD16(Operand16, Operand16),
+    LD_HL_SP(i8),
 
     CP(Operand8),
     AND(Operand8),
     OR(Operand8),
     XOR(Operand8),
 
+    RLA,
+    RLCA,
+    RRA,
+    RRCA,
     RLC(Operand8),
     RRC(Operand8),
     RL(Operand8),
     RR(Operand8),
     SLA(Operand8),
     SRA(Operand8),
-    SWAP(Operand8),
     SRL(Operand8),
+
     BIT(u8, Operand8),
-    RES(u8, Operand8),
     SET(u8, Operand8),
+    RES(u8, Operand8),
+    SWAP(Operand8),
 
     JP(Option<FlagCondition>, Operand16),
     JR(Option<FlagCondition>, u8),
@@ -242,73 +218,67 @@ enum Inst {
     RST(u8),
     RETI,
 
-    DAA,
     CPL,
     CCF,
     SCF,
-
-    ADD_SP_r8(i8),
-    LD_HL_SP(i8),
 }
 
 impl ::fmt::Display for Inst {
     fn fmt(&self, f: &mut ::fmt::Formatter) -> ::fmt::Result {
         match self {
-            Inst::NOP => write!(f,  "NOP"),
-            Inst::ADD(o) => write!(f, "ADD A, {}", o),
             Inst::ADC(o) => write!(f, "ADC A, {}", o),
-            Inst::SUB(o) => write!(f, "SUB A, {}", o),
-            Inst::SBC(o) => write!(f, "SBC A, {}", o),
-            Inst::CP(o) => write!(f, "CP {}", o),
-            Inst::LD8(l, r) => write!(f, "LD {}, {}", l, r),
-            Inst::LD16(l, r) => write!(f, "LD {}, {}", l, r),
-            Inst::INC8(o) => write!(f, "INC {}", o),
-            Inst::DEC8(o) => write!(f, "DEC {}", o),
-            Inst::AND(o) => write!(f, "AND {}", o),
-            Inst::OR(o) => write!(f, "OR {}", o),
-            Inst::XOR(o) => write!(f, "XOR {}", o),
-
-            Inst::RLC(o) => write!(f, "RLC {}", o),
-            Inst::RRC(o) => write!(f, "RRC {}", o),
-            Inst::RL(o) => write!(f, "RL {}", o),
-            Inst::RR(o) => write!(f, "RR {}", o),
-            Inst::SLA(o) => write!(f, "SLA {}", o),
-            Inst::SRA(o) => write!(f, "SRA {}", o),
-            Inst::SWAP(o) => write!(f, "SWAP {}", o),
-            Inst::SRL(o) => write!(f, "SRL {}", o),
-            Inst::BIT(b, o) => write!(f, "BIT {}, {:?}", b, o),
-            Inst::RES(b, o) => write!(f, "RES {}, {:?}", b, o),
-            Inst::SET(b, o) => write!(f, "SET {}, {:?}", b, o),
-
-            Inst::EI => write!(f,  "EI"),
-            Inst::DI => write!(f,  "DI"),
-            Inst::RETI => write!(f,  "RETI"),
-            Inst::STOP => write!(f,  "STOP"),
-            Inst::HALT => write!(f,  "HALT"),
-            Inst::DAA => write!(f, "DAA"),
-            Inst::CPL => write!(f, "CPL"),
-            Inst::CCF => write!(f, "CCF"),
-            Inst::SCF => write!(f, "SCF"),
+            Inst::ADD(o) => write!(f, "ADD A, {}", o),
             Inst::ADD16(rr) => write!(f, "ADD HL, {:?}", rr),
             Inst::ADD_SP_r8(d) => write!(f, "ADD SP, ${:X}", d),
-            Inst::INC16(rr) => write!(f, "INC {:?}", rr),
+            Inst::AND(o) => write!(f, "AND {}", o),
+            Inst::BIT(b, o) => write!(f, "BIT {}, {:?}", b, o),
+            Inst::CALL(None, n) => write!(f, "CALL ${:X}", n),
+            Inst::CALL(Some(cc), n) => write!(f, "CALL {:?} ${:X}", cc, n),
+            Inst::CCF => write!(f, "CCF"),
+            Inst::CP(o) => write!(f, "CP {}", o),
+            Inst::CPL => write!(f, "CPL"),
+            Inst::DAA => write!(f, "DAA"),
             Inst::DEC16(o) => write!(f, "DEC {:?}", o),
-            Inst::RLA => write!(f, "RLA"),
-            Inst::RLCA => write!(f, "RLCA"),
-            Inst::RRA => write!(f, "RRA"),
-            Inst::RRCA => write!(f, "RRCA"),
+            Inst::DEC8(o) => write!(f, "DEC {}", o),
+            Inst::DI => write!(f,  "DI"),
+            Inst::EI => write!(f,  "EI"),
+            Inst::HALT => write!(f,  "HALT"),
+            Inst::INC16(rr) => write!(f, "INC {:?}", rr),
+            Inst::INC8(o) => write!(f, "INC {}", o),
             Inst::JP(None, o) => write!(f, "JP {}", o),
             Inst::JP(Some(cc), o) => write!(f, "JP {:?}, {}", cc, o),
             Inst::JR(None, n) => write!(f, "JR ${:X}", n),
             Inst::JR(Some(cc), n) => write!(f, "JR {:?}, ${:X}", cc, n),
-            Inst::CALL(Some(cc), n) => write!(f, "CALL {:?} ${:X}", cc, n),
-            Inst::CALL(None, n) => write!(f, "CALL ${:X}", n),
-            Inst::RET(Some(cc)) => write!(f, "RET {:?}", cc),
-            Inst::RET(None) => write!(f, "RET"),
-            Inst::PUSH(rr) => write!(f, "PUSH {:?}", rr),
-            Inst::POP(rr) => write!(f, "POP {:?}", rr),
-            Inst::RST(n) => write!(f, "RST ${:X}", n),
+            Inst::LD16(l, r) => write!(f, "LD {}, {}", l, r),
+            Inst::LD8(l, r) => write!(f, "LD {}, {}", l, r),
             Inst::LD_HL_SP(d) => write!(f, "LD HL, (SP+${:X})", d),
+            Inst::NOP => write!(f,  "NOP"),
+            Inst::OR(o) => write!(f, "OR {}", o),
+            Inst::POP(rr) => write!(f, "POP {:?}", rr),
+            Inst::PUSH(rr) => write!(f, "PUSH {:?}", rr),
+            Inst::RES(b, o) => write!(f, "RES {}, {:?}", b, o),
+            Inst::RET(None) => write!(f, "RET"),
+            Inst::RET(Some(cc)) => write!(f, "RET {:?}", cc),
+            Inst::RETI => write!(f,  "RETI"),
+            Inst::RL(o) => write!(f, "RL {}", o),
+            Inst::RLA => write!(f, "RLA"),
+            Inst::RLC(o) => write!(f, "RLC {}", o),
+            Inst::RLCA => write!(f, "RLCA"),
+            Inst::RR(o) => write!(f, "RR {}", o),
+            Inst::RRA => write!(f, "RRA"),
+            Inst::RRC(o) => write!(f, "RRC {}", o),
+            Inst::RRCA => write!(f, "RRCA"),
+            Inst::RST(n) => write!(f, "RST ${:X}", n),
+            Inst::SBC(o) => write!(f, "SBC A, {}", o),
+            Inst::SCF => write!(f, "SCF"),
+            Inst::SET(b, o) => write!(f, "SET {}, {:?}", b, o),
+            Inst::SLA(o) => write!(f, "SLA {}", o),
+            Inst::SRA(o) => write!(f, "SRA {}", o),
+            Inst::SRL(o) => write!(f, "SRL {}", o),
+            Inst::STOP => write!(f,  "STOP"),
+            Inst::SUB(o) => write!(f, "SUB A, {}", o),
+            Inst::SWAP(o) => write!(f, "SWAP {}", o),
+            Inst::XOR(o) => write!(f, "XOR {}", o),
         }
     }
 }
@@ -351,11 +321,11 @@ pub struct CPU<'a> {
     sb: u8,
     sc: u8,
 
-    mmu: &'a mut (MMU + 'a),
+    cart: &'a mut (Cartridge + 'a),
 }
 
 impl <'a> CPU<'a> {
-    pub fn new(mmu: &'a mut (MMU + 'a)) -> CPU {
+    pub fn new(cart: &'a mut (Cartridge + 'a)) -> CPU {
         CPU{
             a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, sp: 0, pc: 0,
             bootrom_enabled: true,
@@ -363,7 +333,7 @@ impl <'a> CPU<'a> {
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
             clock_count: 0, tima: 0, tma: 0, tac: 0,
             sb: 0, sc: 0,
-            mmu}
+            cart}
     }
 
     // Runs the CPU for a single instruction.
@@ -516,9 +486,9 @@ impl <'a> CPU<'a> {
         match addr {
             0x0000 ... 0x100 if self.bootrom_enabled => BOOT_ROM[addr as usize],
 
-            0x0000 ... 0x7FFF => self.mmu.read8(addr),
+            0x0000 ... 0x7FFF => self.cart.read(addr),
             0x8000 ... 0x9FFF => self.vram[(addr - 0x8000) as usize],
-            0xA000 ... 0xBFFF => self.mmu.read8(addr),
+            0xA000 ... 0xBFFF => self.cart.read(addr),
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
             0xFE00 ... 0xFEFF => self.oam[(addr - 0xFE00) as usize],
@@ -552,9 +522,9 @@ impl <'a> CPU<'a> {
         match addr {
             0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; },
 
-            0x0000 ... 0x7FFF => { panic!("Write ${:X} to ${:X}", v, addr); }, // TODO: this is forwarded to MBC.
+            0x0000 ... 0x7FFF => { self.cart.write(addr, v); },
             0x8000 ... 0x9FFF => { self.vram[(addr - 0x8000) as usize] = v },
-            0xA000 ... 0xBFFF => { panic!("Write ${:X} to ${:X}", v, addr); }, // TODO: this is forwarded to MBC.
+            0xA000 ... 0xBFFF => { self.cart.write(addr, v); }, // TODO: this is forwarded to MBC.
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v },
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v },
             0xFE00 ... 0xFEFF => { self.oam[(addr - 0xFE00) as usize] = v },
@@ -1657,13 +1627,5 @@ impl <'a> CPU<'a> {
         }
         self.pc = self.pc.wrapping_add(n as i8 as i16 as u16);
         12
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
     }
 }
