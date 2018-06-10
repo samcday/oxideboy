@@ -18,7 +18,7 @@ pub trait MMU {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Register8 {
+enum Reg8 {
     A,
     B,
     C,
@@ -27,18 +27,20 @@ enum Register8 {
     H,
     L,
 }
+use Reg8::{*};
 
 #[derive(Clone, Copy, Debug)]
-enum Register16 {
+enum Reg16 {
     AF,
     BC,
     DE,
     HL,
     SP,
 }
+use Reg16::{*};
 
-#[derive(Debug)]
-enum ConditionFlag {
+#[derive(Clone, Copy, Debug)]
+enum FlagCondition {
     NZ,
     Z,
     NC,
@@ -51,9 +53,85 @@ enum BitwiseOp {
     AND,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Operand8 {
+    Reg(Reg8),        // Contents of a register.
+    Imm(u8),              // Immediate value.
+    Addr(Reg16),           // 16 bit register value interpreted as memory address.
+    ImmAddr(u16),         // Immediate 16 bit value interpreted as memory address.
+    ImmAddrHigh(u8)   // Immediate 8 bit value interpreted as memory address from $FF00.
+}
+
+impl Operand8 {
+    fn get(&self, cpu: &CPU) -> u8 {
+        match *self {
+            Operand8::Reg(r) => cpu.get_reg8(r),
+            Operand8::Imm(d) => d,
+            Operand8::Addr(rr) => cpu.mem_read8(cpu.get_reg16(rr)),
+            Operand8::ImmAddr(addr) => cpu.mem_read8(addr),
+            Operand8::ImmAddrHigh(addr) => cpu.mem_read8(0xFF00 + (addr as u16)),
+        }
+    }
+
+    fn set(&self, cpu: &mut CPU, v: u8) {
+        match *self {
+            Operand8::Reg(r) => cpu.set_reg8(r, v),
+            Operand8::Imm(_) => { panic!("An immediate value was given as an output operand.") },
+            Operand8::Addr(rr) => { let addr = cpu.get_reg16(rr); cpu.mem_write8(addr, v) },
+            Operand8::ImmAddr(addr) => cpu.mem_write8(addr, v),
+            Operand8::ImmAddrHigh(addr) => cpu.mem_write8(0xFF00 + (addr as u16), v),
+        };
+    }
+
+    fn cycle_cost(&self) -> u8 {
+        match *self {
+            Operand8::Reg(_) => 0,
+            Operand8::Imm(_) => 4,
+            Operand8::Addr(_) => 4,
+            Operand8::ImmAddr(_) => 12,
+            Operand8::ImmAddrHigh(_) => 8,
+        }
+    }
+}
+
+impl ::fmt::Display for Operand8 {
+    fn fmt(&self, f: &mut ::fmt::Formatter) -> ::fmt::Result {
+        match *self {
+            Operand8::Reg(r) => write!(f, "{:?}", r),
+            Operand8::Imm(d) => write!(f, "${:02X}", d),
+            Operand8::Addr(rr) => write!(f, "({:?})", rr),
+            Operand8::ImmAddr(addr) => write!(f, "({:#04X})", addr),
+            Operand8::ImmAddrHigh(addr) => write!(f, "(0xFF00+${:02X})", addr),
+        }
+    }
+}
+
 #[allow(non_camel_case_types)]
-enum Instruction {
+enum Inst {
     NOP,
+    ADD(Operand8),
+    ADC(Operand8),
+    SUB(Operand8),
+    SBC(Operand8),
+    CP(Operand8),
+    LD8(Operand8, Operand8),
+    INC8(Operand8),
+    DEC8(Operand8),
+    AND(Operand8),
+    OR(Operand8),
+    XOR(Operand8),
+
+    RLC(Operand8),
+    RRC(Operand8),
+    RL(Operand8),
+    RR(Operand8),
+    SLA(Operand8),
+    SRA(Operand8),
+    SWAP(Operand8),
+    SRL(Operand8),
+    BIT(u8, Operand8),
+    RES(u8, Operand8),
+    SET(u8, Operand8),
 
     EI,
     DI,
@@ -65,58 +143,29 @@ enum Instruction {
     CPL,
     CCF,
     SCF,
-    ADD_A_r(Register8),
-    ADD_A_d8(u8),
-    ADD_A_HL,
-    ADD_HL_rr(Register16),
+
+    ADD_HL_rr(Reg16),
     ADD_SP_r8(i8),
-    ADC_A_r(Register8),
-    ADC_A_d8(u8),
-    ADC_A_HL,
-    SUB_r(Register8),
-    SUB_d8(u8),
-    SUB_HL,
-    SBC_r(Register8),
-    SBC_d8(u8),
-    SBC_HL,
-    INC_r(Register8),
-    INC_HL,
-    INC_rr(Register16),
-    DEC_r(Register8),
-    DEC_HL,
-    DEC_rr(Register16),
-    AND_r(Register8),
-    AND_d8(u8),
-    AND_HL,
-    OR_r(Register8),
-    OR_d8(u8),
-    OR_HL,
-    XOR_r(Register8),
-    XOR_d8(u8),
-    XOR_HL,
-    CP_r(Register8),
-    CP_d8(u8),
-    CP_HL,
+    INC_rr(Reg16),
+    DEC_rr(Reg16),
     RLA,
     RLCA,
     RRA,
     RRCA,
 
-    JP(Option<ConditionFlag>, u16),
+    JP(Option<FlagCondition>, u16),
     JP_HL,
-    JR_cc_n(ConditionFlag, u8),
+    JR_cc_n(FlagCondition, u8),
     JR_n(u8),
-    CALL(Option<ConditionFlag>, u16),
-    RET(Option<ConditionFlag>),
-    PUSH(Register16),
-    POP(Register16),
+    CALL(Option<FlagCondition>, u16),
+    RET(Option<FlagCondition>),
+    PUSH(Reg16),
+    POP(Reg16),
     RST(u8),
 
-    LD_r_rr(Register8, Register16),
-    LD_r_d8(Register8, u8),
-    LD_rr_d16(Register16, u16),
-    LD_r16_r(Register16, Register8),
-    LD_r_r(Register8, Register8),
+    LD_r_rr(Reg8, Reg16),
+    LD_rr_d16(Reg16, u16),
+    LD_r16_r(Reg16, Reg8),
     LD_C_A,
     LD_A_C,
     LD_HLD_A,
@@ -124,140 +173,79 @@ enum Instruction {
     LD_A_HLD,
     LD_A_HLI,
     LD_HL_SP(i8),
-    LD_HL_d8(u8),
     LD_SP_HL,
-    LDH_A_n(u8),
-    LDH_n_A(u8),
     LD_a16_SP(u16),
-    LD_a16_A(u16),
-    LD_A_a16(u16),
-
-    BIT_b_r(u8, Register8),
-    BIT_b_HL(u8),
-    RES_b_r(u8, Register8),
-    RES_b_HL(u8),
-    SET_b_r(u8, Register8),
-    SET_b_HL(u8),
-    RL_r(Register8),
-    RL_HL,
-    RLC_r(Register8),
-    RLC_HL,
-    SRL_r(Register8),
-    SRL_HL,
-    RR_r(Register8),
-    RR_HL,
-    RRC_r(Register8),
-    RRC_HL,
-    SLA_r(Register8),
-    SLA_HL,
-    SRA_r(Register8),
-    SRA_HL,
-    SWAP_r(Register8),
-    SWAP_HL,
 }
 
-impl ::fmt::Display for Instruction {
+impl ::fmt::Display for Inst {
     fn fmt(&self, f: &mut ::fmt::Formatter) -> ::fmt::Result {
         match self {
-            Instruction::NOP => write!(f,  "NOP"),
-            Instruction::EI => write!(f,  "EI"),
-            Instruction::DI => write!(f,  "DI"),
-            Instruction::RETI => write!(f,  "RETI"),
-            Instruction::STOP => write!(f,  "STOP"),
-            Instruction::HALT => write!(f,  "HALT"),
-            Instruction::DAA => write!(f, "DAA"),
-            Instruction::CPL => write!(f, "CPL"),
-            Instruction::CCF => write!(f, "CCF"),
-            Instruction::SCF => write!(f, "SCF"),
-            Instruction::ADD_A_r(r) => write!(f, "ADD A, {:?}", r),
-            Instruction::ADD_A_d8(d) => write!(f, "ADD A, ${:X}", d),
-            Instruction::ADD_A_HL => write!(f, "ADD A, (HL)"),
-            Instruction::ADD_HL_rr(rr) => write!(f, "ADD HL, {:?}", rr),
-            Instruction::ADD_SP_r8(d) => write!(f, "ADD SP, ${:X}", d),
-            Instruction::ADC_A_r(r) => write!(f, "ADC A, {:?}", r),
-            Instruction::ADC_A_d8(d) => write!(f, "ADC A, ${:X}", d),
-            Instruction::ADC_A_HL => write!(f, "ADC A, (HL)"),
-            Instruction::SUB_r(r) => write!(f, "SUB {:?}", r),
-            Instruction::SUB_d8(d) => write!(f, "SUB ${:X}", d),
-            Instruction::SUB_HL => write!(f, "SUB (HL)"),
-            Instruction::SBC_r(r) => write!(f, "SBC A, {:?}", r),
-            Instruction::SBC_d8(d) => write!(f, "SBC A, ${:X}", d),
-            Instruction::SBC_HL => write!(f, "SBC (HL)"),
-            Instruction::INC_r(r) => write!(f, "INC {:?}", r),
-            Instruction::INC_HL => write!(f, "INC (HL)"),
-            Instruction::INC_rr(rr) => write!(f, "INC {:?}", rr),
-            Instruction::DEC_r(r) => write!(f, "DEC {:?}", r),
-            Instruction::DEC_rr(rr) => write!(f, "DEC {:?}", rr),
-            Instruction::DEC_HL => write!(f, "DEC (HL)"),
-            Instruction::AND_r(r) => write!(f, "AND {:?}", r),
-            Instruction::AND_d8(d) => write!(f, "AND ${:X}", d),
-            Instruction::AND_HL => write!(f, "AND (HL)"),
-            Instruction::OR_r(r) => write!(f, "OR {:?}", r),
-            Instruction::OR_d8(d) => write!(f, "OR ${:X}", d),
-            Instruction::OR_HL => write!(f, "OR (HL)"),
-            Instruction::XOR_r(r) => write!(f, "XOR {:?}", r),
-            Instruction::XOR_d8(d) => write!(f, "XOR ${:X}", d),
-            Instruction::XOR_HL => write!(f, "XOR (HL)"),
-            Instruction::CP_r(r) => write!(f, "CP {:?}", r),
-            Instruction::CP_d8(d) => write!(f, "CP ${:X}", d),
-            Instruction::CP_HL => write!(f, "CP (HL)"),
-            Instruction::RLA => write!(f, "RLA"),
-            Instruction::RLCA => write!(f, "RLCA"),
-            Instruction::RRA => write!(f, "RRA"),
-            Instruction::RRCA => write!(f, "RRCA"),
-            Instruction::JP(None, addr) => write!(f, "JP ${:X}", addr),
-            Instruction::JP(Some(cc), addr) => write!(f, "JP {:?}, ${:X}", cc, addr),
-            Instruction::JP_HL => write!(f, "JP (HL)"),
-            Instruction::JR_cc_n(cc, n) => write!(f, "JR {:?}, ${:X}", cc, n),
-            Instruction::JR_n(n) => write!(f, "JR ${:X}", n),
-            Instruction::CALL(Some(cc), n) => write!(f, "CALL {:?} ${:X}", cc, n),
-            Instruction::CALL(None, n) => write!(f, "CALL ${:X}", n),
-            Instruction::RET(Some(cc)) => write!(f, "RET {:?}", cc),
-            Instruction::RET(None) => write!(f, "RET"),
-            Instruction::PUSH(rr) => write!(f, "PUSH {:?}", rr),
-            Instruction::POP(rr) => write!(f, "POP {:?}", rr),
-            Instruction::RST(n) => write!(f, "RST ${:X}", n),
-            Instruction::LD_r_d8(r, n) => write!(f, "LD {:?}, ${:X}", r, n),
-            Instruction::LD_r_r(r, r2) => write!(f, "LD {:?}, {:?}", r, r2),
-            Instruction::LD_r_rr(r, rr) => write!(f, "LD {:?}, ({:?})", r, rr),
-            Instruction::LD_rr_d16(rr, n) => write!(f, "LD {:?}, ${:X}", rr, n),
-            Instruction::LD_r16_r(rr, r) => write!(f, "LD ({:?}), {:?}", rr, r),
-            Instruction::LD_C_A => write!(f, "LD (C), A"),
-            Instruction::LD_A_C => write!(f, "LD A, (C)"),
-            Instruction::LD_HLD_A => write!(f, "LD (HL-), A"),
-            Instruction::LD_HLI_A => write!(f, "LD (HL+), A"),
-            Instruction::LD_A_HLD => write!(f, "LD A, (HL-)"),
-            Instruction::LD_A_HLI => write!(f, "LD A, (HL+)"),
-            Instruction::LD_HL_SP(d) => write!(f, "LD HL, (SP+${:X})", d),
-            Instruction::LD_HL_d8(d) => write!(f, "LD (HL), ${:X}", d),
-            Instruction::LD_SP_HL => write!(f, "LD SP, HL"),
-            Instruction::LDH_A_n(n) => write!(f, "LDH A, (0xFF00+${:X})", n),
-            Instruction::LDH_n_A(n) => write!(f, "LDH (0xFF00+${:X}), A", n),
-            Instruction::LD_a16_SP(a) => write!(f, "LD (${:X}), SP", a),
-            Instruction::LD_a16_A(a) => write!(f, "LD (${:X}), A", a),
-            Instruction::LD_A_a16(a) => write!(f, "LD A, (${:X})", a),
-            Instruction::BIT_b_r(b, r) => write!(f, "BIT {}, {:?}", b, r),
-            Instruction::BIT_b_HL(b) => write!(f, "BIT {}, (HL)", b),
-            Instruction::RES_b_r(b, r) => write!(f, "RES {}, {:?}", b, r),
-            Instruction::RES_b_HL(b) => write!(f, "RES {}, (HL)", b),
-            Instruction::SET_b_r(b, r) => write!(f, "SET {}, {:?}", b, r),
-            Instruction::SET_b_HL(b) => write!(f, "SET {}, (HL)", b),
-            Instruction::RL_r(r) => write!(f, "RL {:?}", r),
-            Instruction::RL_HL => write!(f, "RL (HL)"),
-            Instruction::RLC_r(r) => write!(f, "RLC {:?}", r),
-            Instruction::RLC_HL => write!(f, "RLC HL"),
-            Instruction::SRL_r(r) => write!(f, "SRL {:?}", r),
-            Instruction::SRL_HL => write!(f, "SRL (HL)"),
-            Instruction::RR_r(r) => write!(f, "RR {:?}", r),
-            Instruction::RR_HL => write!(f, "RR (HL)"),
-            Instruction::RRC_r(r) => write!(f, "RRC {:?}", r),
-            Instruction::RRC_HL => write!(f, "RRC (HL)"),
-            Instruction::SLA_r(r) => write!(f, "SLA {:?}", r),
-            Instruction::SLA_HL => write!(f, "SLA (HL)"),
-            Instruction::SRA_r(r) => write!(f, "SRA {:?}", r),
-            Instruction::SRA_HL => write!(f, "SRA (HL)"),
-            Instruction::SWAP_r(r) => write!(f, "SWAP {:?}", r),
-            Instruction::SWAP_HL => write!(f, "SWAP (HL)"),
+            Inst::NOP => write!(f,  "NOP"),
+            Inst::ADD(o) => write!(f, "ADD A, {}", o),
+            Inst::ADC(o) => write!(f, "ADC A, {}", o),
+            Inst::SUB(o) => write!(f, "SUB A, {}", o),
+            Inst::SBC(o) => write!(f, "SBC A, {}", o),
+            Inst::CP(o) => write!(f, "CP {}", o),
+            Inst::LD8(l, r) => write!(f, "LD {}, {}", l, r),
+            Inst::INC8(o) => write!(f, "INC {}", o),
+            Inst::DEC8(o) => write!(f, "DEC {}", o),
+            Inst::AND(o) => write!(f, "AND {}", o),
+            Inst::OR(o) => write!(f, "OR {}", o),
+            Inst::XOR(o) => write!(f, "XOR {}", o),
+
+            Inst::RLC(o) => write!(f, "RLC {}", o),
+            Inst::RRC(o) => write!(f, "RRC {}", o),
+            Inst::RL(o) => write!(f, "RL {}", o),
+            Inst::RR(o) => write!(f, "RR {}", o),
+            Inst::SLA(o) => write!(f, "SLA {}", o),
+            Inst::SRA(o) => write!(f, "SRA {}", o),
+            Inst::SWAP(o) => write!(f, "SWAP {}", o),
+            Inst::SRL(o) => write!(f, "SRL {}", o),
+            Inst::BIT(b, o) => write!(f, "BIT {}, {:?}", b, o),
+            Inst::RES(b, o) => write!(f, "RES {}, {:?}", b, o),
+            Inst::SET(b, o) => write!(f, "SET {}, {:?}", b, o),
+
+            Inst::EI => write!(f,  "EI"),
+            Inst::DI => write!(f,  "DI"),
+            Inst::RETI => write!(f,  "RETI"),
+            Inst::STOP => write!(f,  "STOP"),
+            Inst::HALT => write!(f,  "HALT"),
+            Inst::DAA => write!(f, "DAA"),
+            Inst::CPL => write!(f, "CPL"),
+            Inst::CCF => write!(f, "CCF"),
+            Inst::SCF => write!(f, "SCF"),
+            Inst::ADD_HL_rr(rr) => write!(f, "ADD HL, {:?}", rr),
+            Inst::ADD_SP_r8(d) => write!(f, "ADD SP, ${:X}", d),
+            Inst::INC_rr(rr) => write!(f, "INC {:?}", rr),
+            Inst::DEC_rr(rr) => write!(f, "DEC {:?}", rr),
+            Inst::RLA => write!(f, "RLA"),
+            Inst::RLCA => write!(f, "RLCA"),
+            Inst::RRA => write!(f, "RRA"),
+            Inst::RRCA => write!(f, "RRCA"),
+            Inst::JP(None, addr) => write!(f, "JP ${:X}", addr),
+            Inst::JP(Some(cc), addr) => write!(f, "JP {:?}, ${:X}", cc, addr),
+            Inst::JP_HL => write!(f, "JP (HL)"),
+            Inst::JR_cc_n(cc, n) => write!(f, "JR {:?}, ${:X}", cc, n),
+            Inst::JR_n(n) => write!(f, "JR ${:X}", n),
+            Inst::CALL(Some(cc), n) => write!(f, "CALL {:?} ${:X}", cc, n),
+            Inst::CALL(None, n) => write!(f, "CALL ${:X}", n),
+            Inst::RET(Some(cc)) => write!(f, "RET {:?}", cc),
+            Inst::RET(None) => write!(f, "RET"),
+            Inst::PUSH(rr) => write!(f, "PUSH {:?}", rr),
+            Inst::POP(rr) => write!(f, "POP {:?}", rr),
+            Inst::RST(n) => write!(f, "RST ${:X}", n),
+            Inst::LD_r_rr(r, rr) => write!(f, "LD {:?}, ({:?})", r, rr),
+            Inst::LD_rr_d16(rr, n) => write!(f, "LD {:?}, ${:X}", rr, n),
+            Inst::LD_r16_r(rr, r) => write!(f, "LD ({:?}), {:?}", rr, r),
+            Inst::LD_C_A => write!(f, "LD (C), A"),
+            Inst::LD_A_C => write!(f, "LD A, (C)"),
+            Inst::LD_HLD_A => write!(f, "LD (HL-), A"),
+            Inst::LD_HLI_A => write!(f, "LD (HL+), A"),
+            Inst::LD_A_HLD => write!(f, "LD A, (HL-)"),
+            Inst::LD_A_HLI => write!(f, "LD A, (HL+)"),
+            Inst::LD_HL_SP(d) => write!(f, "LD HL, (SP+${:X})", d),
+            Inst::LD_SP_HL => write!(f, "LD SP, HL"),
+            Inst::LD_a16_SP(a) => write!(f, "LD (${:X}), SP", a),
         }
     }
 }
@@ -281,7 +269,7 @@ pub struct CPU<'a> {
     vram: [u8; 0x2000], // 0x8000 - 0x9FFF 
     ram:  [u8; 0x2000], // 0xC000 - 0xDFFF (and echoed in 0xE000 - 0xFDFF)
     oam:  [u8; 0x9F],   // 0xFE00 - 0xFDFF
-    wram: [u8; 0x7E],   // 0xFF80 - 0xFFFE
+    wram: [u8; 0x7F],   // 0xFF80 - 0xFFFE
 
     // Interrupts.
     halted: bool,
@@ -308,7 +296,7 @@ impl <'a> CPU<'a> {
         CPU{
             a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, sp: 0, pc: 0,
             bootrom_enabled: true,
-            vram: [0; 0x2000], ram: [0; 0x2000], oam: [0; 0x9F], wram: [0; 0x7E],
+            vram: [0; 0x2000], ram: [0; 0x2000], oam: [0; 0x9F], wram: [0; 0x7F],
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
             clock_count: 0, tima: 0, tma: 0, tac: 0,
             sb: 0, sc: 0,
@@ -406,109 +394,75 @@ impl <'a> CPU<'a> {
            self.ime_defer = None; 
         }
 
-        self.clock_count += match inst {
-            Instruction::NOP => 4,
+        let inst_cycles = match inst {
+            Inst::NOP => 4,
+            Inst::ADD(o) => self.add8(o, false),
+            Inst::ADC(o) => self.add8(o, true),
+            Inst::SUB(o) => self.sub8(o, false, true),
+            Inst::SBC(o) => self.sub8(o, true, true),
+            Inst::CP(o)  => self.sub8(o, false, false),
+            Inst::LD8(l, r) => self.ld8(l, r),
+            Inst::INC8(o) => self.inc8(o),
+            Inst::DEC8(o) => self.dec8(o),
+            Inst::AND(o) => self.bitwise(BitwiseOp::AND, o),
+            Inst::OR(o) => self.bitwise(BitwiseOp::OR, o),
+            Inst::XOR(o) => self.bitwise(BitwiseOp::XOR, o),
 
-            Instruction::DI => self.di(),
-            Instruction::EI => self.ei(),
-            Instruction::RETI => self.reti(),
-            Instruction::STOP => self.stop(),
-            Instruction::HALT => self.halt(),
+            Inst::RLC(o) => self.rlc(o, true),
+            Inst::RRC(o) => self.rrc(o, true),
+            Inst::RL(o) => self.rl(o, true),
+            Inst::RR(o) => self.rr(o, true),
+            Inst::SLA(o) => self.sla(o),
+            Inst::SRA(o) => self.sra(o),
+            Inst::SWAP(o) => self.swap(o),
+            Inst::SRL(o) => self.srl(o),
+            Inst::BIT(b, o) => self.bit(b, o),
+            Inst::RES(b, o) => self.res(b, o),
+            Inst::SET(b, o) => self.set(b, o),
 
-            Instruction::DAA => self.daa(),
-            Instruction::CPL => self.cpl(),
-            Instruction::CCF => self.ccf(),
-            Instruction::SCF => self.scf(),
-            Instruction::ADD_A_r(r) => self.add_r(r, false),
-            Instruction::ADD_SP_r8(d) => self.add_sp_r8(d),
-            Instruction::ADD_A_d8(d) => self.add_d8(d, false),
-            Instruction::ADD_A_HL => self.add_hl(false),
-            Instruction::ADD_HL_rr(rr) => self.add_rr(rr),
-            Instruction::ADC_A_r(r) => self.add_r(r, true),
-            Instruction::ADC_A_d8(d) => self.add_d8(d, true),
-            Instruction::ADC_A_HL => self.add_hl(true),
-            Instruction::INC_r(r) => self.inc_r(r),
-            Instruction::INC_HL => self.inc_hl(),
-            Instruction::INC_rr(r) => self.inc_rr(r),
-            Instruction::DEC_r(r) => self.dec_r(r),
-            Instruction::DEC_HL => self.dec_hl(),
-            Instruction::DEC_rr(r) => self.dec_rr(r),
-            Instruction::AND_r(r) => self.bitwise_r(BitwiseOp::AND, r),
-            Instruction::AND_d8(d) => self.bitwise_d8(BitwiseOp::AND, d),
-            Instruction::AND_HL => self.bitwise_hl(BitwiseOp::AND),
-            Instruction::XOR_r(r) => self.bitwise_r(BitwiseOp::XOR, r),
-            Instruction::XOR_d8(d) => self.bitwise_d8(BitwiseOp::XOR, d),
-            Instruction::XOR_HL => self.bitwise_hl(BitwiseOp::XOR),
-            Instruction::OR_r(r) => self.bitwise_r(BitwiseOp::OR, r),
-            Instruction::OR_d8(d) => self.bitwise_d8(BitwiseOp::OR, d),
-            Instruction::OR_HL => self.bitwise_hl(BitwiseOp::OR),
-            Instruction::SUB_r(r) => self.sub_r(r, false, true),
-            Instruction::SUB_d8(d) => self.sub_d8(d, false, true),
-            Instruction::SUB_HL => self.sub_hl(false, true),
-            Instruction::SBC_r(r) => self.sub_r(r, true, true),
-            Instruction::SBC_d8(d) => self.sub_d8(d, true, true),
-            Instruction::SBC_HL => self.sub_hl(true, true),
-            Instruction::CP_r(r) => self.sub_r(r, false, false),
-            Instruction::CP_d8(d) => self.sub_d8(d, false, false),
-            Instruction::CP_HL => self.sub_hl(false, false),
-            Instruction::RLA => self.rl_r(Register8::A, false),
-            Instruction::RLCA => self.rlc_r(Register8::A, false),
-            Instruction::RRA => self.rr_r(Register8::A, false),
-            Instruction::RRCA => self.rrc_r(Register8::A, false),
+            Inst::DI => self.di(),
+            Inst::EI => self.ei(),
+            Inst::RETI => self.reti(),
+            Inst::STOP => self.stop(),
+            Inst::HALT => self.halt(),
 
-            Instruction::LD_r_d8(r, v) => self.ld_r_d8(r, v),
-            Instruction::LD_rr_d16(r, v) => self.ld_rr_d16(r, v),
-            Instruction::LD_r16_r(r16, r) => self.ld_r16_r(r16, r),
-            Instruction::LD_r_r(to, from) => self.ld_r_r(to, from),
-            Instruction::LD_r_rr(r, rr) => self.ld_r_rr(r, rr),
-            Instruction::LD_C_A => self.ldd_c_a(),
-            Instruction::LD_A_C => self.ldd_a_c(),
-            Instruction::LD_HLD_A => self.ld_hld_a(),
-            Instruction::LD_HLI_A => self.ld_hli_a(),
-            Instruction::LD_A_HLD => self.ld_a_hld(),
-            Instruction::LD_A_HLI => self.ld_a_hli(),
-            Instruction::LD_HL_SP(d) => self.ld_hl_sp(d),
-            Instruction::LD_HL_d8(d) => self.ld_hl_d8(d),
-            Instruction::LD_SP_HL => self.ld_sp_hl(),
-            Instruction::LDH_n_A(n) => self.ldh_n_a(n),
-            Instruction::LDH_A_n(n) => self.ldh_a_n(n),
-            Instruction::LD_A_a16(a) => self.ld_a_a16(a),
-            Instruction::LD_a16_A(a) => self.ld_a16_a(a),
-            Instruction::LD_a16_SP(a) => self.ld_a16_sp(a),
+            Inst::DAA => self.daa(),
+            Inst::CPL => self.cpl(),
+            Inst::CCF => self.ccf(),
+            Inst::SCF => self.scf(),
+            Inst::ADD_SP_r8(d) => self.add_sp_r8(d),
+            Inst::ADD_HL_rr(rr) => self.add_rr(rr),
+            Inst::INC_rr(r) => self.inc_rr(r),
+            Inst::DEC_rr(r) => self.dec_rr(r),
+            Inst::RLA => self.rl(Operand8::Reg(A), false),
+            Inst::RLCA => self.rlc(Operand8::Reg(A), false),
+            Inst::RRA => self.rr(Operand8::Reg(A), false),
+            Inst::RRCA => self.rrc(Operand8::Reg(A), false),
 
-            Instruction::JP(cc, n) => self.jp(cc, n),
-            Instruction::JP_HL => self.jp_hl(),
-            Instruction::JR_n(n) => self.jr_n(n),
-            Instruction::JR_cc_n(cc, n) => self.jr_cc_n(cc, n),
-            Instruction::CALL(cc, addr) => self.call(cc, addr),
-            Instruction::RET(cc) => self.ret(cc),
-            Instruction::PUSH(r) => self.push(r),
-            Instruction::POP(r) => self.pop(r),
-            Instruction::RST(a) => self.rst(a),
+            Inst::LD_rr_d16(r, v) => self.ld_rr_d16(r, v),
+            Inst::LD_r16_r(r16, r) => self.ld_r16_r(r16, r),
+            Inst::LD_r_rr(r, rr) => self.ld_r_rr(r, rr),
+            Inst::LD_C_A => self.ldd_c_a(),
+            Inst::LD_A_C => self.ldd_a_c(),
+            Inst::LD_HLD_A => self.ld_hld_a(),
+            Inst::LD_HLI_A => self.ld_hli_a(),
+            Inst::LD_A_HLD => self.ld_a_hld(),
+            Inst::LD_A_HLI => self.ld_a_hli(),
+            Inst::LD_HL_SP(d) => self.ld_hl_sp(d), 
+            Inst::LD_SP_HL => self.ld_sp_hl(),
+            Inst::LD_a16_SP(a) => self.ld_a16_sp(a),
 
-            Instruction::BIT_b_r(b, r) => self.bit_b_r(b, r),
-            Instruction::BIT_b_HL(b) => self.bit_b_hl(b),
-            Instruction::RES_b_r(b, r) => self.res_b_r(b, r),
-            Instruction::RES_b_HL(b) => self.res_b_hl(b),
-            Instruction::SET_b_r(b, r) => self.set_b_r(b, r),
-            Instruction::SET_b_HL(b) => self.set_b_hl(b),
-            Instruction::RL_r(r) => self.rl_r(r, true),
-            Instruction::RL_HL => self.rl_hl(),
-            Instruction::RLC_r(r) => self.rlc_r(r, true),
-            Instruction::RLC_HL => self.rlc_hl(),
-            Instruction::SRL_r(r) => self.srl_r(r),
-            Instruction::SRL_HL => self.srl_hl(),
-            Instruction::RR_r(r) => self.rr_r(r, true),
-            Instruction::RR_HL => self.rr_hl(),
-            Instruction::SLA_r(r) => self.sla_r(r),
-            Instruction::SLA_HL => self.sla_hl(),
-            Instruction::SRA_r(r) => self.sra_r(r),
-            Instruction::SRA_HL => self.sra_hl(),
-            Instruction::RRC_r(r) => self.rrc_r(r, true),
-            Instruction::RRC_HL => self.rrc_hl(),
-            Instruction::SWAP_r(r) => self.swap_r(r),
-            Instruction::SWAP_HL => self.swap_hl(),
+            Inst::JP(cc, n) => self.jp(cc, n),
+            Inst::JP_HL => self.jp_hl(),
+            Inst::JR_n(n) => self.jr_n(n),
+            Inst::JR_cc_n(cc, n) => self.jr_cc_n(cc, n),
+            Inst::CALL(cc, addr) => self.call(cc, addr),
+            Inst::RET(cc) => self.ret(cc),
+            Inst::PUSH(r) => self.push(r),
+            Inst::POP(r) => self.pop(r),
+            Inst::RST(a) => self.rst(a),
         };
+        self.clock_count += inst_cycles as u32;
     }
 
     fn mem_read8(&self, addr: u16) -> u8 {
@@ -521,7 +475,6 @@ impl <'a> CPU<'a> {
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
             0xFE00 ... 0xFEFF => self.oam[(addr - 0xFE00) as usize],
-            0xFF44            => 0x90, // TODO: temp hack
             0xFF01            => self.sb,
             0xFF02            => self.sc,
             0xFF05            => self.tima,
@@ -531,7 +484,9 @@ impl <'a> CPU<'a> {
 
             // TODO: LCD
             0xFF42            => 0x00,
+            0xFF44            => 0x90, // TODO: temp hack
 
+            0xFF4D            => 0x00,      // KEY1 for CGB.
             0xFF50            => if self.bootrom_enabled { 0 } else { 1 },
             0xFF80 ... 0xFFFE => self.wram[(addr - 0xFF80) as usize],
             0xFFFF            => self.ie,
@@ -550,9 +505,9 @@ impl <'a> CPU<'a> {
         match addr {
             0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; },
 
-            0x0000 ... 0x7FFF => { }, // TODO: this is forwarded to MBC.
+            0x0000 ... 0x7FFF => { panic!("Write ${:X} to ${:X}", v, addr); }, // TODO: this is forwarded to MBC.
             0x8000 ... 0x9FFF => { self.vram[(addr - 0x8000) as usize] = v },
-            0xA000 ... 0xBFFF => { }, // TODO: this is forwarded to MBC.
+            0xA000 ... 0xBFFF => { panic!("Write ${:X} to ${:X}", v, addr); }, // TODO: this is forwarded to MBC.
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v },
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v },
             0xFE00 ... 0xFEFF => { self.oam[(addr - 0xFE00) as usize] = v },
@@ -563,6 +518,9 @@ impl <'a> CPU<'a> {
             0xFF07            => { self.tac = v & 0x7 },
             0xFF0F            => { self.if_ = v & 0x1F },
 
+            // TODO: joypad
+            0xFF00            => { }, // TODO:
+
             // TODO: sound
             0xFF11 ... 0xFF14 => { },
             0xFF24 ... 0xFF26 => { },
@@ -571,6 +529,7 @@ impl <'a> CPU<'a> {
             0xFF40 ... 0xFF43 => { },
             0xFF47            => { },
 
+            0xFF4D            => { },      // KEY1 for CGB.
             0xFF80 ... 0xFFFE => { self.wram[(addr - 0xFF80) as usize] = v },
             0xFFFF            => { self.ie = v & 0x1F },
 
@@ -596,253 +555,253 @@ impl <'a> CPU<'a> {
     }
 
     // Decodes the next instruction located at PC.
-    fn decode(&mut self) -> Instruction {
+    fn decode(&mut self) -> Inst {
         match self.fetch8() {
-            0x00 => Instruction::NOP,
-            0x01 => Instruction::LD_rr_d16(Register16::BC, self.fetch16()),
-            0x02 => Instruction::LD_r16_r(Register16::BC, Register8::A),
-            0x03 => Instruction::INC_rr(Register16::BC),
-            0x04 => Instruction::INC_r(Register8::B),
-            0x05 => Instruction::DEC_r(Register8::B),
-            0x06 => Instruction::LD_r_d8(Register8::B, self.fetch8()),
-            0x07 => Instruction::RLCA,
-            0x08 => Instruction::LD_a16_SP(self.fetch16()),
-            0x09 => Instruction::ADD_HL_rr(Register16::BC),
-            0x0A => Instruction::LD_r_rr(Register8::A, Register16::BC),
-            0x0B => Instruction::DEC_rr(Register16::BC),
-            0x0C => Instruction::INC_r(Register8::C),
-            0x0D => Instruction::DEC_r(Register8::C),
-            0x0E => Instruction::LD_r_d8(Register8::C, self.fetch8()),
-            0x0F => Instruction::RRCA,
-            0x10 => { self.fetch8(); Instruction::STOP },
-            0x11 => Instruction::LD_rr_d16(Register16::DE, self.fetch16()),
-            0x12 => Instruction::LD_r16_r(Register16::DE, Register8::A),
-            0x13 => Instruction::INC_rr(Register16::DE),
-            0x14 => Instruction::INC_r(Register8::D),
-            0x15 => Instruction::DEC_r(Register8::D),
-            0x16 => Instruction::LD_r_d8(Register8::D, self.fetch8()), 
-            0x17 => Instruction::RLA,
-            0x18 => Instruction::JR_n(self.fetch8()),
-            0x19 => Instruction::ADD_HL_rr(Register16::DE),
-            0x1A => Instruction::LD_r_rr(Register8::A, Register16::DE),
-            0x1B => Instruction::DEC_rr(Register16::DE),
-            0x1C => Instruction::INC_r(Register8::E),
-            0x1D => Instruction::DEC_r(Register8::E),
-            0x1E => Instruction::LD_r_d8(Register8::E, self.fetch8()),
-            0x1F => Instruction::RRA,
-            0x20 => Instruction::JR_cc_n(ConditionFlag::NZ, self.fetch8()),
-            0x21 => Instruction::LD_rr_d16(Register16::HL, self.fetch16()),
-            0x22 => Instruction::LD_HLI_A,
-            0x23 => Instruction::INC_rr(Register16::HL),
-            0x24 => Instruction::INC_r(Register8::H),
-            0x25 => Instruction::DEC_r(Register8::H),
-            0x26 => Instruction::LD_r_d8(Register8::H, self.fetch8()),
-            0x27 => Instruction::DAA,
-            0x28 => Instruction::JR_cc_n(ConditionFlag::Z, self.fetch8()),
-            0x29 => Instruction::ADD_HL_rr(Register16::HL),
-            0x2A => Instruction::LD_A_HLI,
-            0x2B => Instruction::DEC_rr(Register16::HL),
-            0x2C => Instruction::INC_r(Register8::L),
-            0x2D => Instruction::DEC_r(Register8::L),
-            0x2E => Instruction::LD_r_d8(Register8::L, self.fetch8()),
-            0x2F => Instruction::CPL,
-            0x30 => Instruction::JR_cc_n(ConditionFlag::NC, self.fetch8()),
-            0x31 => Instruction::LD_rr_d16(Register16::SP, self.fetch16()),
-            0x32 => Instruction::LD_HLD_A,
-            0x33 => Instruction::INC_rr(Register16::SP),
-            0x34 => Instruction::INC_HL,
-            0x35 => Instruction::DEC_HL,
-            0x36 => Instruction::LD_HL_d8(self.fetch8()),
-            0x37 => Instruction::SCF,
-            0x38 => Instruction::JR_cc_n(ConditionFlag::C, self.fetch8()),
-            0x39 => Instruction::ADD_HL_rr(Register16::SP),
-            0x3A => Instruction::LD_A_HLD,
-            0x3B => Instruction::DEC_rr(Register16::SP),
-            0x3C => Instruction::INC_r(Register8::A),
-            0x3D => Instruction::DEC_r(Register8::A),
-            0x3E => Instruction::LD_r_d8(Register8::A, self.fetch8()),
-            0x3F => Instruction::CCF,
-            0x40 => Instruction::LD_r_r(Register8::B, Register8::B),
-            0x41 => Instruction::LD_r_r(Register8::B, Register8::C),
-            0x42 => Instruction::LD_r_r(Register8::B, Register8::D),
-            0x43 => Instruction::LD_r_r(Register8::B, Register8::E),
-            0x44 => Instruction::LD_r_r(Register8::B, Register8::H),
-            0x45 => Instruction::LD_r_r(Register8::B, Register8::L),
-            0x46 => Instruction::LD_r_rr(Register8::B, Register16::HL),
-            0x47 => Instruction::LD_r_r(Register8::B, Register8::A),
-            0x48 => Instruction::LD_r_r(Register8::C, Register8::B),
-            0x49 => Instruction::LD_r_r(Register8::C, Register8::C),
-            0x4A => Instruction::LD_r_r(Register8::C, Register8::D),
-            0x4B => Instruction::LD_r_r(Register8::C, Register8::E),
-            0x4C => Instruction::LD_r_r(Register8::C, Register8::H),
-            0x4D => Instruction::LD_r_r(Register8::C, Register8::L),
-            0x4E => Instruction::LD_r_rr(Register8::C, Register16::HL),
-            0x4F => Instruction::LD_r_r(Register8::C, Register8::A),
-            0x50 => Instruction::LD_r_r(Register8::D, Register8::B),
-            0x51 => Instruction::LD_r_r(Register8::D, Register8::C),
-            0x52 => Instruction::LD_r_r(Register8::D, Register8::D),
-            0x53 => Instruction::LD_r_r(Register8::D, Register8::E),
-            0x54 => Instruction::LD_r_r(Register8::D, Register8::H),
-            0x55 => Instruction::LD_r_r(Register8::D, Register8::L),
-            0x56 => Instruction::LD_r_rr(Register8::D, Register16::HL),
-            0x57 => Instruction::LD_r_r(Register8::D, Register8::A),
-            0x58 => Instruction::LD_r_r(Register8::E, Register8::B),
-            0x59 => Instruction::LD_r_r(Register8::E, Register8::C),
-            0x5A => Instruction::LD_r_r(Register8::E, Register8::D),
-            0x5B => Instruction::LD_r_r(Register8::E, Register8::E),
-            0x5C => Instruction::LD_r_r(Register8::E, Register8::H),
-            0x5D => Instruction::LD_r_r(Register8::E, Register8::L),
-            0x5E => Instruction::LD_r_rr(Register8::E, Register16::HL),
-            0x5F => Instruction::LD_r_r(Register8::E, Register8::A),
-            0x60 => Instruction::LD_r_r(Register8::H, Register8::B),
-            0x61 => Instruction::LD_r_r(Register8::H, Register8::C),
-            0x62 => Instruction::LD_r_r(Register8::H, Register8::D),
-            0x63 => Instruction::LD_r_r(Register8::H, Register8::E),
-            0x64 => Instruction::LD_r_r(Register8::H, Register8::H),
-            0x65 => Instruction::LD_r_r(Register8::H, Register8::L),
-            0x66 => Instruction::LD_r_rr(Register8::H, Register16::HL),
-            0x67 => Instruction::LD_r_r(Register8::H, Register8::A),
-            0x68 => Instruction::LD_r_r(Register8::L, Register8::B),
-            0x69 => Instruction::LD_r_r(Register8::L, Register8::C),
-            0x6A => Instruction::LD_r_r(Register8::L, Register8::D),
-            0x6B => Instruction::LD_r_r(Register8::L, Register8::E),
-            0x6C => Instruction::LD_r_r(Register8::L, Register8::H),
-            0x6D => Instruction::LD_r_r(Register8::L, Register8::L),
-            0x6E => Instruction::LD_r_rr(Register8::L, Register16::HL),
-            0x6F => Instruction::LD_r_r(Register8::L, Register8::A),
-            0x70 => Instruction::LD_r16_r(Register16::HL, Register8::B),
-            0x71 => Instruction::LD_r16_r(Register16::HL, Register8::C),
-            0x72 => Instruction::LD_r16_r(Register16::HL, Register8::D),
-            0x73 => Instruction::LD_r16_r(Register16::HL, Register8::E),
-            0x74 => Instruction::LD_r16_r(Register16::HL, Register8::H),
-            0x75 => Instruction::LD_r16_r(Register16::HL, Register8::L),
-            0x76 => Instruction::HALT,
-            0x77 => Instruction::LD_r16_r(Register16::HL, Register8::A),
-            0x78 => Instruction::LD_r_r(Register8::A, Register8::B),
-            0x79 => Instruction::LD_r_r(Register8::A, Register8::C),
-            0x7A => Instruction::LD_r_r(Register8::A, Register8::D),
-            0x7B => Instruction::LD_r_r(Register8::A, Register8::E),
-            0x7C => Instruction::LD_r_r(Register8::A, Register8::H),
-            0x7D => Instruction::LD_r_r(Register8::A, Register8::L),
-            0x7E => Instruction::LD_r_rr(Register8::A, Register16::HL),
-            0x7F => Instruction::LD_r_r(Register8::A, Register8::A),
-            0x80 => Instruction::ADD_A_r(Register8::B),
-            0x81 => Instruction::ADD_A_r(Register8::C),
-            0x82 => Instruction::ADD_A_r(Register8::D),
-            0x83 => Instruction::ADD_A_r(Register8::E),
-            0x84 => Instruction::ADD_A_r(Register8::H),
-            0x85 => Instruction::ADD_A_r(Register8::L),
-            0x86 => Instruction::ADD_A_HL,
-            0x87 => Instruction::ADD_A_r(Register8::A),
-            0x88 => Instruction::ADC_A_r(Register8::B),
-            0x89 => Instruction::ADC_A_r(Register8::C),
-            0x8A => Instruction::ADC_A_r(Register8::D),
-            0x8B => Instruction::ADC_A_r(Register8::E),
-            0x8C => Instruction::ADC_A_r(Register8::H),
-            0x8D => Instruction::ADC_A_r(Register8::L),
-            0x8E => Instruction::ADC_A_HL,
-            0x8F => Instruction::ADC_A_r(Register8::A),
-            0x90 => Instruction::SUB_r(Register8::B),
-            0x91 => Instruction::SUB_r(Register8::C),
-            0x92 => Instruction::SUB_r(Register8::D),
-            0x93 => Instruction::SUB_r(Register8::E),
-            0x94 => Instruction::SUB_r(Register8::H),
-            0x95 => Instruction::SUB_r(Register8::L),
-            0x96 => Instruction::SUB_HL,
-            0x97 => Instruction::SUB_r(Register8::A),
-            0x98 => Instruction::SBC_r(Register8::B),
-            0x99 => Instruction::SBC_r(Register8::C),
-            0x9A => Instruction::SBC_r(Register8::D),
-            0x9B => Instruction::SBC_r(Register8::E),
-            0x9C => Instruction::SBC_r(Register8::H),
-            0x9D => Instruction::SBC_r(Register8::L),
-            0x9E => Instruction::SBC_HL,
-            0x9F => Instruction::SBC_r(Register8::A),
-            0xA0 => Instruction::AND_r(Register8::B),
-            0xA1 => Instruction::AND_r(Register8::C),
-            0xA2 => Instruction::AND_r(Register8::D),
-            0xA3 => Instruction::AND_r(Register8::E),
-            0xA4 => Instruction::AND_r(Register8::H),
-            0xA5 => Instruction::AND_r(Register8::L),
-            0xA6 => Instruction::AND_HL,
-            0xA7 => Instruction::AND_r(Register8::A),
-            0xA8 => Instruction::XOR_r(Register8::B),
-            0xA9 => Instruction::XOR_r(Register8::C),
-            0xAA => Instruction::XOR_r(Register8::D),
-            0xAB => Instruction::XOR_r(Register8::E),
-            0xAC => Instruction::XOR_r(Register8::H),
-            0xAD => Instruction::XOR_r(Register8::L),
-            0xAE => Instruction::XOR_HL,
-            0xAF => Instruction::XOR_r(Register8::A),
-            0xB0 => Instruction::OR_r(Register8::B),
-            0xB1 => Instruction::OR_r(Register8::C),
-            0xB2 => Instruction::OR_r(Register8::D),
-            0xB3 => Instruction::OR_r(Register8::E),
-            0xB4 => Instruction::OR_r(Register8::H),
-            0xB5 => Instruction::OR_r(Register8::L),
-            0xB6 => Instruction::OR_HL,
-            0xB7 => Instruction::OR_r(Register8::A),
-            0xB8 => Instruction::CP_r(Register8::B),
-            0xB9 => Instruction::CP_r(Register8::C),
-            0xBA => Instruction::CP_r(Register8::D),
-            0xBB => Instruction::CP_r(Register8::E),
-            0xBC => Instruction::CP_r(Register8::H),
-            0xBD => Instruction::CP_r(Register8::L),
-            0xBE => Instruction::CP_HL,
-            0xBF => Instruction::CP_r(Register8::A),
-            0xC0 => Instruction::RET(Some(ConditionFlag::NZ)),
-            0xC1 => Instruction::POP(Register16::BC),
-            0xC2 => Instruction::JP(Some(ConditionFlag::NZ), self.fetch16()),
-            0xC3 => Instruction::JP(None, self.fetch16()),
-            0xC4 => Instruction::CALL(Some(ConditionFlag::NZ), self.fetch16()),
-            0xC5 => Instruction::PUSH(Register16::BC),
-            0xC6 => Instruction::ADD_A_d8(self.fetch8()),
-            0xC7 => Instruction::RST(0x00),
-            0xC8 => Instruction::RET(Some(ConditionFlag::Z)),
-            0xC9 => Instruction::RET(None),
-            0xCA => Instruction::JP(Some(ConditionFlag::Z), self.fetch16()),
+            0x00 => Inst::NOP,
+            0x01 => Inst::LD_rr_d16(BC, self.fetch16()),
+            0x02 => Inst::LD_r16_r(BC, A),
+            0x03 => Inst::INC_rr(BC),
+            0x04 => Inst::INC8(Operand8::Reg(B)),
+            0x05 => Inst::DEC8(Operand8::Reg(B)),
+            0x06 => Inst::LD8(Operand8::Reg(B), Operand8::Imm(self.fetch8())),
+            0x07 => Inst::RLCA,
+            0x08 => Inst::LD_a16_SP(self.fetch16()),
+            0x09 => Inst::ADD_HL_rr(BC),
+            0x0A => Inst::LD_r_rr(A, BC),
+            0x0B => Inst::DEC_rr(BC),
+            0x0C => Inst::INC8(Operand8::Reg(C)),
+            0x0D => Inst::DEC8(Operand8::Reg(C)),
+            0x0E => Inst::LD8(Operand8::Reg(C), Operand8::Imm(self.fetch8())),
+            0x0F => Inst::RRCA,
+            0x10 => { self.fetch8(); Inst::STOP },
+            0x11 => Inst::LD_rr_d16(DE, self.fetch16()),
+            0x12 => Inst::LD_r16_r(DE, A),
+            0x13 => Inst::INC_rr(DE),
+            0x14 => Inst::INC8(Operand8::Reg(D)),
+            0x15 => Inst::DEC8(Operand8::Reg(D)),
+            0x16 => Inst::LD8(Operand8::Reg(D), Operand8::Imm(self.fetch8())), 
+            0x17 => Inst::RLA,
+            0x18 => Inst::JR_n(self.fetch8()),
+            0x19 => Inst::ADD_HL_rr(DE),
+            0x1A => Inst::LD_r_rr(A, DE),
+            0x1B => Inst::DEC_rr(DE),
+            0x1C => Inst::INC8(Operand8::Reg(E)),
+            0x1D => Inst::DEC8(Operand8::Reg(E)),
+            0x1E => Inst::LD8(Operand8::Reg(E), Operand8::Imm(self.fetch8())),
+            0x1F => Inst::RRA,
+            0x20 => Inst::JR_cc_n(FlagCondition::NZ, self.fetch8()),
+            0x21 => Inst::LD_rr_d16(HL, self.fetch16()),
+            0x22 => Inst::LD_HLI_A,
+            0x23 => Inst::INC_rr(HL),
+            0x24 => Inst::INC8(Operand8::Reg(H)),
+            0x25 => Inst::DEC8(Operand8::Reg(H)),
+            0x26 => Inst::LD8(Operand8::Reg(H), Operand8::Imm(self.fetch8())),
+            0x27 => Inst::DAA,
+            0x28 => Inst::JR_cc_n(FlagCondition::Z, self.fetch8()),
+            0x29 => Inst::ADD_HL_rr(HL),
+            0x2A => Inst::LD_A_HLI,
+            0x2B => Inst::DEC_rr(HL),
+            0x2C => Inst::INC8(Operand8::Reg(L)),
+            0x2D => Inst::DEC8(Operand8::Reg(L)),
+            0x2E => Inst::LD8(Operand8::Reg(L), Operand8::Imm(self.fetch8())),
+            0x2F => Inst::CPL,
+            0x30 => Inst::JR_cc_n(FlagCondition::NC, self.fetch8()),
+            0x31 => Inst::LD_rr_d16(SP, self.fetch16()),
+            0x32 => Inst::LD_HLD_A,
+            0x33 => Inst::INC_rr(SP),
+            0x34 => Inst::INC8(Operand8::Addr(HL)),
+            0x35 => Inst::DEC8(Operand8::Addr(HL)),
+            0x36 => Inst::LD8(Operand8::Addr(HL), Operand8::Imm(self.fetch8())),
+            0x37 => Inst::SCF,
+            0x38 => Inst::JR_cc_n(FlagCondition::C, self.fetch8()),
+            0x39 => Inst::ADD_HL_rr(SP),
+            0x3A => Inst::LD_A_HLD,
+            0x3B => Inst::DEC_rr(SP),
+            0x3C => Inst::INC8(Operand8::Reg(A)),
+            0x3D => Inst::DEC8(Operand8::Reg(A)),
+            0x3E => Inst::LD8(Operand8::Reg(A), Operand8::Imm(self.fetch8())),
+            0x3F => Inst::CCF,
+            0x40 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(B)),
+            0x41 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(C)),
+            0x42 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(D)),
+            0x43 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(E)),
+            0x44 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(H)),
+            0x45 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(L)),
+            0x46 => Inst::LD_r_rr(B, HL),
+            0x47 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(A)),
+            0x48 => Inst::LD8(Operand8::Reg(C), Operand8::Reg(B)),
+            0x49 => Inst::LD8(Operand8::Reg(C), Operand8::Reg(C)),
+            0x4A => Inst::LD8(Operand8::Reg(C), Operand8::Reg(D)),
+            0x4B => Inst::LD8(Operand8::Reg(C), Operand8::Reg(E)),
+            0x4C => Inst::LD8(Operand8::Reg(C), Operand8::Reg(H)),
+            0x4D => Inst::LD8(Operand8::Reg(C), Operand8::Reg(L)),
+            0x4E => Inst::LD_r_rr(C, HL),
+            0x4F => Inst::LD8(Operand8::Reg(C), Operand8::Reg(A)),
+            0x50 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(B)),
+            0x51 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(C)),
+            0x52 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(D)),
+            0x53 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(E)),
+            0x54 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(H)),
+            0x55 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(L)),
+            0x56 => Inst::LD_r_rr(D, HL),
+            0x57 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(A)),
+            0x58 => Inst::LD8(Operand8::Reg(E), Operand8::Reg(B)),
+            0x59 => Inst::LD8(Operand8::Reg(E), Operand8::Reg(C)),
+            0x5A => Inst::LD8(Operand8::Reg(E), Operand8::Reg(D)),
+            0x5B => Inst::LD8(Operand8::Reg(E), Operand8::Reg(E)),
+            0x5C => Inst::LD8(Operand8::Reg(E), Operand8::Reg(H)),
+            0x5D => Inst::LD8(Operand8::Reg(E), Operand8::Reg(L)),
+            0x5E => Inst::LD_r_rr(E, HL),
+            0x5F => Inst::LD8(Operand8::Reg(E), Operand8::Reg(A)),
+            0x60 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(B)),
+            0x61 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(C)),
+            0x62 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(D)),
+            0x63 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(E)),
+            0x64 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(H)),
+            0x65 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(L)),
+            0x66 => Inst::LD_r_rr(H, HL),
+            0x67 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(A)),
+            0x68 => Inst::LD8(Operand8::Reg(L), Operand8::Reg(B)),
+            0x69 => Inst::LD8(Operand8::Reg(L), Operand8::Reg(C)),
+            0x6A => Inst::LD8(Operand8::Reg(L), Operand8::Reg(D)),
+            0x6B => Inst::LD8(Operand8::Reg(L), Operand8::Reg(E)),
+            0x6C => Inst::LD8(Operand8::Reg(L), Operand8::Reg(H)),
+            0x6D => Inst::LD8(Operand8::Reg(L), Operand8::Reg(L)),
+            0x6E => Inst::LD_r_rr(L, HL),
+            0x6F => Inst::LD8(Operand8::Reg(L), Operand8::Reg(A)),
+            0x70 => Inst::LD_r16_r(HL, B),
+            0x71 => Inst::LD_r16_r(HL, C),
+            0x72 => Inst::LD_r16_r(HL, D),
+            0x73 => Inst::LD_r16_r(HL, E),
+            0x74 => Inst::LD_r16_r(HL, H),
+            0x75 => Inst::LD_r16_r(HL, L),
+            0x76 => Inst::HALT,
+            0x77 => Inst::LD_r16_r(HL, A),
+            0x78 => Inst::LD8(Operand8::Reg(A), Operand8::Reg(B)),
+            0x79 => Inst::LD8(Operand8::Reg(A), Operand8::Reg(C)),
+            0x7A => Inst::LD8(Operand8::Reg(A), Operand8::Reg(D)),
+            0x7B => Inst::LD8(Operand8::Reg(A), Operand8::Reg(E)),
+            0x7C => Inst::LD8(Operand8::Reg(A), Operand8::Reg(H)),
+            0x7D => Inst::LD8(Operand8::Reg(A), Operand8::Reg(L)),
+            0x7E => Inst::LD_r_rr(A, HL),
+            0x7F => Inst::LD8(Operand8::Reg(A), Operand8::Reg(A)),
+            0x80 => Inst::ADD(Operand8::Reg(B)),
+            0x81 => Inst::ADD(Operand8::Reg(C)),
+            0x82 => Inst::ADD(Operand8::Reg(D)),
+            0x83 => Inst::ADD(Operand8::Reg(E)),
+            0x84 => Inst::ADD(Operand8::Reg(H)),
+            0x85 => Inst::ADD(Operand8::Reg(L)),
+            0x86 => Inst::ADD(Operand8::Addr(HL)),
+            0x87 => Inst::ADD(Operand8::Reg(A)),
+            0x88 => Inst::ADC(Operand8::Reg(B)),
+            0x89 => Inst::ADC(Operand8::Reg(C)),
+            0x8A => Inst::ADC(Operand8::Reg(D)),
+            0x8B => Inst::ADC(Operand8::Reg(E)),
+            0x8C => Inst::ADC(Operand8::Reg(H)),
+            0x8D => Inst::ADC(Operand8::Reg(L)),
+            0x8E => Inst::ADC(Operand8::Addr(HL)),
+            0x8F => Inst::ADC(Operand8::Reg(A)),
+            0x90 => Inst::SUB(Operand8::Reg(B)),
+            0x91 => Inst::SUB(Operand8::Reg(C)),
+            0x92 => Inst::SUB(Operand8::Reg(D)),
+            0x93 => Inst::SUB(Operand8::Reg(E)),
+            0x94 => Inst::SUB(Operand8::Reg(H)),
+            0x95 => Inst::SUB(Operand8::Reg(L)),
+            0x96 => Inst::SUB(Operand8::Addr(HL)),
+            0x97 => Inst::SUB(Operand8::Reg(A)),
+            0x98 => Inst::SBC(Operand8::Reg(B)),
+            0x99 => Inst::SBC(Operand8::Reg(C)),
+            0x9A => Inst::SBC(Operand8::Reg(D)),
+            0x9B => Inst::SBC(Operand8::Reg(E)),
+            0x9C => Inst::SBC(Operand8::Reg(H)),
+            0x9D => Inst::SBC(Operand8::Reg(L)),
+            0x9E => Inst::SBC(Operand8::Addr(HL)),
+            0x9F => Inst::SBC(Operand8::Reg(A)),
+            0xA0 => Inst::AND(Operand8::Reg(B)),
+            0xA1 => Inst::AND(Operand8::Reg(C)),
+            0xA2 => Inst::AND(Operand8::Reg(D)),
+            0xA3 => Inst::AND(Operand8::Reg(E)),
+            0xA4 => Inst::AND(Operand8::Reg(H)),
+            0xA5 => Inst::AND(Operand8::Reg(L)),
+            0xA6 => Inst::AND(Operand8::Addr(HL)),
+            0xA7 => Inst::AND(Operand8::Reg(A)),
+            0xA8 => Inst::XOR(Operand8::Reg(B)),
+            0xA9 => Inst::XOR(Operand8::Reg(C)),
+            0xAA => Inst::XOR(Operand8::Reg(D)),
+            0xAB => Inst::XOR(Operand8::Reg(E)),
+            0xAC => Inst::XOR(Operand8::Reg(H)),
+            0xAD => Inst::XOR(Operand8::Reg(L)),
+            0xAE => Inst::XOR(Operand8::Addr(HL)),
+            0xAF => Inst::XOR(Operand8::Reg(A)),
+            0xB0 => Inst::OR(Operand8::Reg(B)),
+            0xB1 => Inst::OR(Operand8::Reg(C)),
+            0xB2 => Inst::OR(Operand8::Reg(D)),
+            0xB3 => Inst::OR(Operand8::Reg(E)),
+            0xB4 => Inst::OR(Operand8::Reg(H)),
+            0xB5 => Inst::OR(Operand8::Reg(L)),
+            0xB6 => Inst::OR(Operand8::Addr(HL)),
+            0xB7 => Inst::OR(Operand8::Reg(A)),
+            0xB8 => Inst::CP(Operand8::Reg(B)),
+            0xB9 => Inst::CP(Operand8::Reg(C)),
+            0xBA => Inst::CP(Operand8::Reg(D)),
+            0xBB => Inst::CP(Operand8::Reg(E)),
+            0xBC => Inst::CP(Operand8::Reg(H)),
+            0xBD => Inst::CP(Operand8::Reg(L)),
+            0xBE => Inst::CP(Operand8::Addr(HL)),
+            0xBF => Inst::CP(Operand8::Reg(A)),
+            0xC0 => Inst::RET(Some(FlagCondition::NZ)),
+            0xC1 => Inst::POP(BC),
+            0xC2 => Inst::JP(Some(FlagCondition::NZ), self.fetch16()),
+            0xC3 => Inst::JP(None, self.fetch16()),
+            0xC4 => Inst::CALL(Some(FlagCondition::NZ), self.fetch16()),
+            0xC5 => Inst::PUSH(BC),
+            0xC6 => Inst::ADD(Operand8::Imm(self.fetch8())),
+            0xC7 => Inst::RST(0x00),
+            0xC8 => Inst::RET(Some(FlagCondition::Z)),
+            0xC9 => Inst::RET(None),
+            0xCA => Inst::JP(Some(FlagCondition::Z), self.fetch16()),
             0xCB => self.decode_extended(),
-            0xCC => Instruction::CALL(Some(ConditionFlag::Z), self.fetch16()),
-            0xCD => Instruction::CALL(None, self.fetch16()),
-            0xCE => Instruction::ADC_A_d8(self.fetch8()),
-            0xCF => Instruction::RST(0x08),
-            0xD0 => Instruction::RET(Some(ConditionFlag::NC)),
-            0xD1 => Instruction::POP(Register16::DE),
-            0xD2 => Instruction::JP(Some(ConditionFlag::NC), self.fetch16()),
-            0xD4 => Instruction::CALL(Some(ConditionFlag::NC), self.fetch16()),
-            0xD5 => Instruction::PUSH(Register16::DE),
-            0xD6 => Instruction::SUB_d8(self.fetch8()),
-            0xD7 => Instruction::RST(0x10),
-            0xD8 => Instruction::RET(Some(ConditionFlag::C)),
-            0xD9 => Instruction::RETI,
-            0xDA => Instruction::JP(Some(ConditionFlag::C), self.fetch16()),
-            0xDC => Instruction::CALL(Some(ConditionFlag::C), self.fetch16()),
-            0xDE => Instruction::SBC_d8(self.fetch8()),
-            0xDF => Instruction::RST(0x18),
-            0xE0 => Instruction::LDH_n_A(self.fetch8()),
-            0xE1 => Instruction::POP(Register16::HL),
-            0xE2 => Instruction::LD_C_A,
-            0xE5 => Instruction::PUSH(Register16::HL),
-            0xE6 => Instruction::AND_d8(self.fetch8()),
-            0xE7 => Instruction::RST(0x20),
-            0xE8 => Instruction::ADD_SP_r8(self.fetch8() as i8),
-            0xE9 => Instruction::JP_HL,
-            0xEA => Instruction::LD_a16_A(self.fetch16()),
-            0xEE => Instruction::XOR_d8(self.fetch8()),
-            0xEF => Instruction::RST(0x28),
-            0xF0 => Instruction::LDH_A_n(self.fetch8()),
-            0xF1 => Instruction::POP(Register16::AF),
-            0xF2 => Instruction::LD_A_C,
-            0xF3 => Instruction::DI,
-            0xF5 => Instruction::PUSH(Register16::AF),
-            0xF6 => Instruction::OR_d8(self.fetch8()),
-            0xF7 => Instruction::RST(0x30),
-            0xF8 => Instruction::LD_HL_SP(self.fetch8() as i8),
-            0xF9 => Instruction::LD_SP_HL,
-            0xFA => Instruction::LD_A_a16(self.fetch16()),
-            0xFB => Instruction::EI,
-            0xFE => Instruction::CP_d8(self.fetch8()),
-            0xFF => Instruction::RST(0x38),
+            0xCC => Inst::CALL(Some(FlagCondition::Z), self.fetch16()),
+            0xCD => Inst::CALL(None, self.fetch16()),
+            0xCE => Inst::ADC(Operand8::Imm(self.fetch8())),
+            0xCF => Inst::RST(0x08),
+            0xD0 => Inst::RET(Some(FlagCondition::NC)),
+            0xD1 => Inst::POP(DE),
+            0xD2 => Inst::JP(Some(FlagCondition::NC), self.fetch16()),
+            0xD4 => Inst::CALL(Some(FlagCondition::NC), self.fetch16()),
+            0xD5 => Inst::PUSH(DE),
+            0xD6 => Inst::SUB(Operand8::Imm(self.fetch8())),
+            0xD7 => Inst::RST(0x10),
+            0xD8 => Inst::RET(Some(FlagCondition::C)),
+            0xD9 => Inst::RETI,
+            0xDA => Inst::JP(Some(FlagCondition::C), self.fetch16()),
+            0xDC => Inst::CALL(Some(FlagCondition::C), self.fetch16()),
+            0xDE => Inst::SBC(Operand8::Imm(self.fetch8())),
+            0xDF => Inst::RST(0x18),
+            0xE0 => Inst::LD8(Operand8::ImmAddrHigh(self.fetch8()), Operand8::Reg(A)),
+            0xE1 => Inst::POP(HL),
+            0xE2 => Inst::LD_C_A,
+            0xE5 => Inst::PUSH(HL),
+            0xE6 => Inst::AND(Operand8::Imm(self.fetch8())),
+            0xE7 => Inst::RST(0x20),
+            0xE8 => Inst::ADD_SP_r8(self.fetch8() as i8),
+            0xE9 => Inst::JP_HL,
+            0xEA => Inst::LD8(Operand8::ImmAddr(self.fetch16()), Operand8::Reg(A)),
+            0xEE => Inst::XOR(Operand8::Imm(self.fetch8())),
+            0xEF => Inst::RST(0x28),
+            0xF0 => Inst::LD8(Operand8::Reg(A), Operand8::ImmAddrHigh(self.fetch8())),
+            0xF1 => Inst::POP(AF),
+            0xF2 => Inst::LD_A_C,
+            0xF3 => Inst::DI,
+            0xF5 => Inst::PUSH(AF),
+            0xF6 => Inst::OR(Operand8::Imm(self.fetch8())),
+            0xF7 => Inst::RST(0x30),
+            0xF8 => Inst::LD_HL_SP(self.fetch8() as i8),
+            0xF9 => Inst::LD_SP_HL,
+            0xFA => Inst::LD8(Operand8::Reg(A), Operand8::ImmAddr(self.fetch16())),
+            0xFB => Inst::EI,
+            0xFE => Inst::CP(Operand8::Imm(self.fetch8())),
+            0xFF => Inst::RST(0x38),
 
             n => {
                 panic!("Unexpected opcode 0x{:X} encountered", n);
@@ -851,264 +810,264 @@ impl <'a> CPU<'a> {
     }
 
     // Decodes extended instruction following 0xCB instruction.
-    fn decode_extended(&mut self) -> Instruction {
+    fn decode_extended(&mut self) -> Inst {
         match self.fetch8() {
-            0x00 => Instruction::RLC_r(Register8::B),
-            0x01 => Instruction::RLC_r(Register8::C),
-            0x02 => Instruction::RLC_r(Register8::D),
-            0x03 => Instruction::RLC_r(Register8::E),
-            0x04 => Instruction::RLC_r(Register8::H),
-            0x05 => Instruction::RLC_r(Register8::L),
-            0x06 => Instruction::RLC_HL,
-            0x07 => Instruction::RLC_r(Register8::A),
-            0x08 => Instruction::RRC_r(Register8::B),
-            0x09 => Instruction::RRC_r(Register8::C),
-            0x0A => Instruction::RRC_r(Register8::D),
-            0x0B => Instruction::RRC_r(Register8::E),
-            0x0C => Instruction::RRC_r(Register8::H),
-            0x0D => Instruction::RRC_r(Register8::L),
-            0x0E => Instruction::RRC_HL,
-            0x0F => Instruction::RRC_r(Register8::A),
-            0x10 => Instruction::RL_r(Register8::B),
-            0x11 => Instruction::RL_r(Register8::C),
-            0x12 => Instruction::RL_r(Register8::D),
-            0x13 => Instruction::RL_r(Register8::E),
-            0x14 => Instruction::RL_r(Register8::H),
-            0x15 => Instruction::RL_r(Register8::L),
-            0x16 => Instruction::RL_HL,
-            0x17 => Instruction::RL_r(Register8::A),
-            0x18 => Instruction::RR_r(Register8::B),
-            0x19 => Instruction::RR_r(Register8::C),
-            0x1A => Instruction::RR_r(Register8::D),
-            0x1B => Instruction::RR_r(Register8::E),
-            0x1C => Instruction::RR_r(Register8::H),
-            0x1D => Instruction::RR_r(Register8::L),
-            0x1E => Instruction::RR_HL,
-            0x1F => Instruction::RR_r(Register8::A),
-            0x20 => Instruction::SLA_r(Register8::B),
-            0x21 => Instruction::SLA_r(Register8::C),
-            0x22 => Instruction::SLA_r(Register8::D),
-            0x23 => Instruction::SLA_r(Register8::E),
-            0x24 => Instruction::SLA_r(Register8::H),
-            0x25 => Instruction::SLA_r(Register8::L),
-            0x26 => Instruction::SLA_HL,
-            0x27 => Instruction::SLA_r(Register8::A),
-            0x28 => Instruction::SRA_r(Register8::B),
-            0x29 => Instruction::SRA_r(Register8::C),
-            0x2A => Instruction::SRA_r(Register8::D),
-            0x2B => Instruction::SRA_r(Register8::E),
-            0x2C => Instruction::SRA_r(Register8::H),
-            0x2D => Instruction::SRA_r(Register8::L),
-            0x2E => Instruction::SRA_HL,
-            0x2F => Instruction::SRA_r(Register8::A),
-            0x30 => Instruction::SWAP_r(Register8::B),
-            0x31 => Instruction::SWAP_r(Register8::C),
-            0x32 => Instruction::SWAP_r(Register8::D),
-            0x33 => Instruction::SWAP_r(Register8::E),
-            0x34 => Instruction::SWAP_r(Register8::H),
-            0x35 => Instruction::SWAP_r(Register8::L),
-            0x36 => Instruction::SWAP_HL,
-            0x37 => Instruction::SWAP_r(Register8::A),
-            0x38 => Instruction::SRL_r(Register8::B),
-            0x39 => Instruction::SRL_r(Register8::C),
-            0x3A => Instruction::SRL_r(Register8::D),
-            0x3B => Instruction::SRL_r(Register8::E),
-            0x3C => Instruction::SRL_r(Register8::H),
-            0x3D => Instruction::SRL_r(Register8::L),
-            0x3E => Instruction::SRL_HL,
-            0x3F => Instruction::SRL_r(Register8::A),
-            0x40 => Instruction::BIT_b_r(0, Register8::B),
-            0x41 => Instruction::BIT_b_r(0, Register8::C),
-            0x42 => Instruction::BIT_b_r(0, Register8::D),
-            0x43 => Instruction::BIT_b_r(0, Register8::E),
-            0x44 => Instruction::BIT_b_r(0, Register8::H),
-            0x45 => Instruction::BIT_b_r(0, Register8::L),
-            0x46 => Instruction::BIT_b_HL(0),
-            0x47 => Instruction::BIT_b_r(0, Register8::A),
-            0x48 => Instruction::BIT_b_r(1, Register8::B),
-            0x49 => Instruction::BIT_b_r(1, Register8::C),
-            0x4A => Instruction::BIT_b_r(1, Register8::D),
-            0x4B => Instruction::BIT_b_r(1, Register8::E),
-            0x4C => Instruction::BIT_b_r(1, Register8::H),
-            0x4D => Instruction::BIT_b_r(1, Register8::L),
-            0x4E => Instruction::BIT_b_HL(1),
-            0x4F => Instruction::BIT_b_r(1, Register8::A),
-            0x50 => Instruction::BIT_b_r(2, Register8::B),
-            0x51 => Instruction::BIT_b_r(2, Register8::C),
-            0x52 => Instruction::BIT_b_r(2, Register8::D),
-            0x53 => Instruction::BIT_b_r(2, Register8::E),
-            0x54 => Instruction::BIT_b_r(2, Register8::H),
-            0x55 => Instruction::BIT_b_r(2, Register8::L),
-            0x56 => Instruction::BIT_b_HL(2),
-            0x57 => Instruction::BIT_b_r(2, Register8::A),
-            0x58 => Instruction::BIT_b_r(3, Register8::B),
-            0x59 => Instruction::BIT_b_r(3, Register8::C),
-            0x5A => Instruction::BIT_b_r(3, Register8::D),
-            0x5B => Instruction::BIT_b_r(3, Register8::E),
-            0x5C => Instruction::BIT_b_r(3, Register8::H),
-            0x5D => Instruction::BIT_b_r(3, Register8::L),
-            0x5E => Instruction::BIT_b_HL(3),
-            0x5F => Instruction::BIT_b_r(3, Register8::A),
-            0x60 => Instruction::BIT_b_r(4, Register8::B),
-            0x61 => Instruction::BIT_b_r(4, Register8::C),
-            0x62 => Instruction::BIT_b_r(4, Register8::D),
-            0x63 => Instruction::BIT_b_r(4, Register8::E),
-            0x64 => Instruction::BIT_b_r(4, Register8::H),
-            0x65 => Instruction::BIT_b_r(4, Register8::L),
-            0x66 => Instruction::BIT_b_HL(4),
-            0x67 => Instruction::BIT_b_r(4, Register8::A),
-            0x68 => Instruction::BIT_b_r(5, Register8::B),
-            0x69 => Instruction::BIT_b_r(5, Register8::C),
-            0x6A => Instruction::BIT_b_r(5, Register8::D),
-            0x6B => Instruction::BIT_b_r(5, Register8::E),
-            0x6C => Instruction::BIT_b_r(5, Register8::H),
-            0x6D => Instruction::BIT_b_r(5, Register8::L),
-            0x6E => Instruction::BIT_b_HL(5),
-            0x6F => Instruction::BIT_b_r(5, Register8::A),
-            0x70 => Instruction::BIT_b_r(6, Register8::B),
-            0x71 => Instruction::BIT_b_r(6, Register8::C),
-            0x72 => Instruction::BIT_b_r(6, Register8::D),
-            0x73 => Instruction::BIT_b_r(6, Register8::E),
-            0x74 => Instruction::BIT_b_r(6, Register8::H),
-            0x75 => Instruction::BIT_b_r(6, Register8::L),
-            0x76 => Instruction::BIT_b_HL(6),
-            0x77 => Instruction::BIT_b_r(6, Register8::A),
-            0x78 => Instruction::BIT_b_r(7, Register8::B),
-            0x79 => Instruction::BIT_b_r(7, Register8::C),
-            0x7A => Instruction::BIT_b_r(7, Register8::D),
-            0x7B => Instruction::BIT_b_r(7, Register8::E),
-            0x7C => Instruction::BIT_b_r(7, Register8::H),
-            0x7D => Instruction::BIT_b_r(7, Register8::L),
-            0x7E => Instruction::BIT_b_HL(7),
-            0x7F => Instruction::BIT_b_r(7, Register8::A),
-            0x80 => Instruction::RES_b_r(0, Register8::B),
-            0x81 => Instruction::RES_b_r(0, Register8::C),
-            0x82 => Instruction::RES_b_r(0, Register8::D),
-            0x83 => Instruction::RES_b_r(0, Register8::E),
-            0x84 => Instruction::RES_b_r(0, Register8::H),
-            0x85 => Instruction::RES_b_r(0, Register8::L),
-            0x86 => Instruction::RES_b_HL(0),
-            0x87 => Instruction::RES_b_r(0, Register8::A),
-            0x88 => Instruction::RES_b_r(1, Register8::B),
-            0x89 => Instruction::RES_b_r(1, Register8::C),
-            0x8A => Instruction::RES_b_r(1, Register8::D),
-            0x8B => Instruction::RES_b_r(1, Register8::E),
-            0x8C => Instruction::RES_b_r(1, Register8::H),
-            0x8D => Instruction::RES_b_r(1, Register8::L),
-            0x8E => Instruction::RES_b_HL(1),
-            0x8F => Instruction::RES_b_r(1, Register8::A),
-            0x90 => Instruction::RES_b_r(2, Register8::B),
-            0x91 => Instruction::RES_b_r(2, Register8::C),
-            0x92 => Instruction::RES_b_r(2, Register8::D),
-            0x93 => Instruction::RES_b_r(2, Register8::E),
-            0x94 => Instruction::RES_b_r(2, Register8::H),
-            0x95 => Instruction::RES_b_r(2, Register8::L),
-            0x96 => Instruction::RES_b_HL(2),
-            0x97 => Instruction::RES_b_r(2, Register8::A),
-            0x98 => Instruction::RES_b_r(3, Register8::B),
-            0x99 => Instruction::RES_b_r(3, Register8::C),
-            0x9A => Instruction::RES_b_r(3, Register8::D),
-            0x9B => Instruction::RES_b_r(3, Register8::E),
-            0x9C => Instruction::RES_b_r(3, Register8::H),
-            0x9D => Instruction::RES_b_r(3, Register8::L),
-            0x9E => Instruction::RES_b_HL(3),
-            0x9F => Instruction::RES_b_r(3, Register8::A),
-            0xA0 => Instruction::RES_b_r(4, Register8::B),
-            0xA1 => Instruction::RES_b_r(4, Register8::C),
-            0xA2 => Instruction::RES_b_r(4, Register8::D),
-            0xA3 => Instruction::RES_b_r(4, Register8::E),
-            0xA4 => Instruction::RES_b_r(4, Register8::H),
-            0xA5 => Instruction::RES_b_r(4, Register8::L),
-            0xA6 => Instruction::RES_b_HL(4),
-            0xA7 => Instruction::RES_b_r(4, Register8::A),
-            0xA8 => Instruction::RES_b_r(5, Register8::B),
-            0xA9 => Instruction::RES_b_r(5, Register8::C),
-            0xAA => Instruction::RES_b_r(5, Register8::D),
-            0xAB => Instruction::RES_b_r(5, Register8::E),
-            0xAC => Instruction::RES_b_r(5, Register8::H),
-            0xAD => Instruction::RES_b_r(5, Register8::L),
-            0xAE => Instruction::RES_b_HL(5),
-            0xAF => Instruction::RES_b_r(5, Register8::A),
-            0xB0 => Instruction::RES_b_r(6, Register8::B),
-            0xB1 => Instruction::RES_b_r(6, Register8::C),
-            0xB2 => Instruction::RES_b_r(6, Register8::D),
-            0xB3 => Instruction::RES_b_r(6, Register8::E),
-            0xB4 => Instruction::RES_b_r(6, Register8::H),
-            0xB5 => Instruction::RES_b_r(6, Register8::L),
-            0xB6 => Instruction::RES_b_HL(6),
-            0xB7 => Instruction::RES_b_r(6, Register8::A),
-            0xB8 => Instruction::RES_b_r(7, Register8::B),
-            0xB9 => Instruction::RES_b_r(7, Register8::C),
-            0xBA => Instruction::RES_b_r(7, Register8::D),
-            0xBB => Instruction::RES_b_r(7, Register8::E),
-            0xBC => Instruction::RES_b_r(7, Register8::H),
-            0xBD => Instruction::RES_b_r(7, Register8::L),
-            0xBE => Instruction::RES_b_HL(7),
-            0xBF => Instruction::RES_b_r(7, Register8::A),
-            0xC0 => Instruction::SET_b_r(0, Register8::B),
-            0xC1 => Instruction::SET_b_r(0, Register8::C),
-            0xC2 => Instruction::SET_b_r(0, Register8::D),
-            0xC3 => Instruction::SET_b_r(0, Register8::E),
-            0xC4 => Instruction::SET_b_r(0, Register8::H),
-            0xC5 => Instruction::SET_b_r(0, Register8::L),
-            0xC6 => Instruction::SET_b_HL(0),
-            0xC7 => Instruction::SET_b_r(0, Register8::A),
-            0xC8 => Instruction::SET_b_r(1, Register8::B),
-            0xC9 => Instruction::SET_b_r(1, Register8::C),
-            0xCA => Instruction::SET_b_r(1, Register8::D),
-            0xCB => Instruction::SET_b_r(1, Register8::E),
-            0xCC => Instruction::SET_b_r(1, Register8::H),
-            0xCD => Instruction::SET_b_r(1, Register8::L),
-            0xCE => Instruction::SET_b_HL(1),
-            0xCF => Instruction::SET_b_r(1, Register8::A),
-            0xD0 => Instruction::SET_b_r(2, Register8::B),
-            0xD1 => Instruction::SET_b_r(2, Register8::C),
-            0xD2 => Instruction::SET_b_r(2, Register8::D),
-            0xD3 => Instruction::SET_b_r(2, Register8::E),
-            0xD4 => Instruction::SET_b_r(2, Register8::H),
-            0xD5 => Instruction::SET_b_r(2, Register8::L),
-            0xD6 => Instruction::SET_b_HL(2),
-            0xD7 => Instruction::SET_b_r(2, Register8::A),
-            0xD8 => Instruction::SET_b_r(3, Register8::B),
-            0xD9 => Instruction::SET_b_r(3, Register8::C),
-            0xDA => Instruction::SET_b_r(3, Register8::D),
-            0xDB => Instruction::SET_b_r(3, Register8::E),
-            0xDC => Instruction::SET_b_r(3, Register8::H),
-            0xDD => Instruction::SET_b_r(3, Register8::L),
-            0xDE => Instruction::SET_b_HL(3),
-            0xDF => Instruction::SET_b_r(3, Register8::A),
-            0xE0 => Instruction::SET_b_r(4, Register8::B),
-            0xE1 => Instruction::SET_b_r(4, Register8::C),
-            0xE2 => Instruction::SET_b_r(4, Register8::D),
-            0xE3 => Instruction::SET_b_r(4, Register8::E),
-            0xE4 => Instruction::SET_b_r(4, Register8::H),
-            0xE5 => Instruction::SET_b_r(4, Register8::L),
-            0xE6 => Instruction::SET_b_HL(4),
-            0xE7 => Instruction::SET_b_r(4, Register8::A),
-            0xE8 => Instruction::SET_b_r(5, Register8::B),
-            0xE9 => Instruction::SET_b_r(5, Register8::C),
-            0xEA => Instruction::SET_b_r(5, Register8::D),
-            0xEB => Instruction::SET_b_r(5, Register8::E),
-            0xEC => Instruction::SET_b_r(5, Register8::H),
-            0xED => Instruction::SET_b_r(5, Register8::L),
-            0xEE => Instruction::SET_b_HL(5),
-            0xEF => Instruction::SET_b_r(5, Register8::A),
-            0xF0 => Instruction::SET_b_r(6, Register8::B),
-            0xF1 => Instruction::SET_b_r(6, Register8::C),
-            0xF2 => Instruction::SET_b_r(6, Register8::D),
-            0xF3 => Instruction::SET_b_r(6, Register8::E),
-            0xF4 => Instruction::SET_b_r(6, Register8::H),
-            0xF5 => Instruction::SET_b_r(6, Register8::L),
-            0xF6 => Instruction::SET_b_HL(6),
-            0xF7 => Instruction::SET_b_r(6, Register8::A),
-            0xF8 => Instruction::SET_b_r(7, Register8::B),
-            0xF9 => Instruction::SET_b_r(7, Register8::C),
-            0xFA => Instruction::SET_b_r(7, Register8::D),
-            0xFB => Instruction::SET_b_r(7, Register8::E),
-            0xFC => Instruction::SET_b_r(7, Register8::H),
-            0xFD => Instruction::SET_b_r(7, Register8::L),
-            0xFE => Instruction::SET_b_HL(7),
-            0xFF => Instruction::SET_b_r(7, Register8::A),
+            0x00 => Inst::RLC(Operand8::Reg(B)),
+            0x01 => Inst::RLC(Operand8::Reg(C)),
+            0x02 => Inst::RLC(Operand8::Reg(D)),
+            0x03 => Inst::RLC(Operand8::Reg(E)),
+            0x04 => Inst::RLC(Operand8::Reg(H)),
+            0x05 => Inst::RLC(Operand8::Reg(L)),
+            0x06 => Inst::RLC(Operand8::Addr(HL)),
+            0x07 => Inst::RLC(Operand8::Reg(A)),
+            0x08 => Inst::RRC(Operand8::Reg(B)),
+            0x09 => Inst::RRC(Operand8::Reg(C)),
+            0x0A => Inst::RRC(Operand8::Reg(D)),
+            0x0B => Inst::RRC(Operand8::Reg(E)),
+            0x0C => Inst::RRC(Operand8::Reg(H)),
+            0x0D => Inst::RRC(Operand8::Reg(L)),
+            0x0E => Inst::RRC(Operand8::Addr(HL)),
+            0x0F => Inst::RRC(Operand8::Reg(A)),
+            0x10 => Inst::RL(Operand8::Reg(B)),
+            0x11 => Inst::RL(Operand8::Reg(C)),
+            0x12 => Inst::RL(Operand8::Reg(D)),
+            0x13 => Inst::RL(Operand8::Reg(E)),
+            0x14 => Inst::RL(Operand8::Reg(H)),
+            0x15 => Inst::RL(Operand8::Reg(L)),
+            0x16 => Inst::RL(Operand8::Addr(HL)),
+            0x17 => Inst::RL(Operand8::Reg(A)),
+            0x18 => Inst::RR(Operand8::Reg(B)),
+            0x19 => Inst::RR(Operand8::Reg(C)),
+            0x1A => Inst::RR(Operand8::Reg(D)),
+            0x1B => Inst::RR(Operand8::Reg(E)),
+            0x1C => Inst::RR(Operand8::Reg(H)),
+            0x1D => Inst::RR(Operand8::Reg(L)),
+            0x1E => Inst::RR(Operand8::Addr(HL)),
+            0x1F => Inst::RR(Operand8::Reg(A)),
+            0x20 => Inst::SLA(Operand8::Reg(B)),
+            0x21 => Inst::SLA(Operand8::Reg(C)),
+            0x22 => Inst::SLA(Operand8::Reg(D)),
+            0x23 => Inst::SLA(Operand8::Reg(E)),
+            0x24 => Inst::SLA(Operand8::Reg(H)),
+            0x25 => Inst::SLA(Operand8::Reg(L)),
+            0x26 => Inst::SLA(Operand8::Addr(HL)),
+            0x27 => Inst::SLA(Operand8::Reg(A)),
+            0x28 => Inst::SRA(Operand8::Reg(B)),
+            0x29 => Inst::SRA(Operand8::Reg(C)),
+            0x2A => Inst::SRA(Operand8::Reg(D)),
+            0x2B => Inst::SRA(Operand8::Reg(E)),
+            0x2C => Inst::SRA(Operand8::Reg(H)),
+            0x2D => Inst::SRA(Operand8::Reg(L)),
+            0x2E => Inst::SRA(Operand8::Addr(HL)),
+            0x2F => Inst::SRA(Operand8::Reg(A)),
+            0x30 => Inst::SWAP(Operand8::Reg(B)),
+            0x31 => Inst::SWAP(Operand8::Reg(C)),
+            0x32 => Inst::SWAP(Operand8::Reg(D)),
+            0x33 => Inst::SWAP(Operand8::Reg(E)),
+            0x34 => Inst::SWAP(Operand8::Reg(H)),
+            0x35 => Inst::SWAP(Operand8::Reg(L)),
+            0x36 => Inst::SWAP(Operand8::Addr(HL)),
+            0x37 => Inst::SWAP(Operand8::Reg(A)),
+            0x38 => Inst::SRL(Operand8::Reg(B)),
+            0x39 => Inst::SRL(Operand8::Reg(C)),
+            0x3A => Inst::SRL(Operand8::Reg(D)),
+            0x3B => Inst::SRL(Operand8::Reg(E)),
+            0x3C => Inst::SRL(Operand8::Reg(H)),
+            0x3D => Inst::SRL(Operand8::Reg(L)),
+            0x3E => Inst::SRL(Operand8::Addr(HL)),
+            0x3F => Inst::SRL(Operand8::Reg(A)),
+            0x40 => Inst::BIT(0, Operand8::Reg(B)),
+            0x41 => Inst::BIT(0, Operand8::Reg(C)),
+            0x42 => Inst::BIT(0, Operand8::Reg(D)),
+            0x43 => Inst::BIT(0, Operand8::Reg(E)),
+            0x44 => Inst::BIT(0, Operand8::Reg(H)),
+            0x45 => Inst::BIT(0, Operand8::Reg(L)),
+            0x46 => Inst::BIT(0, Operand8::Addr(HL)),
+            0x47 => Inst::BIT(0, Operand8::Reg(A)),
+            0x48 => Inst::BIT(1, Operand8::Reg(B)),
+            0x49 => Inst::BIT(1, Operand8::Reg(C)),
+            0x4A => Inst::BIT(1, Operand8::Reg(D)),
+            0x4B => Inst::BIT(1, Operand8::Reg(E)),
+            0x4C => Inst::BIT(1, Operand8::Reg(H)),
+            0x4D => Inst::BIT(1, Operand8::Reg(L)),
+            0x4E => Inst::BIT(1, Operand8::Addr(HL)),
+            0x4F => Inst::BIT(1, Operand8::Reg(A)),
+            0x50 => Inst::BIT(2, Operand8::Reg(B)),
+            0x51 => Inst::BIT(2, Operand8::Reg(C)),
+            0x52 => Inst::BIT(2, Operand8::Reg(D)),
+            0x53 => Inst::BIT(2, Operand8::Reg(E)),
+            0x54 => Inst::BIT(2, Operand8::Reg(H)),
+            0x55 => Inst::BIT(2, Operand8::Reg(L)),
+            0x56 => Inst::BIT(2, Operand8::Addr(HL)),
+            0x57 => Inst::BIT(2, Operand8::Reg(A)),
+            0x58 => Inst::BIT(3, Operand8::Reg(B)),
+            0x59 => Inst::BIT(3, Operand8::Reg(C)),
+            0x5A => Inst::BIT(3, Operand8::Reg(D)),
+            0x5B => Inst::BIT(3, Operand8::Reg(E)),
+            0x5C => Inst::BIT(3, Operand8::Reg(H)),
+            0x5D => Inst::BIT(3, Operand8::Reg(L)),
+            0x5E => Inst::BIT(3, Operand8::Addr(HL)),
+            0x5F => Inst::BIT(3, Operand8::Reg(A)),
+            0x60 => Inst::BIT(4, Operand8::Reg(B)),
+            0x61 => Inst::BIT(4, Operand8::Reg(C)),
+            0x62 => Inst::BIT(4, Operand8::Reg(D)),
+            0x63 => Inst::BIT(4, Operand8::Reg(E)),
+            0x64 => Inst::BIT(4, Operand8::Reg(H)),
+            0x65 => Inst::BIT(4, Operand8::Reg(L)),
+            0x66 => Inst::BIT(4, Operand8::Addr(HL)),
+            0x67 => Inst::BIT(4, Operand8::Reg(A)),
+            0x68 => Inst::BIT(5, Operand8::Reg(B)),
+            0x69 => Inst::BIT(5, Operand8::Reg(C)),
+            0x6A => Inst::BIT(5, Operand8::Reg(D)),
+            0x6B => Inst::BIT(5, Operand8::Reg(E)),
+            0x6C => Inst::BIT(5, Operand8::Reg(H)),
+            0x6D => Inst::BIT(5, Operand8::Reg(L)),
+            0x6E => Inst::BIT(5, Operand8::Addr(HL)),
+            0x6F => Inst::BIT(5, Operand8::Reg(A)),
+            0x70 => Inst::BIT(6, Operand8::Reg(B)),
+            0x71 => Inst::BIT(6, Operand8::Reg(C)),
+            0x72 => Inst::BIT(6, Operand8::Reg(D)),
+            0x73 => Inst::BIT(6, Operand8::Reg(E)),
+            0x74 => Inst::BIT(6, Operand8::Reg(H)),
+            0x75 => Inst::BIT(6, Operand8::Reg(L)),
+            0x76 => Inst::BIT(6, Operand8::Addr(HL)),
+            0x77 => Inst::BIT(6, Operand8::Reg(A)),
+            0x78 => Inst::BIT(7, Operand8::Reg(B)),
+            0x79 => Inst::BIT(7, Operand8::Reg(C)),
+            0x7A => Inst::BIT(7, Operand8::Reg(D)),
+            0x7B => Inst::BIT(7, Operand8::Reg(E)),
+            0x7C => Inst::BIT(7, Operand8::Reg(H)),
+            0x7D => Inst::BIT(7, Operand8::Reg(L)),
+            0x7E => Inst::BIT(7, Operand8::Addr(HL)),
+            0x7F => Inst::BIT(7, Operand8::Reg(A)),
+            0x80 => Inst::RES(0, Operand8::Reg(B)),
+            0x81 => Inst::RES(0, Operand8::Reg(C)),
+            0x82 => Inst::RES(0, Operand8::Reg(D)),
+            0x83 => Inst::RES(0, Operand8::Reg(E)),
+            0x84 => Inst::RES(0, Operand8::Reg(H)),
+            0x85 => Inst::RES(0, Operand8::Reg(L)),
+            0x86 => Inst::RES(0, Operand8::Addr(HL)),
+            0x87 => Inst::RES(0, Operand8::Reg(A)),
+            0x88 => Inst::RES(1, Operand8::Reg(B)),
+            0x89 => Inst::RES(1, Operand8::Reg(C)),
+            0x8A => Inst::RES(1, Operand8::Reg(D)),
+            0x8B => Inst::RES(1, Operand8::Reg(E)),
+            0x8C => Inst::RES(1, Operand8::Reg(H)),
+            0x8D => Inst::RES(1, Operand8::Reg(L)),
+            0x8E => Inst::RES(1, Operand8::Addr(HL)),
+            0x8F => Inst::RES(1, Operand8::Reg(A)),
+            0x90 => Inst::RES(2, Operand8::Reg(B)),
+            0x91 => Inst::RES(2, Operand8::Reg(C)),
+            0x92 => Inst::RES(2, Operand8::Reg(D)),
+            0x93 => Inst::RES(2, Operand8::Reg(E)),
+            0x94 => Inst::RES(2, Operand8::Reg(H)),
+            0x95 => Inst::RES(2, Operand8::Reg(L)),
+            0x96 => Inst::RES(2, Operand8::Addr(HL)),
+            0x97 => Inst::RES(2, Operand8::Reg(A)),
+            0x98 => Inst::RES(3, Operand8::Reg(B)),
+            0x99 => Inst::RES(3, Operand8::Reg(C)),
+            0x9A => Inst::RES(3, Operand8::Reg(D)),
+            0x9B => Inst::RES(3, Operand8::Reg(E)),
+            0x9C => Inst::RES(3, Operand8::Reg(H)),
+            0x9D => Inst::RES(3, Operand8::Reg(L)),
+            0x9E => Inst::RES(3, Operand8::Addr(HL)),
+            0x9F => Inst::RES(3, Operand8::Reg(A)),
+            0xA0 => Inst::RES(4, Operand8::Reg(B)),
+            0xA1 => Inst::RES(4, Operand8::Reg(C)),
+            0xA2 => Inst::RES(4, Operand8::Reg(D)),
+            0xA3 => Inst::RES(4, Operand8::Reg(E)),
+            0xA4 => Inst::RES(4, Operand8::Reg(H)),
+            0xA5 => Inst::RES(4, Operand8::Reg(L)),
+            0xA6 => Inst::RES(4, Operand8::Addr(HL)),
+            0xA7 => Inst::RES(4, Operand8::Reg(A)),
+            0xA8 => Inst::RES(5, Operand8::Reg(B)),
+            0xA9 => Inst::RES(5, Operand8::Reg(C)),
+            0xAA => Inst::RES(5, Operand8::Reg(D)),
+            0xAB => Inst::RES(5, Operand8::Reg(E)),
+            0xAC => Inst::RES(5, Operand8::Reg(H)),
+            0xAD => Inst::RES(5, Operand8::Reg(L)),
+            0xAE => Inst::RES(5, Operand8::Addr(HL)),
+            0xAF => Inst::RES(5, Operand8::Reg(A)),
+            0xB0 => Inst::RES(6, Operand8::Reg(B)),
+            0xB1 => Inst::RES(6, Operand8::Reg(C)),
+            0xB2 => Inst::RES(6, Operand8::Reg(D)),
+            0xB3 => Inst::RES(6, Operand8::Reg(E)),
+            0xB4 => Inst::RES(6, Operand8::Reg(H)),
+            0xB5 => Inst::RES(6, Operand8::Reg(L)),
+            0xB6 => Inst::RES(6, Operand8::Addr(HL)),
+            0xB7 => Inst::RES(6, Operand8::Reg(A)),
+            0xB8 => Inst::RES(7, Operand8::Reg(B)),
+            0xB9 => Inst::RES(7, Operand8::Reg(C)),
+            0xBA => Inst::RES(7, Operand8::Reg(D)),
+            0xBB => Inst::RES(7, Operand8::Reg(E)),
+            0xBC => Inst::RES(7, Operand8::Reg(H)),
+            0xBD => Inst::RES(7, Operand8::Reg(L)),
+            0xBE => Inst::RES(7, Operand8::Addr(HL)),
+            0xBF => Inst::RES(7, Operand8::Reg(A)),
+            0xC0 => Inst::SET(0, Operand8::Reg(B)),
+            0xC1 => Inst::SET(0, Operand8::Reg(C)),
+            0xC2 => Inst::SET(0, Operand8::Reg(D)),
+            0xC3 => Inst::SET(0, Operand8::Reg(E)),
+            0xC4 => Inst::SET(0, Operand8::Reg(H)),
+            0xC5 => Inst::SET(0, Operand8::Reg(L)),
+            0xC6 => Inst::SET(0, Operand8::Addr(HL)),
+            0xC7 => Inst::SET(0, Operand8::Reg(A)),
+            0xC8 => Inst::SET(1, Operand8::Reg(B)),
+            0xC9 => Inst::SET(1, Operand8::Reg(C)),
+            0xCA => Inst::SET(1, Operand8::Reg(D)),
+            0xCB => Inst::SET(1, Operand8::Reg(E)),
+            0xCC => Inst::SET(1, Operand8::Reg(H)),
+            0xCD => Inst::SET(1, Operand8::Reg(L)),
+            0xCE => Inst::SET(1, Operand8::Addr(HL)),
+            0xCF => Inst::SET(1, Operand8::Reg(A)),
+            0xD0 => Inst::SET(2, Operand8::Reg(B)),
+            0xD1 => Inst::SET(2, Operand8::Reg(C)),
+            0xD2 => Inst::SET(2, Operand8::Reg(D)),
+            0xD3 => Inst::SET(2, Operand8::Reg(E)),
+            0xD4 => Inst::SET(2, Operand8::Reg(H)),
+            0xD5 => Inst::SET(2, Operand8::Reg(L)),
+            0xD6 => Inst::SET(2, Operand8::Addr(HL)),
+            0xD7 => Inst::SET(2, Operand8::Reg(A)),
+            0xD8 => Inst::SET(3, Operand8::Reg(B)),
+            0xD9 => Inst::SET(3, Operand8::Reg(C)),
+            0xDA => Inst::SET(3, Operand8::Reg(D)),
+            0xDB => Inst::SET(3, Operand8::Reg(E)),
+            0xDC => Inst::SET(3, Operand8::Reg(H)),
+            0xDD => Inst::SET(3, Operand8::Reg(L)),
+            0xDE => Inst::SET(3, Operand8::Addr(HL)),
+            0xDF => Inst::SET(3, Operand8::Reg(A)),
+            0xE0 => Inst::SET(4, Operand8::Reg(B)),
+            0xE1 => Inst::SET(4, Operand8::Reg(C)),
+            0xE2 => Inst::SET(4, Operand8::Reg(D)),
+            0xE3 => Inst::SET(4, Operand8::Reg(E)),
+            0xE4 => Inst::SET(4, Operand8::Reg(H)),
+            0xE5 => Inst::SET(4, Operand8::Reg(L)),
+            0xE6 => Inst::SET(4, Operand8::Addr(HL)),
+            0xE7 => Inst::SET(4, Operand8::Reg(A)),
+            0xE8 => Inst::SET(5, Operand8::Reg(B)),
+            0xE9 => Inst::SET(5, Operand8::Reg(C)),
+            0xEA => Inst::SET(5, Operand8::Reg(D)),
+            0xEB => Inst::SET(5, Operand8::Reg(E)),
+            0xEC => Inst::SET(5, Operand8::Reg(H)),
+            0xED => Inst::SET(5, Operand8::Reg(L)),
+            0xEE => Inst::SET(5, Operand8::Addr(HL)),
+            0xEF => Inst::SET(5, Operand8::Reg(A)),
+            0xF0 => Inst::SET(6, Operand8::Reg(B)),
+            0xF1 => Inst::SET(6, Operand8::Reg(C)),
+            0xF2 => Inst::SET(6, Operand8::Reg(D)),
+            0xF3 => Inst::SET(6, Operand8::Reg(E)),
+            0xF4 => Inst::SET(6, Operand8::Reg(H)),
+            0xF5 => Inst::SET(6, Operand8::Reg(L)),
+            0xF6 => Inst::SET(6, Operand8::Addr(HL)),
+            0xF7 => Inst::SET(6, Operand8::Reg(A)),
+            0xF8 => Inst::SET(7, Operand8::Reg(B)),
+            0xF9 => Inst::SET(7, Operand8::Reg(C)),
+            0xFA => Inst::SET(7, Operand8::Reg(D)),
+            0xFB => Inst::SET(7, Operand8::Reg(E)),
+            0xFC => Inst::SET(7, Operand8::Reg(H)),
+            0xFD => Inst::SET(7, Operand8::Reg(L)),
+            0xFE => Inst::SET(7, Operand8::Addr(HL)),
+            0xFF => Inst::SET(7, Operand8::Reg(A)),
 
             n => {
                 panic!("Unexpected extended opcode 0x{:X} encountered", n);
@@ -1116,75 +1075,75 @@ impl <'a> CPU<'a> {
         }
     }
 
-    fn get_reg8(&self, reg: Register8) -> u8 {
+    fn get_reg8(&self, reg: Reg8) -> u8 {
         match reg {
-            Register8::A => self.a,
-            Register8::B => self.b,
-            Register8::C => self.c,
-            Register8::D => self.d,
-            Register8::E => self.e,
-            Register8::H => self.h,
-            Register8::L => self.l,
+            A => self.a,
+            B => self.b,
+            C => self.c,
+            D => self.d,
+            E => self.e,
+            H => self.h,
+            L => self.l,
         }
     }
 
-    fn set_reg8(&mut self, reg: Register8, v: u8) {
+    fn set_reg8(&mut self, reg: Reg8, v: u8) {
         match reg {
-            Register8::A => { self.a = v },
-            Register8::B => { self.b = v },
-            Register8::C => { self.c = v },
-            Register8::D => { self.d = v },
-            Register8::E => { self.e = v },
-            Register8::H => { self.h = v },
-            Register8::L => { self.l = v },
+            A => { self.a = v },
+            B => { self.b = v },
+            C => { self.c = v },
+            D => { self.d = v },
+            E => { self.e = v },
+            H => { self.h = v },
+            L => { self.l = v },
         };
     }
 
-    fn get_reg16(&self, reg: Register16) -> u16 {
+    fn get_reg16(&self, reg: Reg16) -> u16 {
         let (hi, lo) = match reg {
-            Register16::AF => { (self.a, self.f) },
-            Register16::BC => { (self.b, self.c) },
-            Register16::DE => { (self.d, self.e) },
-            Register16::HL => { (self.h, self.l) },
-            Register16::SP => { return self.sp },
+            AF => { (self.a, self.f) },
+            BC => { (self.b, self.c) },
+            DE => { (self.d, self.e) },
+            HL => { (self.h, self.l) },
+            SP => { return self.sp },
         };
 
         (hi as u16) << 8 | (lo as u16)
     }
 
-    fn set_reg16(&mut self, reg: Register16, v: u16) {
+    fn set_reg16(&mut self, reg: Reg16, v: u16) {
         let (hi, lo) = match reg {
-            Register16::AF => { (&mut self.a, &mut self.f) },
-            Register16::BC => { (&mut self.b, &mut self.c) },
-            Register16::DE => { (&mut self.d, &mut self.e) },
-            Register16::HL => { (&mut self.h, &mut self.l) },
-            Register16::SP => { self.sp = v; return },
+            AF => { (&mut self.a, &mut self.f) },
+            BC => { (&mut self.b, &mut self.c) },
+            DE => { (&mut self.d, &mut self.e) },
+            HL => { (&mut self.h, &mut self.l) },
+            SP => { self.sp = v; return },
         };
 
         *hi = ((v & 0xFF00) >> 8) as u8;
         *lo = (v & 0xFF) as u8;
     }
 
-    fn check_jmp_condition(&self, cc: ConditionFlag) -> bool {
+    fn check_jmp_condition(&self, cc: FlagCondition) -> bool {
         match cc {
-            ConditionFlag::NZ => (self.f & FLAG_ZERO) == 0,
-            ConditionFlag::Z  => (self.f & FLAG_ZERO) != 0,
-            ConditionFlag::NC => (self.f & FLAG_CARRY) == 0,
-            ConditionFlag::C  => (self.f & FLAG_CARRY) != 0,
+            FlagCondition::NZ => (self.f & FLAG_ZERO) == 0,
+            FlagCondition::Z  => (self.f & FLAG_ZERO) != 0,
+            FlagCondition::NC => (self.f & FLAG_CARRY) == 0,
+            FlagCondition::C  => (self.f & FLAG_CARRY) != 0,
         }
     }
 
-    fn di(&mut self) -> u32 {
+    fn di(&mut self) -> u8 {
         self.ime_defer = Some(false);
         4
     }
 
-    fn ei(&mut self) -> u32 {
+    fn ei(&mut self) -> u8 {
         self.ime_defer = Some(true);
         4
     }
 
-    fn reti(&mut self) -> u32 {
+    fn reti(&mut self) -> u8 {
         self.ime_defer = Some(true);
         self.ret(None)
     }
@@ -1193,7 +1152,7 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - - - -
-    fn stop(&mut self) -> u32 {
+    fn stop(&mut self) -> u8 {
         // TODO: this should be more than a noop.
         4
     }
@@ -1202,18 +1161,15 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - - - -
-    fn halt(&mut self) -> u32 {
+    fn halt(&mut self) -> u8 {
         // TODO: pretty sure I need to check interrupt states here.
         self.halted = true;
         4
     }
 
-    // INC r
-    // INC (HL)
-    // Flags:
-    // Z N H C
-    // * 0 * -
-    fn inc(&mut self, v: u8) -> u8 {
+    // TODO: clean up and document
+    fn inc8(&mut self, o: Operand8) -> u8 {
+        let v = o.get(self);
         let (v, _) = v.overflowing_add(1);
 
         // Clear Z, N, H flags. If we overflowed top or bottom nibbles
@@ -1230,42 +1186,19 @@ impl <'a> CPU<'a> {
             self.f |= FLAG_HALF_CARRY;
         }
 
-        v
+        o.set(self, v);
+        
+        4 + o.cycle_cost() * 2
     }
 
-    fn inc_r(&mut self, r: Register8) -> u32 {
-        let v = self.get_reg8(r);
-        let v = self.inc(v);
-        self.set_reg8(r, v);
-        4
-    }
-
-    fn inc_hl(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.mem_read8(addr);
-        let v = self.inc(v);
-        self.mem_write8(addr, v);
-        12
-    }
-
-    // INC rr
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn inc_rr(&mut self, r: Register16) -> u32 {
-        let v = self.get_reg16(r);
-        let (v, _) = v.overflowing_add(1);
-        self.set_reg16(r, v);
-
-        8
-    }
 
     // DEC r
     // DEC (HL)
     // Flags:
     // Z N H C
     // * 1 * -
-    fn dec(&mut self, v: u8) -> u8 {
+    fn dec8(&mut self, o: Operand8) -> u8 {
+        let v = o.get(self);
         let v = v.wrapping_sub(1);
         self.f &= !(FLAG_ZERO | FLAG_HALF_CARRY);
         self.f |= FLAG_SUBTRACT;
@@ -1277,29 +1210,28 @@ impl <'a> CPU<'a> {
             self.f |= FLAG_HALF_CARRY;
         }
 
-        v
+        o.set(self, v);
+
+        4 + o.cycle_cost() * 2
     }
 
-    fn dec_r(&mut self, r: Register8) -> u32 {
-        let v = self.get_reg8(r);
-        let v = self.dec(v);
-        self.set_reg8(r, v);
-        4
-    }
+    // INC rr
+    // Flags:
+    // Z N H C
+    // - - - -
+    fn inc_rr(&mut self, r: Reg16) -> u8 {
+        let v = self.get_reg16(r);
+        let (v, _) = v.overflowing_add(1);
+        self.set_reg16(r, v);
 
-    fn dec_hl(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.mem_read8(addr);
-        let v = self.dec(v);
-        self.mem_write8(addr, v);
-        12
+        8
     }
 
     // DEC rr
     // Flags:
     // Z N H C
     // - - - -
-    fn dec_rr(&mut self, r: Register16) -> u32 {
+    fn dec_rr(&mut self, r: Reg16) -> u8 {
         let v = self.get_reg16(r);
         let (v, _) = v.overflowing_sub(1);
         self.set_reg16(r, v);
@@ -1307,61 +1239,11 @@ impl <'a> CPU<'a> {
         8
     }
 
-    // Raw ADD instruction used by both add_r and add_hl
-    fn add(&mut self, v: u8, carry: bool) {
-        let a = self.get_reg8(Register8::A);
-        
-        let carry = if carry && (self.f & FLAG_CARRY > 0) { 1 } else { 0 };
-        self.f = 0;
-
-        let new_a = a.wrapping_add(v).wrapping_add(carry);
-        self.set_reg8(Register8::A, new_a);
-
-
-        if new_a == 0 {
-            self.f |= FLAG_ZERO;
-        }
-
-        if (a as u16) + (v as u16) + (carry as u16) > 0xFF {
-            self.f |= FLAG_CARRY;
-        }
-
-        if (((a & 0xF) + (v & 0xF)) + carry) & 0x10 == 0x10 {
-            self.f |= FLAG_HALF_CARRY;
-        }
-    }
-
-    // Raw SUB/CP instruction used by both sub_r and sub_hl
-    fn sub(&mut self, v: u8, carry: bool, store: bool) {
-        let a = self.get_reg8(Register8::A);
-        
-        let carry = if carry && (self.f & FLAG_CARRY != 0) { 1 } else { 0 };
-        let new_a = a.wrapping_sub(v).wrapping_sub(carry);
-
-        if store {
-            self.set_reg8(Register8::A, new_a);
-        }
-
-        self.f = FLAG_SUBTRACT;
-
-        if new_a == 0 {
-            self.f |= FLAG_ZERO;
-        }
-
-        if (a as u16) < (v as u16) + (carry as u16) {
-            self.f |= FLAG_CARRY;
-        }
-
-        if ((a & 0xF) as u16) < ((v & 0xF) as u16) + (carry as u16) {
-            self.f |= FLAG_HALF_CARRY;
-        }
-    }
-
     // DAA
     // Flags:
     // Z N H C
     // * - 0 *
-    fn daa(&mut self) -> u32 {
+    fn daa(&mut self) -> u8 {
         let mut carry = false;
 
         if self.f & FLAG_SUBTRACT == 0 {
@@ -1394,7 +1276,7 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - 1 1 -
-    fn cpl(&mut self) -> u32 {
+    fn cpl(&mut self) -> u8 {
         self.a = !self.a;
         self.f |= FLAG_SUBTRACT | FLAG_HALF_CARRY;
         4
@@ -1404,7 +1286,7 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - 1 1 -
-    fn ccf(&mut self) -> u32 {
+    fn ccf(&mut self) -> u8 {
         self.f &= !(FLAG_SUBTRACT | FLAG_HALF_CARRY);
         self.f ^= FLAG_CARRY;
         4
@@ -1414,33 +1296,72 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - 0 0 1
-    fn scf(&mut self) -> u32 {
+    fn scf(&mut self) -> u8 {
         self.f &= !(FLAG_SUBTRACT | FLAG_HALF_CARRY);
         self.f |= FLAG_CARRY;
         4
     }
 
-    // ADD A, r
-    // ADC A, r
-    // Flags:
-    // Z N H C
-    // * 0 * *
-    fn add_r(&mut self, r: Register8, carry: bool) -> u32 {
-        let v = self.get_reg8(r);
-        self.add(v, carry);
-        4
+    // TODO: rework this awful code and document.
+    fn add8(&mut self, o: Operand8, carry: bool) -> u8 {
+        let a = self.a;
+
+        let carry = if carry && (self.f & FLAG_CARRY > 0) { 1 } else { 0 };
+        self.f = 0;
+
+        let v = o.get(self);
+        let new_a = a.wrapping_add(v).wrapping_add(carry);
+        self.a = new_a;
+
+        if new_a == 0 {
+            self.f |= FLAG_ZERO;
+        }
+
+        if (a as u16) + (v as u16) + (carry as u16) > 0xFF {
+            self.f |= FLAG_CARRY;
+        }
+
+        if (((a & 0xF) + (v & 0xF)) + carry) & 0x10 == 0x10 {
+            self.f |= FLAG_HALF_CARRY;
+        }
+
+        4 + o.cycle_cost()
     }
 
-    fn add_d8(&mut self, d: u8, carry: bool) -> u32 {
-        self.add(d, carry);
-        4
+    // TODO: rework this and document.
+    fn sub8(&mut self, o: Operand8, carry: bool, store: bool) -> u8 {
+        let a = self.a;
+        let v = o.get(self);
+
+        let carry = if carry && (self.f & FLAG_CARRY != 0) { 1 } else { 0 };
+        let new_a = a.wrapping_sub(v).wrapping_sub(carry);
+
+        if store {
+            self.set_reg8(A, new_a);
+        }
+
+        self.f = FLAG_SUBTRACT;
+
+        if new_a == 0 {
+            self.f |= FLAG_ZERO;
+        }
+
+        if (a as u16) < (v as u16) + (carry as u16) {
+            self.f |= FLAG_CARRY;
+        }
+
+        if ((a & 0xF) as u16) < ((v & 0xF) as u16) + (carry as u16) {
+            self.f |= FLAG_HALF_CARRY;
+        }
+
+        4 + o.cycle_cost()
     }
 
     // ADD SP, r8
     // Flags:
     // Z N H C
     // 0 0 * *
-    fn add_sp_r8(&mut self, d: i8) -> u32 {
+    fn add_sp_r8(&mut self, d: i8) -> u8 {
         let d = d as i16 as u16;
         let sp = self.sp;
 
@@ -1456,27 +1377,16 @@ impl <'a> CPU<'a> {
         16
     }
 
-    // ADD A, (HL)
-    // ADC A, (HL)
-    // Flags:
-    // Z N H C
-    // * 0 * *
-    fn add_hl(&mut self, carry: bool) -> u32 {
-        let v = self.mem_read8(self.get_reg16(Register16::HL));
-        self.add(v, carry);
-        8
-    }
-
     // ADD HL, rr
     // Flags:
     // Z N H C
     // - 0 * *
-    fn add_rr(&mut self, r: Register16) -> u32 {
-        let hl = self.get_reg16(Register16::HL);
+    fn add_rr(&mut self, r: Reg16) -> u8 {
+        let hl = self.get_reg16(HL);
         let v = self.get_reg16(r);
 
         let (new_hl, overflow) = hl.overflowing_add(v);
-        self.set_reg16(Register16::HL, new_hl);
+        self.set_reg16(HL, new_hl);
 
         self.f &= FLAG_ZERO;
 
@@ -1490,53 +1400,20 @@ impl <'a> CPU<'a> {
         8
     }
 
-    // SUB r
-    // SBC r
-    // CP r
-    // Flags:
-    // * 1 * *
-    fn sub_hl(&mut self, carry: bool, store: bool) -> u32 {
-        let v = self.mem_read8(self.get_reg16(Register16::HL));
-        self.sub(v, carry, store);
-        4
-    }
+    // TODO: document
+    fn ld8(&mut self, l: Operand8, r: Operand8) -> u8 {
+        let v = r.get(self);
+        l.set(self, v);
 
-    // SUB (HL)
-    // SBC (HL)
-    // CP (HL)
-    // Flags:
-    // * 1 * *
-    fn sub_r(&mut self, r: Register8, carry: bool, store: bool) -> u32 {
-        let v = self.get_reg8(r);
-        self.sub(v, carry, store);
-        4
-    }
-
-    // SUB d8
-    // SBC A, d8
-    // CP d8
-    // Flags:
-    // * 1 * *
-    fn sub_d8(&mut self, d: u8, carry: bool, store: bool) -> u32 {
-        self.sub(d, carry, store);
-        8
-    }
-
-    // LD r, r
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_r_r(&mut self, to: Register8, from: Register8) -> u32 {
-        let v = self.get_reg8(from);
-        self.set_reg8(to, v);
-        4
+        // TODO:
+        4 + l.cycle_cost() + r.cycle_cost()
     }
 
     // LD r, (rr)
     // Flags:
     // Z N H C
     // - - - -
-    fn ld_r_rr(&mut self, r: Register8, rr: Register16) -> u32 {
+    fn ld_r_rr(&mut self, r: Reg8, rr: Reg16) -> u8 {
         let v = self.mem_read8(self.get_reg16(rr));
         self.set_reg8(r, v);
         8
@@ -1547,9 +1424,9 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - - - -
-    fn ldd_c_a(&mut self) -> u32 {
-        let v = self.get_reg8(Register8::A);
-        let addr = (self.get_reg8(Register8::C) as u16) + 0xFF00;
+    fn ldd_c_a(&mut self) -> u8 {
+        let v = self.get_reg8(A);
+        let addr = (self.get_reg8(C) as u16) + 0xFF00;
         self.mem_write8(addr, v);
         8
     }
@@ -1559,20 +1436,10 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - - - -
-    fn ldd_a_c(&mut self) -> u32 {
-        let addr = (self.get_reg8(Register8::C) as u16) + 0xFF00;
+    fn ldd_a_c(&mut self) -> u8 {
+        let addr = (self.get_reg8(C) as u16) + 0xFF00;
         let v = self.mem_read8(addr);
-        self.set_reg8(Register8::A, v);
-        8
-    }
-
-    // LD r, d8
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_r_d8(&mut self, reg: Register8, d: u8) -> u32 {
-        self.set_reg8(reg, d);
-
+        self.set_reg8(A, v);
         8
     }
 
@@ -1580,7 +1447,7 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - - - -
-    fn ld_rr_d16(&mut self, reg: Register16, d: u16) -> u32 {
+    fn ld_rr_d16(&mut self, reg: Reg16, d: u16) -> u8 {
         self.set_reg16(reg, d);
 
         12
@@ -1590,7 +1457,7 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - - - -
-    fn ld_r16_r(&mut self, r16: Register16, r: Register8) -> u32 {
+    fn ld_r16_r(&mut self, r16: Reg16, r: Reg8) -> u8 {
         let addr = self.get_reg16(r16);
         let v = self.get_reg8(r);
         self.mem_write8(addr, v);
@@ -1601,11 +1468,11 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - - - -
-    fn ld_hld_a(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.get_reg8(Register8::A);
+    fn ld_hld_a(&mut self) -> u8 {
+        let addr = self.get_reg16(HL);
+        let v = self.get_reg8(A);
         self.mem_write8(addr, v);
-        self.set_reg16(Register16::HL, addr - 1);
+        self.set_reg16(HL, addr - 1);
         8
     }
 
@@ -1613,11 +1480,11 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - - - -
-    fn ld_hli_a(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.get_reg8(Register8::A);
+    fn ld_hli_a(&mut self) -> u8 {
+        let addr = self.get_reg16(HL);
+        let v = self.get_reg8(A);
         self.mem_write8(addr, v);
-        self.set_reg16(Register16::HL, addr + 1);
+        self.set_reg16(HL, addr + 1);
         8
     }
 
@@ -1626,11 +1493,11 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - - - -
-    fn ld_a_hld(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
+    fn ld_a_hld(&mut self) -> u8 {
+        let addr = self.get_reg16(HL);
         let v = self.mem_read8(addr);
-        self.set_reg8(Register8::A, v);
-        self.set_reg16(Register16::HL, addr - 1);
+        self.set_reg8(A, v);
+        self.set_reg16(HL, addr - 1);
         8
     }
 
@@ -1638,11 +1505,11 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // - - - -
-    fn ld_a_hli(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
+    fn ld_a_hli(&mut self) -> u8 {
+        let addr = self.get_reg16(HL);
         let v = self.mem_read8(addr);
-        self.set_reg8(Register8::A, v);
-        self.set_reg16(Register16::HL, addr + 1);
+        self.set_reg8(A, v);
+        self.set_reg16(HL, addr + 1);
         8
     }
 
@@ -1650,11 +1517,11 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // 0 0 * *
-    fn ld_hl_sp(&mut self, d: i8) -> u32 {
+    fn ld_hl_sp(&mut self, d: i8) -> u8 {
         let sp = self.sp;
         let d = d as i16 as u16;
         let v = sp.wrapping_add(d);
-        self.set_reg16(Register16::HL, v);
+        self.set_reg16(HL, v);
 
         self.f = 0;
         if (sp & 0xF) + (d & 0xF) & 0x10 > 0 {
@@ -1667,84 +1534,34 @@ impl <'a> CPU<'a> {
         12
     }
 
-    // LD (HL), d8
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_hl_d8(&mut self, d: u8) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        self.mem_write8(addr, d);
-        12
-    }
-
     // LD SP, HL
     // Flags:
     // Z N H C
     // - - - -
-    fn ld_sp_hl(&mut self) -> u32 {
-        self.sp = self.get_reg16(Register16::HL);
+    fn ld_sp_hl(&mut self) -> u8 {
+        self.sp = self.get_reg16(HL);
         8
-    }    
-
-    // LD ($FF00+n), A
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ldh_n_a(&mut self, n: u8) -> u32 {
-        let addr = 0xFF00 + (n as u16);
-        let v = self.get_reg8(Register8::A);
-        self.mem_write8(addr, v);
-        12
-    }
-
-    // LD A, ($FF00+n)
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ldh_a_n(&mut self, n: u8) -> u32 {
-        let v = self.mem_read8(0xFF00 + (n as u16));
-        self.set_reg8(Register8::A, v);
-        12
-    }
-
-    // LD A, (a16)
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_a_a16(&mut self, a: u16) -> u32 {
-        let v = self.mem_read8(a);
-        self.set_reg8(Register8::A, v);
-        16
-    }
-
-    // LD (a16), A
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_a16_a(&mut self, a: u16) -> u32 {
-        let v = self.get_reg8(Register8::A);
-        self.mem_write8(a, v);
-        16
     }
 
     // LD (a16), SP
     // Flags:
     // Z N H C
     // - - - -
-    fn ld_a16_sp(&mut self, a: u16) -> u32 {
-        let v = self.get_reg16(Register16::SP);
+    fn ld_a16_sp(&mut self, a: u16) -> u8 {
+        let v = self.get_reg16(SP);
         self.mem_write16(a, v);
         20
     }
 
-    fn bitwise(&mut self, op: BitwiseOp, v: u8) {
-        let a = self.get_reg8(Register8::A);
+    fn bitwise(&mut self, op: BitwiseOp, o: Operand8) -> u8 {
+        let a = self.a;
+        let v = o.get(self);
         let a = match op {
             BitwiseOp::AND => a & v,
             BitwiseOp::OR => a | v,
             BitwiseOp::XOR => a ^ v,
         };
-        self.set_reg8(Register8::A, a);
+        self.a = a;
         self.f = 0;
         if let BitwiseOp::AND = op {
             self.f |= FLAG_HALF_CARRY;
@@ -1752,48 +1569,17 @@ impl <'a> CPU<'a> {
         if a == 0 {
             self.f |= FLAG_ZERO;
         }
-    }
 
-    // AND r
-    // AND r, (HL)
-    // Flags:
-    // Z N H C
-    // * 0 1 0
-    //
-    // OR r
-    // OR r, (HL)
-    // Flags:
-    // Z N H C
-    // * 0 1 0
-    //
-    // XOR n
-    // XOR n, (HL)
-    // Flags:
-    // Z N H C
-    // * 0 0 0
-    fn bitwise_r(&mut self, op: BitwiseOp, r: Register8) -> u32 {
-        let v = self.get_reg8(r);
-        self.bitwise(op, v);
-        4
-    }
-
-    fn bitwise_d8(&mut self, op: BitwiseOp, d: u8) -> u32 {
-        self.bitwise(op, d);
-        4
-    }
-
-    fn bitwise_hl(&mut self, op: BitwiseOp) -> u32 {
-        let v = self.mem_read8(self.get_reg16(Register16::HL));
-        self.bitwise(op, v);
-        8
+        4 + o.cycle_cost()
     }
 
     // BIT b, r
     // Flags:
     // Z N H C
     // * 0 1 -
-    fn bit_b_r(&mut self, b: u8, reg: Register8) -> u32 {
-        let v = self.get_reg8(reg) & (1 << b);
+    // TODO: cleanup and document
+    fn bit(&mut self, b: u8, o: Operand8) -> u8 {
+        let v = o.get(self) & (1 << b);
         self.f &= !FLAG_SUBTRACT;
         self.f |= FLAG_HALF_CARRY;
         if v == 0 {
@@ -1802,74 +1588,38 @@ impl <'a> CPU<'a> {
             self.f &= !FLAG_ZERO;
         }
 
-        8
-    }
-
-    // BIT b, (HL)
-    // Flags:
-    // Z N H C
-    // * 0 1 -
-    fn bit_b_hl(&mut self, b: u8) -> u32 {
-        let v = self.mem_read8(self.get_reg16(Register16::HL)) & (1 << b);
-        self.f &= !FLAG_SUBTRACT;
-        self.f |= FLAG_HALF_CARRY;
-        if v == 0 {
-            self.f |= FLAG_ZERO;
-        } else {
-            self.f &= !FLAG_ZERO;
-        }
-
-        16
+        8 + o.cycle_cost() * 2
     }
 
     // RES b, r
     // Flags:
     // Z N H C
     // - - - -
-    fn res_b_r(&mut self, b: u8, r: Register8) -> u32 {
-        let v = self.get_reg8(r) & !(1 << b);
-        self.set_reg8(r, v);
-        8
-    }
-
-    // RES b, (HL)
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn res_b_hl(&mut self, b: u8) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.mem_read8(addr) & !(1 << b);
-        self.mem_write8(addr, v);
-        16
+    // TODO:
+    fn res(&mut self, b: u8, o: Operand8) -> u8 {
+        let v = o.get(self) & !(1 << b);
+        o.set(self, v);
+        8 + o.cycle_cost() * 2
     }
 
     // SET b, r
     // Flags:
     // Z N H C
     // - - - -
-    fn set_b_r(&mut self, b: u8, r: Register8) -> u32 {
-        let v = self.get_reg8(r) | (1 << b);
-        self.set_reg8(r, v);
-        8
-    }
-
-    // SET b, (HL)
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn set_b_hl(&mut self, b: u8) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.mem_read8(addr) | (1 << b);
-        self.mem_write8(addr, v);
-        16
+    // TODO: dox
+    fn set(&mut self, b: u8, o: Operand8) -> u8 {
+        let v = o.get(self) | (1 << b);
+        o.set(self, v);
+        8 + o.cycle_cost() * 2
     }
 
     // RL r
     // Flags:
     // Z N H C
     // * 0 0 *
-    fn rl_r(&mut self, r: Register8, extended: bool) -> u32 {
-        let v = self.get_reg8(r);
+    // TODO:
+    fn rl(&mut self, o: Operand8, extended: bool) -> u8 {
+        let v = o.get(self);
         let carry = self.f & FLAG_CARRY > 0;
 
         self.f = 0;
@@ -1887,37 +1637,9 @@ impl <'a> CPU<'a> {
         if extended && v == 0 {
             self.f |= FLAG_ZERO;
         }
-        self.set_reg8(r, v);
+        o.set(self, v);
 
-        if extended { 8 } else { 4 }
-    }
-
-    // RL (HL)
-    // Flags:
-    // Z N H C
-    // * 0 0 *
-    fn rl_hl(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.mem_read8(addr);
-        let carry = self.f & FLAG_CARRY > 0;
-
-        self.f = 0;
-        if v & 0x80 > 0 {
-            self.f |= FLAG_CARRY;
-        }
-
-        let mut v = v << 1;
-
-        if carry {
-            v |= 1;
-        }
-
-        if v == 0 {
-            self.f |= FLAG_ZERO;
-        }
-        self.mem_write8(addr, v);
-
-        16
+        (if extended { 8 } else { 4 }) + o.cycle_cost() * 2
     }
 
     // RLC r
@@ -1928,8 +1650,9 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // 0 0 0 *
-    fn rlc_r(&mut self, r: Register8, extended: bool) -> u32 {
-        let mut v = self.get_reg8(r);
+    // TODO:
+    fn rlc(&mut self, o: Operand8, extended: bool) -> u8 {
+        let mut v = o.get(self);
         self.f = 0;
         if v & 0x80 > 0 {
             self.f |= FLAG_CARRY;
@@ -1941,39 +1664,17 @@ impl <'a> CPU<'a> {
         if extended && v == 0 {
             self.f |= FLAG_ZERO;
         }
-        self.set_reg8(r, v);
+        o.set(self, v);
 
-        if extended { 8 } else { 4 }
-    }
-
-    // RLC (HL)
-    // Flags:
-    // Z N H C
-    // * 0 0 *
-    fn rlc_hl(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let mut v = self.mem_read8(addr);
-
-        self.f = 0;
-        if v & 0x80 > 0 {
-            self.f |= FLAG_CARRY;
-        }
-        v <<= 1;
-        if self.f & FLAG_CARRY > 0 {
-            v |= 1;
-        }
-        if v == 0 {
-            self.f |= FLAG_ZERO;
-        }
-        self.mem_write8(addr, v);
-        8
+        (if extended { 8 } else { 4 }) + o.cycle_cost() * 2
     }
 
     // RR r
     // Flags:
     // Z N H C
     // * 0 0 *
-    fn rr(&mut self, v: u8, set_zero: bool) -> u8 {
+    fn rr(&mut self, o: Operand8, extended: bool) -> u8 {
+        let v = o.get(self);
         let carry = self.f & FLAG_CARRY > 0;
 
         self.f = 0;
@@ -1987,32 +1688,22 @@ impl <'a> CPU<'a> {
             v |= 0x80;
         }
 
-        if set_zero && v == 0 {
+        if extended && v == 0 {
             self.f |= FLAG_ZERO;
         }
 
-        v
-    }
-    fn rr_r(&mut self, r: Register8, extended: bool) -> u32 {
-        let v = self.get_reg8(r);
-        let v = self.rr(v, extended);
-        self.set_reg8(r, v);
-        if extended { 8 } else { 4 }
-    }
-    fn rr_hl(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.mem_read8(addr);
-        let v = self.rr(v, true);
-        self.mem_write8(addr, v);
-        16
+        o.set(self, v);
+
+        (if extended { 8 } else { 4 }) + o.cycle_cost() * 2
     }
 
     // SLA r
     // Flags:
     // Z N H C
     // * 0 0 C
-    fn sla_r(&mut self, r: Register8) -> u32 {
-        let v = self.get_reg8(r);
+    // TODO:
+    fn sla(&mut self, o: Operand8) -> u8 {
+        let v = o.get(self);
         self.f = 0;
         if v & 0x80 > 0 {
             self.f |= FLAG_CARRY;
@@ -2021,30 +1712,16 @@ impl <'a> CPU<'a> {
         if v == 0 {
             self.f |= FLAG_ZERO;
         }
-        self.set_reg8(r, v);
-        8
-    }
-    fn sla_hl(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.mem_read8(addr);
-        self.f = 0;
-        if v & 0x80 > 0 {
-            self.f |= FLAG_CARRY;
-        }
-        let v = v << 1;
-        if v == 0 {
-            self.f |= FLAG_ZERO;
-        }
-        self.mem_write8(addr, v);
-        8
+        o.set(self, v);
+        8 + o.cycle_cost() * 2
     }
 
     // SRA r
     // Flags:
     // Z N H C
     // * 0 0 *
-    fn sra_r(&mut self, r: Register8) -> u32 {
-        let v = self.get_reg8(r);
+    fn sra(&mut self, o: Operand8) -> u8 {
+        let v = o.get(self);
         self.f = 0;
         if v & 0x01 > 0 {
             self.f |= FLAG_CARRY;
@@ -2053,29 +1730,18 @@ impl <'a> CPU<'a> {
         if v == 0 {
             self.f |= FLAG_ZERO;
         }
-        self.set_reg8(r, v);
-        8
-    }
-    fn sra_hl(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.mem_read8(addr);
-        self.f = 0;
-        if v & 0x01 > 0 {
-            self.f |= FLAG_CARRY;
-        }
-        let v = (v >> 1) | (v & 0x80);
-        if v == 0 {
-            self.f |= FLAG_ZERO;
-        }
-        self.mem_write8(addr, v);
-        8
+        o.set(self, v);
+        8 + o.cycle_cost() * 2
     }
 
     // RRC r
     // Flags:
     // Z N H C
     // * 0 0 *
-    fn rrc(&mut self, v: u8, set_zero: bool) -> u8 {
+    // TODO:
+    fn rrc(&mut self, o: Operand8, extended: bool) -> u8 {
+        let v = o.get(self);
+
         self.f = 0;
         if v & 0x1 > 0 {
             self.f |= FLAG_CARRY;
@@ -2085,55 +1751,29 @@ impl <'a> CPU<'a> {
         if self.f & FLAG_CARRY > 0 {
             v |= 0x80;
         }
-        if set_zero && v == 0 {
+        if extended && v == 0 {
             self.f |= FLAG_ZERO;
         }
 
-        v
-    }
-    fn rrc_r(&mut self, r: Register8, extended: bool) -> u32 {
-        let v = self.get_reg8(r);
-        let v = self.rrc(v, extended);
-        self.set_reg8(r, v);
-        if extended { 8 } else { 4 }
-    }
-    fn rrc_hl(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.mem_read8(addr);
-        let v = self.rrc(v, true);
-        self.mem_write8(addr, v);
-        16
+        o.set(self, v);
+
+        (if extended { 8 } else { 4 }) + o.cycle_cost() * 2
     }
 
     // SWAP r
     // Flags:
     // Z N H C
     // * 0 0 0
-    fn swap_r(&mut self, r: Register8) -> u32 {
-        let v = self.get_reg8(r);
+    // TODO:
+    fn swap(&mut self, o: Operand8) -> u8 {
+        let v = o.get(self);
         let v = ((v & 0xF) << 4) | ((v & 0xF0) >> 4);
         self.f = 0;
         if v == 0 {
             self.f |= FLAG_ZERO;
         }
-        self.set_reg8(r, v);
-        8
-    }
-
-    // SWAP (HL)
-    // Flags:
-    // Z N H C
-    // * 0 0 0
-    fn swap_hl(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.mem_read8(addr);
-        let v = ((v & 0xF) << 4) | ((v & 0xF0) >> 4);
-        self.f = 0;
-        if v == 0 {
-            self.f |= FLAG_ZERO;
-        }
-        self.mem_write8(addr, v);
-        16
+        o.set(self, v);
+        8 + o.cycle_cost() * 2
     }
 
     // SRL r
@@ -2141,8 +1781,9 @@ impl <'a> CPU<'a> {
     // Flags:
     // Z N H C
     // * 0 0 *
-    fn srl_r(&mut self, r: Register8) -> u32 {
-        let v = self.get_reg8(r);
+    // TODO:
+    fn srl(&mut self, o: Operand8) -> u8 {
+        let v = o.get(self);
 
         self.f = 0;
         if v & 0x1 == 1 {
@@ -2154,30 +1795,12 @@ impl <'a> CPU<'a> {
             self.f |= FLAG_ZERO;
         }
 
-        self.set_reg8(r, v);
+        o.set(self, v);
 
-        8
-    }
-    fn srl_hl(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
-        let v = self.mem_read8(addr);
-
-        self.f = 0;
-        if v & 0x1 == 1 {
-            self.f |= FLAG_CARRY;
-        }
-
-        let v = v >> 1;
-        if v == 0 {
-            self.f |= FLAG_ZERO;
-        }
-
-        self.mem_write8(addr, v);
-
-        16
+        8 + o.cycle_cost() * 2
     }
 
-    fn call(&mut self, cc: Option<ConditionFlag>, addr: u16) -> u32 {
+    fn call(&mut self, cc: Option<FlagCondition>, addr: u16) -> u8 {
         if let Some(cc) = cc {
             if !self.check_jmp_condition(cc) {
                 return 12;
@@ -2192,7 +1815,7 @@ impl <'a> CPU<'a> {
         24
     }
 
-    fn ret(&mut self, cc: Option<ConditionFlag>) -> u32 {
+    fn ret(&mut self, cc: Option<FlagCondition>) -> u8 {
         let mut ic = 16;
         if let Some(cc) = cc {
             if !self.check_jmp_condition(cc) {
@@ -2206,7 +1829,7 @@ impl <'a> CPU<'a> {
         ic
     }
 
-    fn jp(&mut self, cc: Option<ConditionFlag>, a: u16) -> u32 {
+    fn jp(&mut self, cc: Option<FlagCondition>, a: u16) -> u8 {
         if let Some(cc) = cc {
             if !self.check_jmp_condition(cc) {
                 return 12;
@@ -2218,13 +1841,13 @@ impl <'a> CPU<'a> {
         16
     }
 
-    fn jp_hl(&mut self) -> u32 {
-        let addr = self.get_reg16(Register16::HL);
+    fn jp_hl(&mut self) -> u8 {
+        let addr = self.get_reg16(HL);
         self.pc = addr;
         4
     }
 
-    fn rst(&mut self, a: u8) -> u32 {
+    fn rst(&mut self, a: u8) -> u8 {
         self.sp -= 2;
         let sp = self.sp;
         let pc = self.pc;
@@ -2233,7 +1856,7 @@ impl <'a> CPU<'a> {
         16
     }
 
-    fn push(&mut self, r: Register16) -> u32 {
+    fn push(&mut self, r: Reg16) -> u8 {
         let v = self.get_reg16(r);
         self.sp -= 2;
         let sp = self.sp;
@@ -2241,9 +1864,9 @@ impl <'a> CPU<'a> {
         16
     }
 
-    fn pop(&mut self, r: Register16) -> u32 {
+    fn pop(&mut self, r: Reg16) -> u8 {
         let mut v = self.mem_read16(self.sp);
-        if let Register16::AF = r {
+        if let AF = r {
             // Reset bits 0-3 in F.
             v &= 0xFFF0;
         }
@@ -2252,7 +1875,7 @@ impl <'a> CPU<'a> {
         12
     }
 
-    fn jr_n(&mut self, n: u8) -> u32 {
+    fn jr_n(&mut self, n: u8) -> u8 {
         let ns: i8 = n as i8;
         if ns < 0 {
             self.pc -= ns.abs() as u16;
@@ -2263,7 +1886,7 @@ impl <'a> CPU<'a> {
         12
     }
 
-    fn jr_cc_n(&mut self, cc: ConditionFlag, n: u8) -> u32 {
+    fn jr_cc_n(&mut self, cc: FlagCondition, n: u8) -> u8 {
         if self.check_jmp_condition(cc) {
             return self.jr_n(n);
         }
