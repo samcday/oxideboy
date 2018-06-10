@@ -9,6 +9,13 @@ const FLAG_SUBTRACT: u8  = 0b01000000;
 const FLAG_HALF_CARRY:u8 = 0b00100000;
 const FLAG_CARRY:u8      = 0b00010000;
 
+enum FlagOp {
+    Z(bool),
+    N(bool),
+    H(bool),
+    C(bool),
+}
+
 pub trait MMU {
     fn read8(&self, addr: u16) -> u8;
     fn write8(&mut self, addr: u16, v: u8);
@@ -55,31 +62,59 @@ enum BitwiseOp {
 
 #[derive(Clone, Copy, Debug)]
 enum Operand8 {
-    Reg(Reg8),        // Contents of a register.
-    Imm(u8),              // Immediate value.
-    Addr(Reg16),           // 16 bit register value interpreted as memory address.
-    ImmAddr(u16),         // Immediate 16 bit value interpreted as memory address.
-    ImmAddrHigh(u8)   // Immediate 8 bit value interpreted as memory address from $FF00.
+    Reg(Reg8),        // Contents of an 8 bit register.
+    Imm(u8),          // Immediate value.
+    Addr(Reg16),      // 16 bit register value interpreted as memory address.
+    AddrInc(Reg16),   // 16 bit register value interpreted as memory address. Increment register after use.
+    AddrDec(Reg16),   // 16 bit register value interpreted as memory address. Decrement register after use.
+    ImmAddr(u16),     // Immediate 16 bit value interpreted as memory address.
+    ImmAddrHigh(u8),  // Immediate 8 bit value interpreted as memory address from $FF00.
+    AddrHigh(Reg8),   // 8 bit register value interpreted as memory address from $FF00.
 }
 
 impl Operand8 {
-    fn get(&self, cpu: &CPU) -> u8 {
+    fn get(&self, cpu: &mut CPU) -> u8 {
         match *self {
             Operand8::Reg(r) => cpu.get_reg8(r),
             Operand8::Imm(d) => d,
             Operand8::Addr(rr) => cpu.mem_read8(cpu.get_reg16(rr)),
+            Operand8::AddrInc(rr) => {
+                let addr = cpu.get_reg16(rr);
+                cpu.set_reg16(rr, addr.wrapping_add(1));
+                cpu.mem_read8(addr)
+            },
+            Operand8::AddrDec(rr) => {
+                let addr = cpu.get_reg16(rr);
+                cpu.set_reg16(rr, addr.wrapping_sub(1));
+                cpu.mem_read8(addr)
+            },
             Operand8::ImmAddr(addr) => cpu.mem_read8(addr),
             Operand8::ImmAddrHigh(addr) => cpu.mem_read8(0xFF00 + (addr as u16)),
+            Operand8::AddrHigh(r) => cpu.mem_read8(0xFF00 + (cpu.get_reg8(r) as u16)),
         }
     }
 
     fn set(&self, cpu: &mut CPU, v: u8) {
         match *self {
             Operand8::Reg(r) => cpu.set_reg8(r, v),
-            Operand8::Imm(_) => { panic!("An immediate value was given as an output operand.") },
-            Operand8::Addr(rr) => { let addr = cpu.get_reg16(rr); cpu.mem_write8(addr, v) },
+            Operand8::Imm(_) => { panic!("Attempted to write to immediate operand") },
+            Operand8::Addr(rr) => {
+                let addr = cpu.get_reg16(rr);
+                cpu.mem_write8(addr, v)
+            },
+            Operand8::AddrInc(rr) => {
+                let addr = cpu.get_reg16(rr);
+                cpu.set_reg16(rr, addr.wrapping_add(1));
+                cpu.mem_write8(addr, v)
+            },
+            Operand8::AddrDec(rr) => {
+                let addr = cpu.get_reg16(rr);
+                cpu.set_reg16(rr, addr.wrapping_sub(1));
+                cpu.mem_write8(addr, v)
+            },
             Operand8::ImmAddr(addr) => cpu.mem_write8(addr, v),
             Operand8::ImmAddrHigh(addr) => cpu.mem_write8(0xFF00 + (addr as u16), v),
+            Operand8::AddrHigh(r) => { let addr = cpu.get_reg8(r); cpu.mem_write8(0xFF00 + (addr as u16), v) },
         };
     }
 
@@ -87,9 +122,10 @@ impl Operand8 {
         match *self {
             Operand8::Reg(_) => 0,
             Operand8::Imm(_) => 4,
-            Operand8::Addr(_) => 4,
+            Operand8::Addr(_) | Operand8::AddrInc(_) | Operand8::AddrDec(_) => 4,
             Operand8::ImmAddr(_) => 12,
             Operand8::ImmAddrHigh(_) => 8,
+            Operand8::AddrHigh(_) => 4,
         }
     }
 }
@@ -100,8 +136,55 @@ impl ::fmt::Display for Operand8 {
             Operand8::Reg(r) => write!(f, "{:?}", r),
             Operand8::Imm(d) => write!(f, "${:02X}", d),
             Operand8::Addr(rr) => write!(f, "({:?})", rr),
+            Operand8::AddrInc(rr) => write!(f, "({:?}+)", rr),
+            Operand8::AddrDec(rr) => write!(f, "({:?}-)", rr),
             Operand8::ImmAddr(addr) => write!(f, "({:#04X})", addr),
             Operand8::ImmAddrHigh(addr) => write!(f, "(0xFF00+${:02X})", addr),
+            Operand8::AddrHigh(r) => write!(f, "(0xFF00+{:?})", r),
+        }
+    }
+}
+
+
+#[derive(Clone, Copy, Debug)]
+enum Operand16 {
+    Reg(Reg16),        // Contents of a 16 bit register.
+    Imm(u16),          // Immediate value.
+    ImmAddr(u16),      // Immediate 16 bit value interpreted as memory address.
+}
+
+impl Operand16 {
+    fn get(&self, cpu: &CPU) -> u16 {
+        match *self {
+            Operand16::Reg(r) => cpu.get_reg16(r),
+            Operand16::Imm(d) => d,
+            Operand16::ImmAddr(addr) => cpu.mem_read16(addr),
+        }
+    }
+
+    fn set(&self, cpu: &mut CPU, v: u16) {
+        match *self {
+            Operand16::Reg(r) => cpu.set_reg16(r, v),
+            Operand16::Imm(_) => panic!("Attempted to write to immediate operand"),
+            Operand16::ImmAddr(addr) => cpu.mem_write16(addr, v),
+        }
+    }
+
+    fn cycle_cost(&self) -> u8 {
+        match *self {
+            Operand16::Reg(_) => 0,
+            Operand16::Imm(_) => 4,
+            Operand16::ImmAddr(_) => 12,
+        }
+    }
+}
+
+impl ::fmt::Display for Operand16 {
+    fn fmt(&self, f: &mut ::fmt::Formatter) -> ::fmt::Result {
+        match *self {
+            Operand16::Reg(r) => write!(f, "{:?}", r),
+            Operand16::Imm(d) => write!(f, "${:04X}", d),
+            Operand16::ImmAddr(d) => write!(f, "({:#04X})", d),
         }
     }
 }
@@ -109,14 +192,30 @@ impl ::fmt::Display for Operand8 {
 #[allow(non_camel_case_types)]
 enum Inst {
     NOP,
+    EI,
+    DI,
+    STOP,
+    HALT,
+
     ADD(Operand8),
+    ADD16(Reg16),
     ADC(Operand8),
     SUB(Operand8),
     SBC(Operand8),
-    CP(Operand8),
-    LD8(Operand8, Operand8),
     INC8(Operand8),
     DEC8(Operand8),
+    INC16(Reg16),
+    DEC16(Reg16),
+
+    RLA,
+    RLCA,
+    RRA,
+    RRCA,
+
+    LD8(Operand8, Operand8),
+    LD16(Operand16, Operand16),
+
+    CP(Operand8),
     AND(Operand8),
     OR(Operand8),
     XOR(Operand8),
@@ -133,48 +232,22 @@ enum Inst {
     RES(u8, Operand8),
     SET(u8, Operand8),
 
-    EI,
-    DI,
+    JP(Option<FlagCondition>, Operand16),
+    JR(Option<FlagCondition>, u8),
+    CALL(Option<FlagCondition>, u16),
+    RET(Option<FlagCondition>),
+    PUSH(Reg16),
+    POP(Reg16),
+    RST(u8),
     RETI,
-    STOP,
-    HALT,
 
     DAA,
     CPL,
     CCF,
     SCF,
 
-    ADD_HL_rr(Reg16),
     ADD_SP_r8(i8),
-    INC_rr(Reg16),
-    DEC_rr(Reg16),
-    RLA,
-    RLCA,
-    RRA,
-    RRCA,
-
-    JP(Option<FlagCondition>, u16),
-    JP_HL,
-    JR_cc_n(FlagCondition, u8),
-    JR_n(u8),
-    CALL(Option<FlagCondition>, u16),
-    RET(Option<FlagCondition>),
-    PUSH(Reg16),
-    POP(Reg16),
-    RST(u8),
-
-    LD_r_rr(Reg8, Reg16),
-    LD_rr_d16(Reg16, u16),
-    LD_r16_r(Reg16, Reg8),
-    LD_C_A,
-    LD_A_C,
-    LD_HLD_A,
-    LD_HLI_A,
-    LD_A_HLD,
-    LD_A_HLI,
     LD_HL_SP(i8),
-    LD_SP_HL,
-    LD_a16_SP(u16),
 }
 
 impl ::fmt::Display for Inst {
@@ -187,6 +260,7 @@ impl ::fmt::Display for Inst {
             Inst::SBC(o) => write!(f, "SBC A, {}", o),
             Inst::CP(o) => write!(f, "CP {}", o),
             Inst::LD8(l, r) => write!(f, "LD {}, {}", l, r),
+            Inst::LD16(l, r) => write!(f, "LD {}, {}", l, r),
             Inst::INC8(o) => write!(f, "INC {}", o),
             Inst::DEC8(o) => write!(f, "DEC {}", o),
             Inst::AND(o) => write!(f, "AND {}", o),
@@ -214,19 +288,18 @@ impl ::fmt::Display for Inst {
             Inst::CPL => write!(f, "CPL"),
             Inst::CCF => write!(f, "CCF"),
             Inst::SCF => write!(f, "SCF"),
-            Inst::ADD_HL_rr(rr) => write!(f, "ADD HL, {:?}", rr),
+            Inst::ADD16(rr) => write!(f, "ADD HL, {:?}", rr),
             Inst::ADD_SP_r8(d) => write!(f, "ADD SP, ${:X}", d),
-            Inst::INC_rr(rr) => write!(f, "INC {:?}", rr),
-            Inst::DEC_rr(rr) => write!(f, "DEC {:?}", rr),
+            Inst::INC16(rr) => write!(f, "INC {:?}", rr),
+            Inst::DEC16(o) => write!(f, "DEC {:?}", o),
             Inst::RLA => write!(f, "RLA"),
             Inst::RLCA => write!(f, "RLCA"),
             Inst::RRA => write!(f, "RRA"),
             Inst::RRCA => write!(f, "RRCA"),
-            Inst::JP(None, addr) => write!(f, "JP ${:X}", addr),
-            Inst::JP(Some(cc), addr) => write!(f, "JP {:?}, ${:X}", cc, addr),
-            Inst::JP_HL => write!(f, "JP (HL)"),
-            Inst::JR_cc_n(cc, n) => write!(f, "JR {:?}, ${:X}", cc, n),
-            Inst::JR_n(n) => write!(f, "JR ${:X}", n),
+            Inst::JP(None, o) => write!(f, "JP {}", o),
+            Inst::JP(Some(cc), o) => write!(f, "JP {:?}, {}", cc, o),
+            Inst::JR(None, n) => write!(f, "JR ${:X}", n),
+            Inst::JR(Some(cc), n) => write!(f, "JR {:?}, ${:X}", cc, n),
             Inst::CALL(Some(cc), n) => write!(f, "CALL {:?} ${:X}", cc, n),
             Inst::CALL(None, n) => write!(f, "CALL ${:X}", n),
             Inst::RET(Some(cc)) => write!(f, "RET {:?}", cc),
@@ -234,18 +307,7 @@ impl ::fmt::Display for Inst {
             Inst::PUSH(rr) => write!(f, "PUSH {:?}", rr),
             Inst::POP(rr) => write!(f, "POP {:?}", rr),
             Inst::RST(n) => write!(f, "RST ${:X}", n),
-            Inst::LD_r_rr(r, rr) => write!(f, "LD {:?}, ({:?})", r, rr),
-            Inst::LD_rr_d16(rr, n) => write!(f, "LD {:?}, ${:X}", rr, n),
-            Inst::LD_r16_r(rr, r) => write!(f, "LD ({:?}), {:?}", rr, r),
-            Inst::LD_C_A => write!(f, "LD (C), A"),
-            Inst::LD_A_C => write!(f, "LD A, (C)"),
-            Inst::LD_HLD_A => write!(f, "LD (HL-), A"),
-            Inst::LD_HLI_A => write!(f, "LD (HL+), A"),
-            Inst::LD_A_HLD => write!(f, "LD A, (HL-)"),
-            Inst::LD_A_HLI => write!(f, "LD A, (HL+)"),
             Inst::LD_HL_SP(d) => write!(f, "LD HL, (SP+${:X})", d),
-            Inst::LD_SP_HL => write!(f, "LD SP, HL"),
-            Inst::LD_a16_SP(a) => write!(f, "LD (${:X}), SP", a),
         }
     }
 }
@@ -373,17 +435,13 @@ impl <'a> CPU<'a> {
                 _ => unreachable!("Non-existent interrupt ${:X} encountered", 123)
             };
 
-            self.sp -= 2;
-            let sp = self.sp;
-            let pc = self.pc;
-            self.mem_write16(sp, pc);
-            self.pc = addr;
+            self.push_and_jump(addr);
         }
 
         if self.halted {
             return;
         }
-        
+
         let _addr = self.pc;
         let inst = self.decode();
         // println!("Inst: {} ; ${:04X}", inst, _addr);
@@ -402,8 +460,11 @@ impl <'a> CPU<'a> {
             Inst::SBC(o) => self.sub8(o, true, true),
             Inst::CP(o)  => self.sub8(o, false, false),
             Inst::LD8(l, r) => self.ld8(l, r),
+            Inst::LD16(l, r) => self.ld16(l, r),
             Inst::INC8(o) => self.inc8(o),
             Inst::DEC8(o) => self.dec8(o),
+            Inst::INC16(r) => self.inc16(r),
+            Inst::DEC16(r) => self.dec16(r),
             Inst::AND(o) => self.bitwise(BitwiseOp::AND, o),
             Inst::OR(o) => self.bitwise(BitwiseOp::OR, o),
             Inst::XOR(o) => self.bitwise(BitwiseOp::XOR, o),
@@ -417,11 +478,13 @@ impl <'a> CPU<'a> {
             Inst::SWAP(o) => self.swap(o),
             Inst::SRL(o) => self.srl(o),
             Inst::BIT(b, o) => self.bit(b, o),
-            Inst::RES(b, o) => self.res(b, o),
-            Inst::SET(b, o) => self.set(b, o),
+            Inst::RES(b, o) => self.setbit(b, o, false),
+            Inst::SET(b, o) => self.setbit(b, o, true),
 
             Inst::DI => self.di(),
             Inst::EI => self.ei(),
+            Inst::JR(cc, n) => self.jr(cc, n),
+            Inst::JP(cc, o) => self.jp(cc, o),
             Inst::RETI => self.reti(),
             Inst::STOP => self.stop(),
             Inst::HALT => self.halt(),
@@ -431,31 +494,14 @@ impl <'a> CPU<'a> {
             Inst::CCF => self.ccf(),
             Inst::SCF => self.scf(),
             Inst::ADD_SP_r8(d) => self.add_sp_r8(d),
-            Inst::ADD_HL_rr(rr) => self.add_rr(rr),
-            Inst::INC_rr(r) => self.inc_rr(r),
-            Inst::DEC_rr(r) => self.dec_rr(r),
+            Inst::ADD16(rr) => self.add16(rr),
             Inst::RLA => self.rl(Operand8::Reg(A), false),
             Inst::RLCA => self.rlc(Operand8::Reg(A), false),
             Inst::RRA => self.rr(Operand8::Reg(A), false),
             Inst::RRCA => self.rrc(Operand8::Reg(A), false),
 
-            Inst::LD_rr_d16(r, v) => self.ld_rr_d16(r, v),
-            Inst::LD_r16_r(r16, r) => self.ld_r16_r(r16, r),
-            Inst::LD_r_rr(r, rr) => self.ld_r_rr(r, rr),
-            Inst::LD_C_A => self.ldd_c_a(),
-            Inst::LD_A_C => self.ldd_a_c(),
-            Inst::LD_HLD_A => self.ld_hld_a(),
-            Inst::LD_HLI_A => self.ld_hli_a(),
-            Inst::LD_A_HLD => self.ld_a_hld(),
-            Inst::LD_A_HLI => self.ld_a_hli(),
             Inst::LD_HL_SP(d) => self.ld_hl_sp(d), 
-            Inst::LD_SP_HL => self.ld_sp_hl(),
-            Inst::LD_a16_SP(a) => self.ld_a16_sp(a),
 
-            Inst::JP(cc, n) => self.jp(cc, n),
-            Inst::JP_HL => self.jp_hl(),
-            Inst::JR_n(n) => self.jr_n(n),
-            Inst::JR_cc_n(cc, n) => self.jr_cc_n(cc, n),
             Inst::CALL(cc, addr) => self.call(cc, addr),
             Inst::RET(cc) => self.ret(cc),
             Inst::PUSH(r) => self.push(r),
@@ -558,65 +604,65 @@ impl <'a> CPU<'a> {
     fn decode(&mut self) -> Inst {
         match self.fetch8() {
             0x00 => Inst::NOP,
-            0x01 => Inst::LD_rr_d16(BC, self.fetch16()),
-            0x02 => Inst::LD_r16_r(BC, A),
-            0x03 => Inst::INC_rr(BC),
+            0x01 => Inst::LD16(Operand16::Reg(BC), Operand16::Imm(self.fetch16())),
+            0x02 => Inst::LD8(Operand8::Addr(BC), Operand8::Reg(A)),
+            0x03 => Inst::INC16(BC),
             0x04 => Inst::INC8(Operand8::Reg(B)),
             0x05 => Inst::DEC8(Operand8::Reg(B)),
             0x06 => Inst::LD8(Operand8::Reg(B), Operand8::Imm(self.fetch8())),
             0x07 => Inst::RLCA,
-            0x08 => Inst::LD_a16_SP(self.fetch16()),
-            0x09 => Inst::ADD_HL_rr(BC),
-            0x0A => Inst::LD_r_rr(A, BC),
-            0x0B => Inst::DEC_rr(BC),
+            0x08 => Inst::LD16(Operand16::ImmAddr(self.fetch16()), Operand16::Reg(SP)),
+            0x09 => Inst::ADD16(BC),
+            0x0A => Inst::LD8(Operand8::Reg(A), Operand8::Addr(BC)),
+            0x0B => Inst::DEC16(BC),
             0x0C => Inst::INC8(Operand8::Reg(C)),
             0x0D => Inst::DEC8(Operand8::Reg(C)),
             0x0E => Inst::LD8(Operand8::Reg(C), Operand8::Imm(self.fetch8())),
             0x0F => Inst::RRCA,
             0x10 => { self.fetch8(); Inst::STOP },
-            0x11 => Inst::LD_rr_d16(DE, self.fetch16()),
-            0x12 => Inst::LD_r16_r(DE, A),
-            0x13 => Inst::INC_rr(DE),
+            0x11 => Inst::LD16(Operand16::Reg(DE), Operand16::Imm(self.fetch16())),
+            0x12 => Inst::LD8(Operand8::Addr(DE), Operand8::Reg(A)),
+            0x13 => Inst::INC16(DE),
             0x14 => Inst::INC8(Operand8::Reg(D)),
             0x15 => Inst::DEC8(Operand8::Reg(D)),
             0x16 => Inst::LD8(Operand8::Reg(D), Operand8::Imm(self.fetch8())), 
             0x17 => Inst::RLA,
-            0x18 => Inst::JR_n(self.fetch8()),
-            0x19 => Inst::ADD_HL_rr(DE),
-            0x1A => Inst::LD_r_rr(A, DE),
-            0x1B => Inst::DEC_rr(DE),
+            0x18 => Inst::JR(None, self.fetch8()),
+            0x19 => Inst::ADD16(DE),
+            0x1A => Inst::LD8(Operand8::Reg(A), Operand8::Addr(DE)),
+            0x1B => Inst::DEC16(DE),
             0x1C => Inst::INC8(Operand8::Reg(E)),
             0x1D => Inst::DEC8(Operand8::Reg(E)),
             0x1E => Inst::LD8(Operand8::Reg(E), Operand8::Imm(self.fetch8())),
             0x1F => Inst::RRA,
-            0x20 => Inst::JR_cc_n(FlagCondition::NZ, self.fetch8()),
-            0x21 => Inst::LD_rr_d16(HL, self.fetch16()),
-            0x22 => Inst::LD_HLI_A,
-            0x23 => Inst::INC_rr(HL),
+            0x20 => Inst::JR(Some(FlagCondition::NZ), self.fetch8()),
+            0x21 => Inst::LD16(Operand16::Reg(HL), Operand16::Imm(self.fetch16())),
+            0x22 => Inst::LD8(Operand8::AddrInc(HL), Operand8::Reg(A)),
+            0x23 => Inst::INC16(HL),
             0x24 => Inst::INC8(Operand8::Reg(H)),
             0x25 => Inst::DEC8(Operand8::Reg(H)),
             0x26 => Inst::LD8(Operand8::Reg(H), Operand8::Imm(self.fetch8())),
             0x27 => Inst::DAA,
-            0x28 => Inst::JR_cc_n(FlagCondition::Z, self.fetch8()),
-            0x29 => Inst::ADD_HL_rr(HL),
-            0x2A => Inst::LD_A_HLI,
-            0x2B => Inst::DEC_rr(HL),
+            0x28 => Inst::JR(Some(FlagCondition::Z), self.fetch8()),
+            0x29 => Inst::ADD16(HL),
+            0x2A => Inst::LD8(Operand8::Reg(A), Operand8::AddrInc(HL)),
+            0x2B => Inst::DEC16(HL),
             0x2C => Inst::INC8(Operand8::Reg(L)),
             0x2D => Inst::DEC8(Operand8::Reg(L)),
             0x2E => Inst::LD8(Operand8::Reg(L), Operand8::Imm(self.fetch8())),
             0x2F => Inst::CPL,
-            0x30 => Inst::JR_cc_n(FlagCondition::NC, self.fetch8()),
-            0x31 => Inst::LD_rr_d16(SP, self.fetch16()),
-            0x32 => Inst::LD_HLD_A,
-            0x33 => Inst::INC_rr(SP),
+            0x30 => Inst::JR(Some(FlagCondition::NC), self.fetch8()),
+            0x31 => Inst::LD16(Operand16::Reg(SP), Operand16::Imm(self.fetch16())),
+            0x32 => Inst::LD8(Operand8::AddrDec(HL), Operand8::Reg(A)),
+            0x33 => Inst::INC16(SP),
             0x34 => Inst::INC8(Operand8::Addr(HL)),
             0x35 => Inst::DEC8(Operand8::Addr(HL)),
             0x36 => Inst::LD8(Operand8::Addr(HL), Operand8::Imm(self.fetch8())),
             0x37 => Inst::SCF,
-            0x38 => Inst::JR_cc_n(FlagCondition::C, self.fetch8()),
-            0x39 => Inst::ADD_HL_rr(SP),
-            0x3A => Inst::LD_A_HLD,
-            0x3B => Inst::DEC_rr(SP),
+            0x38 => Inst::JR(Some(FlagCondition::C), self.fetch8()),
+            0x39 => Inst::ADD16(SP),
+            0x3A => Inst::LD8(Operand8::Reg(A), Operand8::AddrDec(HL)),
+            0x3B => Inst::DEC16(SP),
             0x3C => Inst::INC8(Operand8::Reg(A)),
             0x3D => Inst::DEC8(Operand8::Reg(A)),
             0x3E => Inst::LD8(Operand8::Reg(A), Operand8::Imm(self.fetch8())),
@@ -627,7 +673,7 @@ impl <'a> CPU<'a> {
             0x43 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(E)),
             0x44 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(H)),
             0x45 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(L)),
-            0x46 => Inst::LD_r_rr(B, HL),
+            0x46 => Inst::LD8(Operand8::Reg(B), Operand8::Addr(HL)),
             0x47 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(A)),
             0x48 => Inst::LD8(Operand8::Reg(C), Operand8::Reg(B)),
             0x49 => Inst::LD8(Operand8::Reg(C), Operand8::Reg(C)),
@@ -635,7 +681,7 @@ impl <'a> CPU<'a> {
             0x4B => Inst::LD8(Operand8::Reg(C), Operand8::Reg(E)),
             0x4C => Inst::LD8(Operand8::Reg(C), Operand8::Reg(H)),
             0x4D => Inst::LD8(Operand8::Reg(C), Operand8::Reg(L)),
-            0x4E => Inst::LD_r_rr(C, HL),
+            0x4E => Inst::LD8(Operand8::Reg(C), Operand8::Addr(HL)),
             0x4F => Inst::LD8(Operand8::Reg(C), Operand8::Reg(A)),
             0x50 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(B)),
             0x51 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(C)),
@@ -643,7 +689,7 @@ impl <'a> CPU<'a> {
             0x53 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(E)),
             0x54 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(H)),
             0x55 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(L)),
-            0x56 => Inst::LD_r_rr(D, HL),
+            0x56 => Inst::LD8(Operand8::Reg(D), Operand8::Addr(HL)),
             0x57 => Inst::LD8(Operand8::Reg(D), Operand8::Reg(A)),
             0x58 => Inst::LD8(Operand8::Reg(E), Operand8::Reg(B)),
             0x59 => Inst::LD8(Operand8::Reg(E), Operand8::Reg(C)),
@@ -651,7 +697,7 @@ impl <'a> CPU<'a> {
             0x5B => Inst::LD8(Operand8::Reg(E), Operand8::Reg(E)),
             0x5C => Inst::LD8(Operand8::Reg(E), Operand8::Reg(H)),
             0x5D => Inst::LD8(Operand8::Reg(E), Operand8::Reg(L)),
-            0x5E => Inst::LD_r_rr(E, HL),
+            0x5E => Inst::LD8(Operand8::Reg(E), Operand8::Addr(HL)),
             0x5F => Inst::LD8(Operand8::Reg(E), Operand8::Reg(A)),
             0x60 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(B)),
             0x61 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(C)),
@@ -659,7 +705,7 @@ impl <'a> CPU<'a> {
             0x63 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(E)),
             0x64 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(H)),
             0x65 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(L)),
-            0x66 => Inst::LD_r_rr(H, HL),
+            0x66 => Inst::LD8(Operand8::Reg(H), Operand8::Addr(HL)),
             0x67 => Inst::LD8(Operand8::Reg(H), Operand8::Reg(A)),
             0x68 => Inst::LD8(Operand8::Reg(L), Operand8::Reg(B)),
             0x69 => Inst::LD8(Operand8::Reg(L), Operand8::Reg(C)),
@@ -667,23 +713,23 @@ impl <'a> CPU<'a> {
             0x6B => Inst::LD8(Operand8::Reg(L), Operand8::Reg(E)),
             0x6C => Inst::LD8(Operand8::Reg(L), Operand8::Reg(H)),
             0x6D => Inst::LD8(Operand8::Reg(L), Operand8::Reg(L)),
-            0x6E => Inst::LD_r_rr(L, HL),
+            0x6E => Inst::LD8(Operand8::Reg(L), Operand8::Addr(HL)),
             0x6F => Inst::LD8(Operand8::Reg(L), Operand8::Reg(A)),
-            0x70 => Inst::LD_r16_r(HL, B),
-            0x71 => Inst::LD_r16_r(HL, C),
-            0x72 => Inst::LD_r16_r(HL, D),
-            0x73 => Inst::LD_r16_r(HL, E),
-            0x74 => Inst::LD_r16_r(HL, H),
-            0x75 => Inst::LD_r16_r(HL, L),
+            0x70 => Inst::LD8(Operand8::Addr(HL), Operand8::Reg(B)),
+            0x71 => Inst::LD8(Operand8::Addr(HL), Operand8::Reg(C)),
+            0x72 => Inst::LD8(Operand8::Addr(HL), Operand8::Reg(D)),
+            0x73 => Inst::LD8(Operand8::Addr(HL), Operand8::Reg(E)),
+            0x74 => Inst::LD8(Operand8::Addr(HL), Operand8::Reg(H)),
+            0x75 => Inst::LD8(Operand8::Addr(HL), Operand8::Reg(L)),
             0x76 => Inst::HALT,
-            0x77 => Inst::LD_r16_r(HL, A),
+            0x77 => Inst::LD8(Operand8::Addr(HL), Operand8::Reg(A)),
             0x78 => Inst::LD8(Operand8::Reg(A), Operand8::Reg(B)),
             0x79 => Inst::LD8(Operand8::Reg(A), Operand8::Reg(C)),
             0x7A => Inst::LD8(Operand8::Reg(A), Operand8::Reg(D)),
             0x7B => Inst::LD8(Operand8::Reg(A), Operand8::Reg(E)),
             0x7C => Inst::LD8(Operand8::Reg(A), Operand8::Reg(H)),
             0x7D => Inst::LD8(Operand8::Reg(A), Operand8::Reg(L)),
-            0x7E => Inst::LD_r_rr(A, HL),
+            0x7E => Inst::LD8(Operand8::Reg(A), Operand8::Addr(HL)),
             0x7F => Inst::LD8(Operand8::Reg(A), Operand8::Reg(A)),
             0x80 => Inst::ADD(Operand8::Reg(B)),
             0x81 => Inst::ADD(Operand8::Reg(C)),
@@ -751,15 +797,15 @@ impl <'a> CPU<'a> {
             0xBF => Inst::CP(Operand8::Reg(A)),
             0xC0 => Inst::RET(Some(FlagCondition::NZ)),
             0xC1 => Inst::POP(BC),
-            0xC2 => Inst::JP(Some(FlagCondition::NZ), self.fetch16()),
-            0xC3 => Inst::JP(None, self.fetch16()),
+            0xC2 => Inst::JP(Some(FlagCondition::NZ), Operand16::Imm(self.fetch16())),
+            0xC3 => Inst::JP(None, Operand16::Imm(self.fetch16())),
             0xC4 => Inst::CALL(Some(FlagCondition::NZ), self.fetch16()),
             0xC5 => Inst::PUSH(BC),
             0xC6 => Inst::ADD(Operand8::Imm(self.fetch8())),
             0xC7 => Inst::RST(0x00),
             0xC8 => Inst::RET(Some(FlagCondition::Z)),
             0xC9 => Inst::RET(None),
-            0xCA => Inst::JP(Some(FlagCondition::Z), self.fetch16()),
+            0xCA => Inst::JP(Some(FlagCondition::Z), Operand16::Imm(self.fetch16())),
             0xCB => self.decode_extended(),
             0xCC => Inst::CALL(Some(FlagCondition::Z), self.fetch16()),
             0xCD => Inst::CALL(None, self.fetch16()),
@@ -767,37 +813,37 @@ impl <'a> CPU<'a> {
             0xCF => Inst::RST(0x08),
             0xD0 => Inst::RET(Some(FlagCondition::NC)),
             0xD1 => Inst::POP(DE),
-            0xD2 => Inst::JP(Some(FlagCondition::NC), self.fetch16()),
+            0xD2 => Inst::JP(Some(FlagCondition::NC), Operand16::Imm(self.fetch16())),
             0xD4 => Inst::CALL(Some(FlagCondition::NC), self.fetch16()),
             0xD5 => Inst::PUSH(DE),
             0xD6 => Inst::SUB(Operand8::Imm(self.fetch8())),
             0xD7 => Inst::RST(0x10),
             0xD8 => Inst::RET(Some(FlagCondition::C)),
             0xD9 => Inst::RETI,
-            0xDA => Inst::JP(Some(FlagCondition::C), self.fetch16()),
+            0xDA => Inst::JP(Some(FlagCondition::C), Operand16::Imm(self.fetch16())),
             0xDC => Inst::CALL(Some(FlagCondition::C), self.fetch16()),
             0xDE => Inst::SBC(Operand8::Imm(self.fetch8())),
             0xDF => Inst::RST(0x18),
             0xE0 => Inst::LD8(Operand8::ImmAddrHigh(self.fetch8()), Operand8::Reg(A)),
             0xE1 => Inst::POP(HL),
-            0xE2 => Inst::LD_C_A,
+            0xE2 => Inst::LD8(Operand8::AddrHigh(C), Operand8::Reg(A)),
             0xE5 => Inst::PUSH(HL),
             0xE6 => Inst::AND(Operand8::Imm(self.fetch8())),
             0xE7 => Inst::RST(0x20),
             0xE8 => Inst::ADD_SP_r8(self.fetch8() as i8),
-            0xE9 => Inst::JP_HL,
+            0xE9 => Inst::JP(None, Operand16::Reg(HL)),
             0xEA => Inst::LD8(Operand8::ImmAddr(self.fetch16()), Operand8::Reg(A)),
             0xEE => Inst::XOR(Operand8::Imm(self.fetch8())),
             0xEF => Inst::RST(0x28),
             0xF0 => Inst::LD8(Operand8::Reg(A), Operand8::ImmAddrHigh(self.fetch8())),
             0xF1 => Inst::POP(AF),
-            0xF2 => Inst::LD_A_C,
+            0xF2 => Inst::LD8(Operand8::Reg(A), Operand8::AddrHigh(C)),
             0xF3 => Inst::DI,
             0xF5 => Inst::PUSH(AF),
             0xF6 => Inst::OR(Operand8::Imm(self.fetch8())),
             0xF7 => Inst::RST(0x30),
             0xF8 => Inst::LD_HL_SP(self.fetch8() as i8),
-            0xF9 => Inst::LD_SP_HL,
+            0xF9 => Inst::LD16(Operand16::Reg(SP), Operand16::Reg(HL)),
             0xFA => Inst::LD8(Operand8::Reg(A), Operand8::ImmAddr(self.fetch16())),
             0xFB => Inst::EI,
             0xFE => Inst::CP(Operand8::Imm(self.fetch8())),
@@ -1075,6 +1121,28 @@ impl <'a> CPU<'a> {
         }
     }
 
+    fn flags_query(&self, f: u8) -> bool {
+        self.f & f > 0
+    }
+
+    fn flags_update(&mut self, ops: &[FlagOp]) {
+        let mut mask: u8 = 0;
+        let mut new: u8 = 0;
+        for op in ops {
+            match op {
+                FlagOp::Z(true)  => { mask |= FLAG_ZERO; new |= FLAG_ZERO },
+                FlagOp::Z(false) => { mask |= FLAG_ZERO; },
+                FlagOp::N(true)  => { mask |= FLAG_SUBTRACT; new |= FLAG_SUBTRACT },
+                FlagOp::N(false) => { mask |= FLAG_SUBTRACT; },
+                FlagOp::H(true)  => { mask |= FLAG_HALF_CARRY; new |= FLAG_HALF_CARRY },
+                FlagOp::H(false) => { mask |= FLAG_HALF_CARRY; },
+                FlagOp::C(true)  => { mask |= FLAG_CARRY; new |= FLAG_CARRY },
+                FlagOp::C(false) => { mask |= FLAG_CARRY; },
+            }
+        }
+        self.f = (self.f & !(mask)) | new;
+    }
+
     fn get_reg8(&self, reg: Reg8) -> u8 {
         match reg {
             A => self.a,
@@ -1124,12 +1192,30 @@ impl <'a> CPU<'a> {
         *lo = (v & 0xFF) as u8;
     }
 
+    fn stack_push(&mut self, v: u16) {
+        self.sp -= 2;
+        let sp = self.sp;
+        self.mem_write16(sp, v);
+    }
+
+    fn stack_pop(&mut self) -> u16 {
+        let v = self.mem_read16(self.sp);
+        self.sp += 2;
+        v
+    }
+
+    fn push_and_jump(&mut self, addr: u16) {
+        let pc = self.pc;
+        self.stack_push(pc);
+        self.pc = addr;
+    }
+
     fn check_jmp_condition(&self, cc: FlagCondition) -> bool {
         match cc {
-            FlagCondition::NZ => (self.f & FLAG_ZERO) == 0,
-            FlagCondition::Z  => (self.f & FLAG_ZERO) != 0,
-            FlagCondition::NC => (self.f & FLAG_CARRY) == 0,
-            FlagCondition::C  => (self.f & FLAG_CARRY) != 0,
+            FlagCondition::NZ => !self.flags_query(FLAG_ZERO),
+            FlagCondition::Z  => self.flags_query(FLAG_ZERO),
+            FlagCondition::NC => !self.flags_query(FLAG_CARRY),
+            FlagCondition::C  => self.flags_query(FLAG_CARRY),
         }
     }
 
@@ -1167,82 +1253,43 @@ impl <'a> CPU<'a> {
         4
     }
 
-    // TODO: clean up and document
+    // INC %r8 | INC (HL)
+    // Flags = Z:* N:0 H:* C:-
     fn inc8(&mut self, o: Operand8) -> u8 {
-        let v = o.get(self);
-        let (v, _) = v.overflowing_add(1);
-
-        // Clear Z, N, H flags. If we overflowed top or bottom nibbles
-        // we'll set the appropriate flags below.
-        self.f &= !(FLAG_ZERO | FLAG_HALF_CARRY | FLAG_SUBTRACT);
-
-        // Set zero flag if we overflowed.
-        if v == 0 {
-            self.f |= FLAG_ZERO;
-        }
-
-        // Set half carry flag if lower nibble overflowed.
-        if (v & 0x0F) == 0 {
-            self.f |= FLAG_HALF_CARRY;
-        }
-
+        let v = o.get(self).wrapping_add(1);
+        self.flags_update(&[FlagOp::Z(v == 0), FlagOp::N(false), FlagOp::H(v & 0x0F == 0)]);
         o.set(self, v);
-        
         4 + o.cycle_cost() * 2
     }
 
-
-    // DEC r
-    // DEC (HL)
-    // Flags:
-    // Z N H C
-    // * 1 * -
+    // DEC %r8 | DEC (HL)
+    // Flags = Z:* N:1 H:* C:-
     fn dec8(&mut self, o: Operand8) -> u8 {
-        let v = o.get(self);
-        let v = v.wrapping_sub(1);
-        self.f &= !(FLAG_ZERO | FLAG_HALF_CARRY);
-        self.f |= FLAG_SUBTRACT;
-
-        if v == 0 {
-            self.f |= FLAG_ZERO;
-        }
-        if (v & 0xF) == 0xF {
-            self.f |= FLAG_HALF_CARRY;
-        }
-
+        let v = o.get(self).wrapping_sub(1);
+        self.flags_update(&[FlagOp::Z(v == 0), FlagOp::N(true), FlagOp::H(v & 0x0F == 0x0F)]);
         o.set(self, v);
-
         4 + o.cycle_cost() * 2
     }
 
     // INC rr
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn inc_rr(&mut self, r: Reg16) -> u8 {
-        let v = self.get_reg16(r);
-        let (v, _) = v.overflowing_add(1);
+    // Flags = Z:- N:- H:- C:-
+    fn inc16(&mut self, r: Reg16) -> u8 {
+        let v = self.get_reg16(r).wrapping_add(1);
         self.set_reg16(r, v);
-
         8
     }
 
     // DEC rr
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn dec_rr(&mut self, r: Reg16) -> u8 {
-        let v = self.get_reg16(r);
-        let (v, _) = v.overflowing_sub(1);
+    // Flags = Z:- N:- H:- C:-
+    fn dec16(&mut self, r: Reg16) -> u8 {
+        let v = self.get_reg16(r).wrapping_sub(1);
         self.set_reg16(r, v);
-
         8
     }
 
     // DAA
-    // Flags:
-    // Z N H C
-    // * - 0 *
+    // Flags = Z:* N:- H:0 C:*
+    // TODO: clean this cancer up.
     fn daa(&mut self) -> u8 {
         let mut carry = false;
 
@@ -1273,342 +1320,191 @@ impl <'a> CPU<'a> {
     }
 
     // CPL
-    // Flags:
-    // Z N H C
-    // - 1 1 -
+    // Flags = Z:- N:1 H:1 C:-
     fn cpl(&mut self) -> u8 {
         self.a = !self.a;
-        self.f |= FLAG_SUBTRACT | FLAG_HALF_CARRY;
+        self.flags_update(&[FlagOp::N(true), FlagOp::H(true)]);
         4
     }
 
     // CCF
-    // Flags:
-    // Z N H C
-    // - 1 1 -
+    // Flags = Z:- N:0 H:0 C:*
     fn ccf(&mut self) -> u8 {
-        self.f &= !(FLAG_SUBTRACT | FLAG_HALF_CARRY);
-        self.f ^= FLAG_CARRY;
+        let carry = self.flags_query(FLAG_CARRY);
+        self.flags_update(&[FlagOp::N(false), FlagOp::H(false), FlagOp::C(!carry)]);
         4
     }
 
     // SCF
-    // Flags:
-    // Z N H C
-    // - 0 0 1
+    // Flags = Z:- N:0 H:0 C:1
     fn scf(&mut self) -> u8 {
-        self.f &= !(FLAG_SUBTRACT | FLAG_HALF_CARRY);
-        self.f |= FLAG_CARRY;
+        self.flags_update(&[FlagOp::N(false), FlagOp::H(false), FlagOp::C(true)]);
         4
     }
 
-    // TODO: rework this awful code and document.
+    // ADD A, %r8 | ADD A, (HL) | ADD A, $d8
+    // ADC A, %r8 | ADC A, (HL) | ADC A, $d8
+    // Flags = Z:* N:0 H:* C:*
     fn add8(&mut self, o: Operand8, carry: bool) -> u8 {
-        let a = self.a;
-
         let carry = if carry && (self.f & FLAG_CARRY > 0) { 1 } else { 0 };
-        self.f = 0;
 
+        let old = self.a;
         let v = o.get(self);
-        let new_a = a.wrapping_add(v).wrapping_add(carry);
-        self.a = new_a;
-
-        if new_a == 0 {
-            self.f |= FLAG_ZERO;
-        }
-
-        if (a as u16) + (v as u16) + (carry as u16) > 0xFF {
-            self.f |= FLAG_CARRY;
-        }
-
-        if (((a & 0xF) + (v & 0xF)) + carry) & 0x10 == 0x10 {
-            self.f |= FLAG_HALF_CARRY;
-        }
+        let new = old.wrapping_add(v).wrapping_add(carry);
+        self.a = new;
+        self.flags_update(&[
+            FlagOp::Z(new == 0),
+            FlagOp::N(false),
+            FlagOp::H((((old & 0xF) + (v & 0xF)) + carry) & 0x10 == 0x10),
+            FlagOp::C((old as u16) + (v as u16) + (carry as u16) > 0xFF),
+        ]);
 
         4 + o.cycle_cost()
     }
 
-    // TODO: rework this and document.
+    // SUB    %r8 | SUB    (HL) | SUB    $d8
+    // SBC A, %r8 | SBC A, (HL) | SBC A, $d8
+    // Flags = Z:* N:1 H:* C:*
     fn sub8(&mut self, o: Operand8, carry: bool, store: bool) -> u8 {
+        let carry = if carry && (self.f & FLAG_CARRY != 0) { 1 } else { 0 };
+
         let a = self.a;
         let v = o.get(self);
-
-        let carry = if carry && (self.f & FLAG_CARRY != 0) { 1 } else { 0 };
         let new_a = a.wrapping_sub(v).wrapping_sub(carry);
 
         if store {
-            self.set_reg8(A, new_a);
+            self.a = new_a;
         }
 
-        self.f = FLAG_SUBTRACT;
-
-        if new_a == 0 {
-            self.f |= FLAG_ZERO;
-        }
-
-        if (a as u16) < (v as u16) + (carry as u16) {
-            self.f |= FLAG_CARRY;
-        }
-
-        if ((a & 0xF) as u16) < ((v & 0xF) as u16) + (carry as u16) {
-            self.f |= FLAG_HALF_CARRY;
-        }
+        self.flags_update(&[
+            FlagOp::Z(new_a == 0),
+            FlagOp::N(true),
+            FlagOp::H(((a & 0xF) as u16) < ((v & 0xF) as u16) + (carry as u16)),
+            FlagOp::C((a as u16) < (v as u16) + (carry as u16)),
+        ]);
 
         4 + o.cycle_cost()
     }
 
     // ADD SP, r8
-    // Flags:
-    // Z N H C
-    // 0 0 * *
+    // Flags = Z:0 N:0 H:* C:*
     fn add_sp_r8(&mut self, d: i8) -> u8 {
         let d = d as i16 as u16;
         let sp = self.sp;
 
         self.sp = sp.wrapping_add(d as i16 as u16);
 
-        self.f = 0;
-        if ((sp & 0xF) + (d & 0xF)) & 0x10 > 0 {
-            self.f |= FLAG_HALF_CARRY;
-        }
-        if ((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0 {
-            self.f |= FLAG_CARRY;
-        }
+        self.flags_update(&[
+            FlagOp::Z(false),
+            FlagOp::N(false),
+            FlagOp::H(((sp & 0xF) + (d & 0xF)) & 0x10 > 0),
+            FlagOp::C(((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0),
+        ]);
+
         16
     }
 
     // ADD HL, rr
-    // Flags:
-    // Z N H C
-    // - 0 * *
-    fn add_rr(&mut self, r: Reg16) -> u8 {
+    // Flags = Z:- N:0 H:* C:*
+    fn add16(&mut self, r: Reg16) -> u8 {
         let hl = self.get_reg16(HL);
         let v = self.get_reg16(r);
-
         let (new_hl, overflow) = hl.overflowing_add(v);
         self.set_reg16(HL, new_hl);
 
-        self.f &= FLAG_ZERO;
+        self.flags_update(&[
+            FlagOp::N(false),
+            FlagOp::H(((hl & 0xFFF) + (v & 0xFFF)) & 0x1000 > 0),
+            FlagOp::C(overflow),
+        ]);
 
-        if overflow {
-            self.f |= FLAG_CARRY;
-        }
-
-        if ((hl & 0xFFF) + (v & 0xFFF)) & 0x1000 > 0 {
-            self.f |= FLAG_HALF_CARRY;
-        }
         8
     }
 
-    // TODO: document
+    // LD %r8, %r8
+    // LD %r8, $d8
+    // LD %r8, (%r16)
+    // LD (%r16), %r8
+    // LD (HL+), A | LD (HL-), A | LD A, (HL+) | LD A, (HL-)
+    // Flags = Z:- N:- H:- C:-
     fn ld8(&mut self, l: Operand8, r: Operand8) -> u8 {
         let v = r.get(self);
         l.set(self, v);
-
-        // TODO:
         4 + l.cycle_cost() + r.cycle_cost()
     }
 
-    // LD r, (rr)
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_r_rr(&mut self, r: Reg8, rr: Reg16) -> u8 {
-        let v = self.mem_read8(self.get_reg16(rr));
-        self.set_reg8(r, v);
-        8
-    }
-
-    // LD (C), A
-    // a.k.a LD ($FF00+C),A
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ldd_c_a(&mut self) -> u8 {
-        let v = self.get_reg8(A);
-        let addr = (self.get_reg8(C) as u16) + 0xFF00;
-        self.mem_write8(addr, v);
-        8
-    }
-
-    // LD A, (C)
-    // a.k.a LD A, ($FF00+C)
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ldd_a_c(&mut self) -> u8 {
-        let addr = (self.get_reg8(C) as u16) + 0xFF00;
-        let v = self.mem_read8(addr);
-        self.set_reg8(A, v);
-        8
-    }
-
-    // LD rr, d16
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_rr_d16(&mut self, reg: Reg16, d: u16) -> u8 {
-        self.set_reg16(reg, d);
-
-        12
-    }
-
-    // LD (rr), r
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_r16_r(&mut self, r16: Reg16, r: Reg8) -> u8 {
-        let addr = self.get_reg16(r16);
-        let v = self.get_reg8(r);
-        self.mem_write8(addr, v);
-        8
-    }
-
-    // LD (HL-), A
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_hld_a(&mut self) -> u8 {
-        let addr = self.get_reg16(HL);
-        let v = self.get_reg8(A);
-        self.mem_write8(addr, v);
-        self.set_reg16(HL, addr - 1);
-        8
-    }
-
-    // LD (HL+), A
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_hli_a(&mut self) -> u8 {
-        let addr = self.get_reg16(HL);
-        let v = self.get_reg8(A);
-        self.mem_write8(addr, v);
-        self.set_reg16(HL, addr + 1);
-        8
-    }
-
-
-    // LD A, (HL-)
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_a_hld(&mut self) -> u8 {
-        let addr = self.get_reg16(HL);
-        let v = self.mem_read8(addr);
-        self.set_reg8(A, v);
-        self.set_reg16(HL, addr - 1);
-        8
-    }
-
-    // LD A, (HL+)
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_a_hli(&mut self) -> u8 {
-        let addr = self.get_reg16(HL);
-        let v = self.mem_read8(addr);
-        self.set_reg8(A, v);
-        self.set_reg16(HL, addr + 1);
-        8
+    // LD %r16, $d16
+    // LD (%a16), SP
+    // Flags = Z:- N:- H:- C:-
+    fn ld16(&mut self, l: Operand16, r: Operand16) -> u8 {
+        let v = r.get(self);
+        l.set(self, v);
+        8 + l.cycle_cost() + r.cycle_cost()
     }
 
     // LD HL, SP+r8
-    // Flags:
-    // Z N H C
-    // 0 0 * *
+    // Flags = Z:0 N:0 H:* C:*
     fn ld_hl_sp(&mut self, d: i8) -> u8 {
         let sp = self.sp;
         let d = d as i16 as u16;
         let v = sp.wrapping_add(d);
         self.set_reg16(HL, v);
-
-        self.f = 0;
-        if (sp & 0xF) + (d & 0xF) & 0x10 > 0 {
-            self.f |= FLAG_HALF_CARRY;
-        }
-        if (sp & 0xFF) + (d & 0xFF) & 0x100 > 0 {
-            self.f |= FLAG_CARRY;
-        }
+        self.flags_update(&[
+            FlagOp::Z(false),
+            FlagOp::N(false),
+            FlagOp::H((sp & 0xF) + (d & 0xF) & 0x10 > 0),
+            FlagOp::C((sp & 0xFF) + (d & 0xFF) & 0x100 > 0),
+        ]);
 
         12
     }
 
-    // LD SP, HL
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_sp_hl(&mut self) -> u8 {
-        self.sp = self.get_reg16(HL);
-        8
-    }
-
-    // LD (a16), SP
-    // Flags:
-    // Z N H C
-    // - - - -
-    fn ld_a16_sp(&mut self, a: u16) -> u8 {
-        let v = self.get_reg16(SP);
-        self.mem_write16(a, v);
-        20
-    }
-
+    // AND %r8 | AND $d8 | AND (HL)
+    // XOR %r8 | XOR $d8 | XOR (HL)
+    // OR  %r8 | OR  $d8 | OR  (HL)
+    // Flags = Z:* N:0 H:* C:0
     fn bitwise(&mut self, op: BitwiseOp, o: Operand8) -> u8 {
         let a = self.a;
         let v = o.get(self);
-        let a = match op {
+        self.a = match op {
             BitwiseOp::AND => a & v,
             BitwiseOp::OR => a | v,
             BitwiseOp::XOR => a ^ v,
         };
-        self.a = a;
-        self.f = 0;
-        if let BitwiseOp::AND = op {
-            self.f |= FLAG_HALF_CARRY;
-        }
-        if a == 0 {
-            self.f |= FLAG_ZERO;
-        }
+        let z = self.a == 0;
+        let hc = if let BitwiseOp::AND = op { true } else { false };
+        self.flags_update(&[
+            FlagOp::Z(z),
+            FlagOp::N(false),
+            FlagOp::H(hc),
+            FlagOp::C(false),
+        ]);
 
         4 + o.cycle_cost()
     }
 
     // BIT b, r
-    // Flags:
-    // Z N H C
-    // * 0 1 -
-    // TODO: cleanup and document
+    // Flags = Z:* N:0 H:1 C:-
     fn bit(&mut self, b: u8, o: Operand8) -> u8 {
         let v = o.get(self) & (1 << b);
-        self.f &= !FLAG_SUBTRACT;
-        self.f |= FLAG_HALF_CARRY;
-        if v == 0 {
-            self.f |= FLAG_ZERO;
-        } else {
-            self.f &= !FLAG_ZERO;
-        }
-
+        self.flags_update(&[
+            FlagOp::Z(v == 0),
+            FlagOp::N(false),
+            FlagOp::H(true),
+        ]);
         8 + o.cycle_cost() * 2
     }
 
     // RES b, r
-    // Flags:
-    // Z N H C
-    // - - - -
-    // TODO:
-    fn res(&mut self, b: u8, o: Operand8) -> u8 {
-        let v = o.get(self) & !(1 << b);
-        o.set(self, v);
-        8 + o.cycle_cost() * 2
-    }
-
     // SET b, r
-    // Flags:
-    // Z N H C
-    // - - - -
-    // TODO: dox
-    fn set(&mut self, b: u8, o: Operand8) -> u8 {
-        let v = o.get(self) | (1 << b);
+    // Flags = Z:- N:- H:- C:-
+    fn setbit(&mut self, b: u8, o: Operand8, on: bool) -> u8 {
+        let mut v = o.get(self);
+        if on {
+            v |= 1 << b;
+        } else {
+            v &= !(1 << b);
+        }
         o.set(self, v);
         8 + o.cycle_cost() * 2
     }
@@ -1807,11 +1703,7 @@ impl <'a> CPU<'a> {
             }
         }
 
-        self.sp -= 2;
-        let sp = self.sp;
-        let pc = self.pc;
-        self.mem_write16(sp, pc);
-        self.pc = addr;
+        self.push_and_jump(addr);
         24
     }
 
@@ -1829,69 +1721,52 @@ impl <'a> CPU<'a> {
         ic
     }
 
-    fn jp(&mut self, cc: Option<FlagCondition>, a: u16) -> u8 {
+    fn jp(&mut self, cc: Option<FlagCondition>, o: Operand16) -> u8 {
         if let Some(cc) = cc {
             if !self.check_jmp_condition(cc) {
                 return 12;
             }
         }
 
-        self.pc = a;
-
-        16
-    }
-
-    fn jp_hl(&mut self) -> u8 {
-        let addr = self.get_reg16(HL);
+        let addr = o.get(self);
         self.pc = addr;
-        4
+
+        match o {
+            Operand16::Reg(HL) => 4,
+            _ => 16
+        }
     }
 
     fn rst(&mut self, a: u8) -> u8 {
-        self.sp -= 2;
-        let sp = self.sp;
-        let pc = self.pc;
-        self.mem_write16(sp, pc);
-        self.pc = a as u16;
+        self.push_and_jump(a as u16);
         16
     }
 
     fn push(&mut self, r: Reg16) -> u8 {
         let v = self.get_reg16(r);
-        self.sp -= 2;
-        let sp = self.sp;
-        self.mem_write16(sp, v);
+        self.stack_push(v);
         16
     }
 
     fn pop(&mut self, r: Reg16) -> u8 {
-        let mut v = self.mem_read16(self.sp);
+        let mut v = self.stack_pop();
         if let AF = r {
             // Reset bits 0-3 in F.
             v &= 0xFFF0;
         }
-        self.sp += 2;
         self.set_reg16(r, v);
         12
     }
 
-    fn jr_n(&mut self, n: u8) -> u8 {
-        let ns: i8 = n as i8;
-        if ns < 0 {
-            self.pc -= ns.abs() as u16;
-        } else {
-            self.pc += n as u16;
+    fn jr(&mut self, cc: Option<FlagCondition>, n: u8) -> u8 {
+        if let Some(cc) = cc {
+            if !self.check_jmp_condition(cc) {
+                return 8;
+            }
         }
-        
+
+        self.pc = self.pc.wrapping_add(n as i8 as i16 as u16);
         12
-    }
-
-    fn jr_cc_n(&mut self, cc: FlagCondition, n: u8) -> u8 {
-        if self.check_jmp_condition(cc) {
-            return self.jr_n(n);
-        }
-
-        8
     }
 }
 
