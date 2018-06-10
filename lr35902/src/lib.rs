@@ -263,6 +263,7 @@ impl ::fmt::Display for Instruction {
 }
 
 pub struct CPU<'a> {
+    // Registers.
     a: u8,
     b: u8,
     c: u8,
@@ -273,20 +274,27 @@ pub struct CPU<'a> {
     f: u8,
     sp: u16,
     pc: u16,
-    ic: u32,
-    bootrom_enabled: bool,
 
-    // Interrupts.
-    ie: u8,
-    if_: u8,
-    ime: bool,
-    ime_defer: Option<bool>,
+    bootrom_enabled: bool,
 
     // RAM segments.
     vram: [u8; 0x2000], // 0x8000 - 0x9FFF 
     ram:  [u8; 0x2000], // 0xC000 - 0xDFFF (and echoed in 0xE000 - 0xFDFF)
     oam:  [u8; 0x9F],   // 0xFE00 - 0xFDFF
     wram: [u8; 0x7E],   // 0xFF80 - 0xFFFE
+
+    // Interrupts.
+    halted: bool,
+    ie: u8,
+    if_: u8,
+    ime: bool,
+    ime_defer: Option<bool>,
+
+    // Timer.
+    clock_count: u32,
+    tima: u8,
+    tma: u8,
+    tac: u8,
 
     // Serial I/O
     sb: u8,
@@ -298,12 +306,11 @@ pub struct CPU<'a> {
 impl <'a> CPU<'a> {
     pub fn new(mmu: &'a mut (MMU + 'a)) -> CPU {
         CPU{
-            a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, sp: 0, pc: 0, ic: 0, bootrom_enabled: true,
-            ime: false, ime_defer: None, ie: 0, if_: 0,
-            vram: [0; 0x2000],
-            ram: [0; 0x2000],
-            oam: [0; 0x9F],
-            wram: [0; 0x7E],
+            a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, sp: 0, pc: 0,
+            bootrom_enabled: true,
+            vram: [0; 0x2000], ram: [0; 0x2000], oam: [0; 0x9F], wram: [0; 0x7E],
+            halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
+            clock_count: 0, tima: 0, tma: 0, tac: 0,
             sb: 0, sc: 0,
             mmu}
     }
@@ -311,9 +318,40 @@ impl <'a> CPU<'a> {
     // Runs the CPU for a single instruction.
     // This is the main "Fetch, decode, execute" cycle.
     pub fn run(&mut self) {
+        if self.halted {
+            self.clock_count += 1;
+        }
+
         if self.sb > 0 {
             io::stdout().write(&[self.sb]).unwrap();
+            io::stdout().flush().unwrap();
             self.sb = 0;
+        }
+
+        // Advance timer if needed.
+        let timer_freq = match self.tac & 3 {
+            0 => 1024,
+            1 => 16,
+            2 => 64,
+            3 => 256,
+            _ => unreachable!("self.tac & 3 will never get here"),
+        };
+        if self.clock_count > timer_freq {
+            self.clock_count %= timer_freq;
+
+            if self.tac & 4 > 0 {
+                self.tima = self.tima.wrapping_add(1);
+                if self.tima == 0 {
+                    self.tima = self.tma;
+                    self.if_ |= 0x4;
+                }
+            }
+        }
+
+        // We exit HALT state if there's any pending interrupts.
+        // We do this regardless of IME state.
+        if self.halted && self.if_ & self.ie > 0 {
+            self.halted = false;
         }
 
         // Service interrupts.
@@ -347,12 +385,15 @@ impl <'a> CPU<'a> {
                 _ => unreachable!("Non-existent interrupt ${:X} encountered", 123)
             };
 
-            // println!("Servicing interrupt");
             self.sp -= 2;
             let sp = self.sp;
             let pc = self.pc;
             self.mem_write16(sp, pc);
             self.pc = addr;
+        }
+
+        if self.halted {
+            return;
         }
         
         let _addr = self.pc;
@@ -365,7 +406,7 @@ impl <'a> CPU<'a> {
            self.ime_defer = None; 
         }
 
-        self.ic += match inst {
+        self.clock_count += match inst {
             Instruction::NOP => 4,
 
             Instruction::DI => self.di(),
@@ -480,16 +521,22 @@ impl <'a> CPU<'a> {
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
             0xFE00 ... 0xFEFF => self.oam[(addr - 0xFE00) as usize],
-            0xFF44            => 0x90, // temp hack
-            0xFF00            => 0xFF, // TODO: P1 (joypad info)
+            0xFF44            => 0x90, // TODO: temp hack
             0xFF01            => self.sb,
             0xFF02            => self.sc,
+            0xFF05            => self.tima,
+            0xFF06            => self.tma,
+            0xFF07            => self.tac,
             0xFF0F            => self.if_,
+
+            // TODO: LCD
+            0xFF42            => 0x00,
+
             0xFF50            => if self.bootrom_enabled { 0 } else { 1 },
-            0xFF03 ... 0xFF79 => 0xFF, // TODO
             0xFF80 ... 0xFFFE => self.wram[(addr - 0xFF80) as usize],
             0xFFFF            => self.ie,
-            _ => unreachable!("Emulator not designed to run in an environment where the laws of physics no longer apply")
+
+            _                 => panic!("Unhandled read from ${:X}", addr),
         }
     }
 
@@ -509,14 +556,25 @@ impl <'a> CPU<'a> {
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v },
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v },
             0xFE00 ... 0xFEFF => { self.oam[(addr - 0xFE00) as usize] = v },
-            0xFF00            => { }, // TODO: P1 (joypad info)
             0xFF01            => { self.sb = v },
             0xFF02            => { self.sc = v },
+            0xFF05            => { self.tima = v },
+            0xFF06            => { self.tma = v },
+            0xFF07            => { self.tac = v & 0x7 },
             0xFF0F            => { self.if_ = v & 0x1F },
-            0xFF03 ... 0xFF79 => { }, // TODO
+
+            // TODO: sound
+            0xFF11 ... 0xFF14 => { },
+            0xFF24 ... 0xFF26 => { },
+
+            // TODO: LCD
+            0xFF40 ... 0xFF43 => { },
+            0xFF47            => { },
+
             0xFF80 ... 0xFFFE => { self.wram[(addr - 0xFF80) as usize] = v },
             0xFFFF            => { self.ie = v & 0x1F },
-            _ => unreachable!("Emulator not designed to run in an environment where the laws of physics no longer apply")
+
+            _                 => { panic!("Unhandled write to ${:X}", addr) },
         };
     }
 
@@ -1136,7 +1194,7 @@ impl <'a> CPU<'a> {
     // Z N H C
     // - - - -
     fn stop(&mut self) -> u32 {
-        // TODO:
+        // TODO: this should be more than a noop.
         4
     }
 
@@ -1145,7 +1203,8 @@ impl <'a> CPU<'a> {
     // Z N H C
     // - - - -
     fn halt(&mut self) -> u32 {
-        // TODO:
+        // TODO: pretty sure I need to check interrupt states here.
+        self.halted = true;
         4
     }
 
