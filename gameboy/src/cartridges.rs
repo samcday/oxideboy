@@ -9,7 +9,6 @@ pub struct MBC1Cart<'a> {
 
 impl <'a> MBC1Cart<'a> {
   pub fn new(rom: &'a[u8]) -> MBC1Cart<'a> {
-    println!("wtf. {}", rom[0x148]);
     MBC1Cart{
       bank_cur: 1,
       bank_cnt: match rom[0x148] {
@@ -28,7 +27,7 @@ impl <'a> lr35902::Cartridge for MBC1Cart<'a> {
   fn read(&self, addr: u16) -> u8 {
     match addr {
       0x0000 ... 0x3FFF => self.rom[addr as usize],
-      0x4000 ... 0x7FFF => self.rom[(self.bank_cur as usize) * 0x4000 + (addr as usize)],
+      0x4000 ... 0x7FFF => self.rom[(self.bank_cur as usize) * 0x4000 + ((addr - 0x4000) as usize)],
       _ => panic!("Unexpected cartridge read from addr: {:X}", addr),
     }
   }
@@ -38,8 +37,7 @@ impl <'a> lr35902::Cartridge for MBC1Cart<'a> {
       0x2000 ... 0x3FFF => {
         match v {
           0 ... 0x1F => {
-            self.bank_cur = v.min(1);
-            println!("Selected bank {}", self.bank_cur);
+            self.bank_cur = v.max(1);
             if self.bank_cur >= self.bank_cnt {
               panic!("ROM bank {} requested, maximum is {}", self.bank_cur, self.bank_cnt);
             }
