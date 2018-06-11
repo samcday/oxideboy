@@ -540,7 +540,7 @@ impl <'a> CPU<'a> {
 
             0x0000 ... 0x7FFF => { self.cart.write(addr, v); },
             0x8000 ... 0x9FFF => { self.vram[(addr - 0x8000) as usize] = v },
-            0xA000 ... 0xBFFF => { self.cart.write(addr, v); }, // TODO: this is forwarded to MBC.
+            0xA000 ... 0xBFFF => { self.cart.write(addr, v); },
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v },
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v },
             0xFE00 ... 0xFEFF => { self.oam[(addr - 0xFE00) as usize] = v },
@@ -555,7 +555,7 @@ impl <'a> CPU<'a> {
             0xFF00            => { }, // TODO:
 
             // TODO: sound
-            0xFF11 ... 0xFF14 => { },
+            0xFF11 ... 0xFF19 => { },
             0xFF24 ... 0xFF26 => { },
 
             // TODO: LCD
