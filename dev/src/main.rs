@@ -17,5 +17,10 @@ fn main() -> io::Result<()> {
 
     loop {
         cpu.run();
+        let ser = cpu.serial_get();
+        if ser.is_some() {
+          io::stdout().write(&[ser.unwrap()]).unwrap();
+          io::stdout().flush().unwrap();
+        }
     }
 }

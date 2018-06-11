@@ -365,11 +365,13 @@ impl <'a> CPU<'a> {
             _ => unreachable!("self.tac & 3 will never get here"),
         };
         if self.clock_count > timer_freq {
+            let incr = (self.clock_count / timer_freq) as u8;
             self.clock_count %= timer_freq;
 
             if self.tac & 4 > 0 {
-                self.tima = self.tima.wrapping_add(1);
-                if self.tima == 0 {
+                let (tima, overflow) = self.tima.overflowing_add(incr);
+                self.tima = tima;
+                if overflow {
                     self.tima = self.tma;
                     self.if_ |= 0x4;
                 }
@@ -422,7 +424,6 @@ impl <'a> CPU<'a> {
 
         let _addr = self.pc;
         let inst = self.decode();
-        // println!("Inst: {} ; ${:04X}", inst, _addr);
 
         // Apply deferred change to IME.
         if self.ime_defer.is_some() {
@@ -486,6 +487,9 @@ impl <'a> CPU<'a> {
             Inst::POP(r) => self.pop(r),
             Inst::RST(a) => self.rst(a),
         };
+
+        // println!("Instr: {} ;${:04X} ({})", inst, _addr, inst_cycles);
+
         self.clock_count += inst_cycles as u32;
     }
 
@@ -499,12 +503,17 @@ impl <'a> CPU<'a> {
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
             0xFE00 ... 0xFEFF => self.oam[(addr - 0xFE00) as usize],
+
+            0xFF00            => 0, // TODO: joypad
             0xFF01            => self.sb,
             0xFF02            => self.sc,
             0xFF05            => self.tima,
             0xFF06            => self.tma,
             0xFF07            => self.tac,
             0xFF0F            => self.if_,
+
+            // TODO: sound
+            0xFF26            => 0,
 
             // TODO: LCD
             0xFF42            => 0x00,
@@ -539,7 +548,7 @@ impl <'a> CPU<'a> {
             0xFF02            => { self.sc = v },
             0xFF05            => { self.tima = v },
             0xFF06            => { self.tma = v },
-            0xFF07            => { self.tac = v & 0x7 },
+            0xFF07            => { self.tac = v & 0x7; self.clock_count = 0; },
             0xFF0F            => { self.if_ = v & 0x1F },
 
             // TODO: joypad
@@ -1435,7 +1444,7 @@ impl <'a> CPU<'a> {
             FlagOp::Z(v == 0),
             FlagOp::N(false),
             FlagOp::H(true)]);
-        8 + o.cycle_cost() * 2
+        8 + o.cycle_cost()
     }
 
     // RES b, r
