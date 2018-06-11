@@ -1,5 +1,4 @@
 use std::fmt;
-use std::io::{self, Write};
 
 static BOOT_ROM: &[u8; 256] = include_bytes!("boot.rom");
 
@@ -336,17 +335,25 @@ impl <'a> CPU<'a> {
             cart}
     }
 
+    pub fn pc(&self) -> u16 {
+        return self.pc;
+    }
+
+    pub fn serial_get(&mut self) -> Option<u8> {
+        if self.sb > 0 {
+            let v = Some(self.sb);
+            self.sb = 0;
+            v
+        } else {
+            None
+        }
+    }
+
     // Runs the CPU for a single instruction.
     // This is the main "Fetch, decode, execute" cycle.
     pub fn run(&mut self) {
         if self.halted {
             self.clock_count += 1;
-        }
-
-        if self.sb > 0 {
-            io::stdout().write(&[self.sb]).unwrap();
-            io::stdout().flush().unwrap();
-            self.sb = 0;
         }
 
         // Advance timer if needed.
