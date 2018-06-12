@@ -44,6 +44,15 @@ enum Operand8 {
     AddrHigh(Reg8),   // 8 bit register value interpreted as memory address from $FF00.
 }
 
+#[derive(Debug, PartialEq)]
+enum PPUState {
+    Inactive,           // LCD is currently switched off.
+    OAMSearch(u8),      // OAM search phase, with the number of cycles remaining.
+    PixelTransfer(u8),      // 
+    HBlank(u8),         // HBlank phase, with number of cycles remaining.
+    VBlank(u8),
+}
+
 impl Operand8 {
     fn get(&self, cpu: &mut CPU) -> u8 {
         match *self {
@@ -292,6 +301,16 @@ pub struct CPU<'a> {
     ime: bool,
     ime_defer: Option<bool>,
 
+    // PPU
+    ppu_state: PPUState,
+    
+    scy: u8,
+    scx: u8,
+    ly: u8,
+    lyc: u8,
+    wx: u8,
+    wy: u8,
+
     // Timer.
     clock_count: u32,
     tima: u8,
@@ -312,6 +331,7 @@ impl <'a> CPU<'a> {
             bootrom_enabled: true,
             vram: [0; 0x2000], ram: [0; 0x2000], oam: [0; 0x9F], wram: [0; 0x7F],
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
+            ppu_state: PPUState::Inactive, scy: 0, scx: 0, ly: 0, lyc: 0, wx: 0, wy: 0,
             clock_count: 0, tima: 0, tma: 0, tac: 0,
             sb: 0, sc: 0,
             cart}
@@ -352,7 +372,8 @@ impl <'a> CPU<'a> {
     }
 
     // Advances the CPU clock by 1 "instruction cycle", which is actually 4 low level machine cycles.
-    // The accuracy of clock counting is important, as it affects the accuracy of the timer.
+    // The accuracy of clock counting is important, as it affects the accuracy of everything else - the timer
+    // PPU, sound, etc.
     // It's worth noting that the clock can advance in the middle of processing an instruction that
     // spans multiple instruction cycles. Because of this, it means that the timer can actually increment
     // in the middle of a load instruction.
@@ -363,6 +384,7 @@ impl <'a> CPU<'a> {
     fn advance_clock(&mut self) {
         self.clock_count += 4;
         self.advance_timer();
+        self.advance_ppu();
     }
 
     // Advances the TIMA register depending on how many CPU clock cycles have passed, and the
@@ -388,6 +410,49 @@ impl <'a> CPU<'a> {
                 }
             }
         }
+    }
+
+    // Advances PPU display. Basically, all the video magic happens in here.
+    fn advance_ppu(&mut self) {
+        // Each scanline is 114 clock cycles. 20 for OAM search, 43+ for pixel transfer, remaining for hblank.
+        let new_state = match self.ppu_state {
+            PPUState::Inactive => { PPUState::Inactive },
+            PPUState::OAMSearch(n) => {
+                if n > 0 {
+                    PPUState::OAMSearch(n - 1)
+                } else {
+                    PPUState::PixelTransfer(43)
+                }
+            },
+            PPUState::PixelTransfer(n) => {
+                if n > 0 {
+                    PPUState::PixelTransfer(n - 1)
+                } else {
+                    PPUState::HBlank(51)
+                }
+            },
+            PPUState::HBlank(n) => {
+                if n > 0 {
+                    PPUState::HBlank(n - 1)
+                } else if self.ly == 144 {
+                    PPUState::VBlank(114)
+                } else {
+                    self.ly += 1;
+                    PPUState::OAMSearch(20)
+                }
+            },
+            PPUState::VBlank(n) => {
+                if n > 0 {
+                    PPUState::VBlank(n - 1)
+                } else if self.ly == 154 {
+                    self.ly = 0;
+                    PPUState::OAMSearch(20)
+                } else {
+                    PPUState::VBlank(114)
+                }
+            }
+        };
+        self.ppu_state = new_state;
     }
 
     fn execute(&mut self, inst: Inst) {
@@ -452,6 +517,38 @@ impl <'a> CPU<'a> {
         }
     }
 
+    fn ppu_lcdc_get(&self) -> u8 {
+        let mut lcdc = 0;
+
+        if self.ppu_state != PPUState::Inactive {
+            lcdc |= 0x80;
+        }
+
+        lcdc
+    }
+
+    fn ppu_lcdc_set(&mut self, v: u8) {
+        // Are we enabling LCD from a previously disabled state?
+        if v & 0x80 > 0 && self.ppu_state == PPUState::Inactive {
+            self.ppu_state = PPUState::OAMSearch(20);
+        }
+    }
+
+    fn ppu_stat_get(&self) -> u8 {
+        let stat = match self.ppu_state {
+            PPUState::Inactive => 0,
+            PPUState::HBlank(_) => 0,
+            PPUState::VBlank(_) => 1,
+            PPUState::OAMSearch(_) => 2,
+            PPUState::PixelTransfer(_) => 3,
+        };
+        stat
+    }
+
+    fn ppu_stat_set(&mut self, _v: u8) {
+
+    }
+
     fn process_interrupts(&mut self) {
         // We exit HALT state if there's any pending interrupts.
         // We do this regardless of IME state.
@@ -508,19 +605,31 @@ impl <'a> CPU<'a> {
             0xFE00 ... 0xFEFF => self.oam[(addr - 0xFE00) as usize],
 
             0xFF00            => 0, // TODO: joypad
+
+            // Serial
             0xFF01            => self.sb,
             0xFF02            => self.sc,
+
+            // Timer
             0xFF05            => self.tima,
             0xFF06            => self.tma,
             0xFF07            => self.tac,
+
+            // Pending interrupts
             0xFF0F            => self.if_,
 
-            // TODO: sound
+            // Sound
             0xFF26            => 0,
 
-            // TODO: LCD
-            0xFF42            => 0x00,
-            0xFF44            => 0x90, // TODO: temp hack
+            // PPU
+            0xFF40            => self.ppu_lcdc_get(),
+            0xFF41            => self.ppu_stat_get(),
+            0xFF42            => self.scy,
+            0xFF43            => self.scx,
+            0xFF44            => self.ly,
+            0xFF45            => self.lyc,
+            0xFF4A            => self.wy,
+            0xFF4B            => self.wx,
 
             0xFF4D            => 0x00,      // KEY1 for CGB.
             0xFF50            => if self.bootrom_enabled { 0 } else { 1 },
@@ -542,35 +651,43 @@ impl <'a> CPU<'a> {
         match addr {
             0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; },
 
-            0x0000 ... 0x7FFF => { self.cart.write(addr, v); },
-            0x8000 ... 0x9FFF => { self.vram[(addr - 0x8000) as usize] = v },
-            0xA000 ... 0xBFFF => { self.cart.write(addr, v); },
-            0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v },
-            0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v },
-            0xFE00 ... 0xFEFF => { self.oam[(addr - 0xFE00) as usize] = v },
-            0xFF01            => { self.sb = v },
-            0xFF02            => { self.sc = v },
-            0xFF05            => { self.tima = v },
-            0xFF06            => { self.tma = v },
-            0xFF07            => { self.tac = v & 0x7; self.clock_count = 0; },
-            0xFF0F            => { self.if_ = v & 0x1F },
+            0x0000 ... 0x7FFF => { self.cart.write(addr, v); }
+            0x8000 ... 0x9FFF => { self.vram[(addr - 0x8000) as usize] = v }
+            0xA000 ... 0xBFFF => { self.cart.write(addr, v); }
+            0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v }
+            0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v }
+            0xFE00 ... 0xFEFF => { self.oam[(addr - 0xFE00) as usize] = v }
+            0xFF01            => { self.sb = v }
+            0xFF02            => { self.sc = v }
+            0xFF05            => { self.tima = v }
+            0xFF06            => { self.tma = v }
+            0xFF07            => { self.tac = v & 0x7; self.clock_count = 0; }
+            0xFF0F            => { self.if_ = v & 0x1F }
 
             // TODO: joypad
-            0xFF00            => { }, // TODO:
+            0xFF00            => { } // TODO:
 
-            // TODO: sound
-            0xFF11 ... 0xFF19 => { },
-            0xFF24 ... 0xFF26 => { },
+            // Sound
+            0xFF11 ... 0xFF19 => { }
+            0xFF24 ... 0xFF26 => { }
 
-            // TODO: LCD
-            0xFF40 ... 0xFF43 => { },
-            0xFF47            => { },
+            // PPU
+            0xFF40            => { self.ppu_lcdc_set(v); }
+            0xFF41            => { self.ppu_stat_set(v); }
+            0xFF42            => { self.scy = v }
+            0xFF43            => { self.scx = v }
+            0xFF44            => { }                   // LY is readonly.
+            0xFF45            => { self.lyc = v }
+            0xFF40 ... 0xFF43 => { }
+            0xFF47            => { }
+            0xFF4A            => { self.wy = v },
+            0xFF4B            => { self.wx = v },
 
-            0xFF4D            => { },      // KEY1 for CGB.
-            0xFF80 ... 0xFFFE => { self.wram[(addr - 0xFF80) as usize] = v },
-            0xFFFF            => { self.ie = v & 0x1F },
+            0xFF4D            => { }      // KEY1 for CGB.
+            0xFF80 ... 0xFFFE => { self.wram[(addr - 0xFF80) as usize] = v }
+            0xFFFF            => { self.ie = v & 0x1F }
 
-            _                 => { panic!("Unhandled write to ${:X}", addr) },
+            _                 => { panic!("Unhandled write to ${:X}", addr) }
         };
     }
 
