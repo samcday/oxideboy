@@ -90,17 +90,6 @@ impl Operand8 {
         };
         v
     }
-
-    fn cycle_cost(&self) -> u8 {
-        match *self {
-            Operand8::Reg(_) => 0,
-            Operand8::Imm(_) => 4,
-            Operand8::Addr(_) | Operand8::AddrInc(_) | Operand8::AddrDec(_) => 4,
-            Operand8::ImmAddr(_) => 12,
-            Operand8::ImmAddrHigh(_) => 8,
-            Operand8::AddrHigh(_) => 4,
-        }
-    }
 }
 
 impl ::fmt::Display for Operand8 {
@@ -140,14 +129,6 @@ impl Operand16 {
             Operand16::Reg(r) => cpu.set_reg16(r, v),
             Operand16::Imm(_) => panic!("Attempted to write to immediate operand"),
             Operand16::ImmAddr(addr) => cpu.mem_write16(addr, v),
-        }
-    }
-
-    fn cycle_cost(&self) -> u8 {
-        match *self {
-            Operand16::Reg(_) => 0,
-            Operand16::Imm(_) => 4,
-            Operand16::ImmAddr(_) => 12,
         }
     }
 }
@@ -366,9 +347,8 @@ impl <'a> CPU<'a> {
         let _addr = self.pc;
         let inst = self.decode();
         self.update_ime();
-        let _inst_cycles = self.execute(inst);
+        self.execute(inst);
         // println!("Instr: {} ({})", inst);
-        // self.clock_count += _inst_cycles as u32;
     }
 
     // Advances the CPU clock by 1 "instruction cycle", which is actually 4 low level machine cycles.
@@ -410,9 +390,9 @@ impl <'a> CPU<'a> {
         }
     }
 
-    fn execute(&mut self, inst: Inst) -> u8 {
+    fn execute(&mut self, inst: Inst) {
         match inst {
-            Inst::NOP => 4,
+            Inst::NOP => (),
             Inst::ADD(o) => self.add8(o, false),
             Inst::ADC(o) => self.add8(o, true),
             Inst::SUB(o) => self.sub8(o, false, true),
@@ -1226,67 +1206,60 @@ impl <'a> CPU<'a> {
 
     // EI | DI
     // Flags = Z:- N:- H:- C:-
-    fn set_ime(&mut self, state: bool) -> u8 {
+    fn set_ime(&mut self, state: bool) {
         self.ime_defer = Some(state);
-        4
     }
 
     // STOP
     // Flags = Z:- N:- H:- C:-
-    fn stop(&mut self) -> u8 {
+    fn stop(&mut self) {
         // TODO: this should be more than a noop.
         self.pc += 1;
-        4
     }
 
     // HALT
     // Flags = Z:- N:- H:- C:-
-    fn halt(&mut self) -> u8 {
+    fn halt(&mut self) {
         // TODO: pretty sure I need to check interrupt states here.
         self.halted = true;
-        4
     }
 
     // INC %r8 | INC (HL)
     // Flags = Z:* N:0 H:* C:-
-    fn inc8(&mut self, o: Operand8) -> u8 {
+    fn inc8(&mut self, o: Operand8) {
         let v = o.get(self).wrapping_add(1);
         self.flags_update(&[FlagOp::Z(v == 0), FlagOp::N(false), FlagOp::H(v & 0x0F == 0)]);
         o.set(self, v);
-        4 + o.cycle_cost() * 2
     }
 
     // DEC %r8 | DEC (HL)
     // Flags = Z:* N:1 H:* C:-
-    fn dec8(&mut self, o: Operand8) -> u8 {
+    fn dec8(&mut self, o: Operand8) {
         let v = o.get(self).wrapping_sub(1);
         self.flags_update(&[FlagOp::Z(v == 0), FlagOp::N(true), FlagOp::H(v & 0x0F == 0x0F)]);
         o.set(self, v);
-        4 + o.cycle_cost() * 2
     }
 
     // INC rr
     // Flags = Z:- N:- H:- C:-
-    fn inc16(&mut self, r: Reg16) -> u8 {
+    fn inc16(&mut self, r: Reg16) {
         let v = self.get_reg16(r).wrapping_add(1);
         self.set_reg16(r, v);
         self.advance_clock();
-        8
     }
 
     // DEC rr
     // Flags = Z:- N:- H:- C:-
-    fn dec16(&mut self, r: Reg16) -> u8 {
+    fn dec16(&mut self, r: Reg16) {
         let v = self.get_reg16(r).wrapping_sub(1);
         self.set_reg16(r, v);
         self.advance_clock();
-        8
     }
 
     // DAA
     // Flags = Z:* N:- H:0 C:*
     // TODO: clean this dumpster fire up.
-    fn daa(&mut self) -> u8 {
+    fn daa(&mut self) {
         let mut carry = false;
 
         if self.f & FLAG_SUBTRACT == 0 {
@@ -1311,37 +1284,32 @@ impl <'a> CPU<'a> {
         if self.a == 0 {
             self.f |= FLAG_ZERO;
         }
-
-        4
     }
 
     // CPL
     // Flags = Z:- N:1 H:1 C:-
-    fn cpl(&mut self) -> u8 {
+    fn cpl(&mut self) {
         self.a = !self.a;
         self.flags_update(&[FlagOp::N(true), FlagOp::H(true)]);
-        4
     }
 
     // CCF
     // Flags = Z:- N:0 H:0 C:*
-    fn ccf(&mut self) -> u8 {
+    fn ccf(&mut self) {
         let carry = self.flags_query(FLAG_CARRY);
         self.flags_update(&[FlagOp::N(false), FlagOp::H(false), FlagOp::C(!carry)]);
-        4
     }
 
     // SCF
     // Flags = Z:- N:0 H:0 C:1
-    fn scf(&mut self) -> u8 {
+    fn scf(&mut self) {
         self.flags_update(&[FlagOp::N(false), FlagOp::H(false), FlagOp::C(true)]);
-        4
     }
 
     // ADD A, %r8 | ADD A, (HL) | ADD A, $d8
     // ADC A, %r8 | ADC A, (HL) | ADC A, $d8
     // Flags = Z:* N:0 H:* C:*
-    fn add8(&mut self, o: Operand8, carry: bool) -> u8 {
+    fn add8(&mut self, o: Operand8, carry: bool) {
         let carry = if carry && (self.f & FLAG_CARRY > 0) { 1 } else { 0 };
 
         let old = self.a;
@@ -1353,13 +1321,12 @@ impl <'a> CPU<'a> {
             FlagOp::N(false),
             FlagOp::H((((old & 0xF) + (v & 0xF)) + carry) & 0x10 == 0x10),
             FlagOp::C((old as u16) + (v as u16) + (carry as u16) > 0xFF)]);
-        4 + o.cycle_cost()
     }
 
     // SUB    %r8 | SUB    (HL) | SUB    $d8
     // SBC A, %r8 | SBC A, (HL) | SBC A, $d8
     // Flags = Z:* N:1 H:* C:*
-    fn sub8(&mut self, o: Operand8, carry: bool, store: bool) -> u8 {
+    fn sub8(&mut self, o: Operand8, carry: bool, store: bool) {
         let carry = if carry && (self.f & FLAG_CARRY != 0) { 1 } else { 0 };
 
         let a = self.a;
@@ -1374,12 +1341,11 @@ impl <'a> CPU<'a> {
             FlagOp::N(true),
             FlagOp::H(((a & 0xF) as u16) < ((v & 0xF) as u16) + (carry as u16)),
             FlagOp::C((a as u16) < (v as u16) + (carry as u16))]);
-        4 + o.cycle_cost()
     }
 
     // ADD SP, r8
     // Flags = Z:0 N:0 H:* C:*
-    fn add_sp_r8(&mut self, d: i8) -> u8 {
+    fn add_sp_r8(&mut self, d: i8) {
         let d = d as i16 as u16;
         let sp = self.sp;
 
@@ -1393,12 +1359,11 @@ impl <'a> CPU<'a> {
             FlagOp::N(false),
             FlagOp::H(((sp & 0xF) + (d & 0xF)) & 0x10 > 0),
             FlagOp::C(((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0)]);
-        16
     }
 
     // ADD HL, rr
     // Flags = Z:- N:0 H:* C:*
-    fn add16(&mut self, r: Reg16) -> u8 {
+    fn add16(&mut self, r: Reg16) {
         let hl = self.get_reg16(HL);
         let v = self.get_reg16(r);
         let (new_hl, overflow) = hl.overflowing_add(v);
@@ -1410,7 +1375,6 @@ impl <'a> CPU<'a> {
             FlagOp::N(false),
             FlagOp::H(((hl & 0xFFF) + (v & 0xFFF)) & 0x1000 > 0),
             FlagOp::C(overflow)]);
-        8
     }
 
     // LD %r8, %r8
@@ -1419,16 +1383,15 @@ impl <'a> CPU<'a> {
     // LD (%r16), %r8
     // LD (HL+), A | LD (HL-), A | LD A, (HL+) | LD A, (HL-)
     // Flags = Z:- N:- H:- C:-
-    fn ld8(&mut self, l: Operand8, r: Operand8) -> u8 {
+    fn ld8(&mut self, l: Operand8, r: Operand8) {
         let v = r.get(self);
         l.set(self, v);
-        4 + l.cycle_cost() + r.cycle_cost()
     }
 
     // LD %r16, $d16
     // LD (%a16), SP
     // Flags = Z:- N:- H:- C:-
-    fn ld16(&mut self, l: Operand16, r: Operand16) -> u8 {
+    fn ld16(&mut self, l: Operand16, r: Operand16) {
         let v = r.get(self);
         l.set(self, v);
         
@@ -1440,12 +1403,11 @@ impl <'a> CPU<'a> {
                 self.advance_clock();
             }
         }
-        8 + l.cycle_cost() + r.cycle_cost()
     }
 
     // LD HL, SP+r8
     // Flags = Z:0 N:0 H:* C:*
-    fn ld_hl_sp(&mut self, d: i8) -> u8 {
+    fn ld_hl_sp(&mut self, d: i8) {
         let sp = self.sp;
         let d = d as i16 as u16;
         let v = sp.wrapping_add(d);
@@ -1456,14 +1418,13 @@ impl <'a> CPU<'a> {
             FlagOp::H((sp & 0xF) + (d & 0xF) & 0x10 > 0),
             FlagOp::C((sp & 0xFF) + (d & 0xFF) & 0x100 > 0)]);
         self.advance_clock();
-        12
     }
 
     // AND %r8 | AND $d8 | AND (HL)
     // XOR %r8 | XOR $d8 | XOR (HL)
     // OR  %r8 | OR  $d8 | OR  (HL)
     // Flags = Z:* N:0 H:* C:0
-    fn bitwise(&mut self, op: BitwiseOp, o: Operand8) -> u8 {
+    fn bitwise(&mut self, op: BitwiseOp, o: Operand8) {
         let a = self.a;
         let v = o.get(self);
         self.a = match op {
@@ -1478,33 +1439,30 @@ impl <'a> CPU<'a> {
             FlagOp::N(false),
             FlagOp::H(hc),
             FlagOp::C(false)]);
-        4 + o.cycle_cost()
     }
 
     // BIT b, r
     // Flags = Z:* N:0 H:1 C:-
-    fn bit(&mut self, b: u8, o: Operand8) -> u8 {
+    fn bit(&mut self, b: u8, o: Operand8) {
         let v = o.get(self) & (1 << b);
         self.flags_update(&[
             FlagOp::Z(v == 0),
             FlagOp::N(false),
             FlagOp::H(true)]);
-        8 + o.cycle_cost()
     }
 
     // RES b, r
     // SET b, r
     // Flags = Z:- N:- H:- C:-
-    fn setbit(&mut self, b: u8, o: Operand8, on: bool) -> u8 {
+    fn setbit(&mut self, b: u8, o: Operand8, on: bool) {
         let v = o.get(self);
         o.set(self, if on { v | 1 << b } else { v & !(1 << b) });
-        8 + o.cycle_cost() * 2
     }
 
     // RR r
     // RRA
     // Flags = Z:* N:0 H:0 C:*
-    fn rr(&mut self, o: Operand8, extended: bool) -> u8 {
+    fn rr(&mut self, o: Operand8, extended: bool) {
         let v = o.get(self);
         let msb = if self.f & FLAG_CARRY > 0 { 0x80 } else { 0 };
         let carry = v & 0x1 > 0;
@@ -1514,15 +1472,13 @@ impl <'a> CPU<'a> {
             FlagOp::N(false),
             FlagOp::H(false),
             FlagOp::C(carry)]);
-
-        if extended { 8 + o.cycle_cost() * 2 } else { 4 }
     }
 
     // RL %r8
     // SL %r8
     // RLA
     // Flags = Z:* N:0 H:0 C:*
-    fn rl(&mut self, o: Operand8, set_zero: bool, preserve_lsb: bool) -> u8 {
+    fn rl(&mut self, o: Operand8, set_zero: bool, preserve_lsb: bool) {
         let v = o.get(self);
         let lsb = if preserve_lsb && self.f & FLAG_CARRY > 0 { 1 } else { 0 };
         let carry = v & 0x80 > 0;
@@ -1532,16 +1488,12 @@ impl <'a> CPU<'a> {
             FlagOp::N(false),
             FlagOp::H(false),
             FlagOp::C(carry)]);
-
-        // set_zero flag means we're RL/SL
-        // Otherwise we're RLA which has smaller cycle count.
-        if set_zero { 8 + o.cycle_cost() * 2 } else { 4 }
     }
 
     // RLC %r8
     // RLCA
     // Flags = Z:* N:0 H:0 C:*
-    fn rlc(&mut self, o: Operand8, extended: bool) -> u8 {
+    fn rlc(&mut self, o: Operand8, extended: bool) {
         let v = o.get(self);
         let carry = v & 0x80 > 0;
         let lsb = if carry { 1 } else { 0 };
@@ -1551,13 +1503,11 @@ impl <'a> CPU<'a> {
             FlagOp::N(false),
             FlagOp::H(false),
             FlagOp::C(carry)]);
-
-        if extended { 8 + o.cycle_cost() * 2 } else { 4 }
     }
 
     // SRA r
     // Flags = Z:* N:0 H:0 C:*
-    fn shift_right(&mut self, o: Operand8, preserve_msb: bool) -> u8 {
+    fn shift_right(&mut self, o: Operand8, preserve_msb: bool) {
         let v = o.get(self);
         let carry = v & 0x01 > 0;
         let preserve = if preserve_msb { v & 0x80 } else { 0 };
@@ -1568,12 +1518,11 @@ impl <'a> CPU<'a> {
             FlagOp::H(false),
             FlagOp::C(carry),
         ]);
-        8 + o.cycle_cost() * 2
     }
 
     // RRC r
     // Flags = Z:* N:0 H:0 C:*
-    fn rrc(&mut self, o: Operand8, extended: bool) -> u8 {
+    fn rrc(&mut self, o: Operand8, extended: bool) {
         let v = o.get(self);
         let carry = v & 0x1 > 0;
         let msb = if carry { 0x80 } else { 0 };
@@ -1584,13 +1533,11 @@ impl <'a> CPU<'a> {
             FlagOp::H(false),
             FlagOp::C(carry),
         ]);
-
-        if extended { 8 + o.cycle_cost() * 2 } else { 4 }
     }
 
     // SWAP r
     // Flags = Z:* N:0 H:0 C:0
-    fn swap(&mut self, o: Operand8) -> u8 {
+    fn swap(&mut self, o: Operand8) {
         let v = o.get(self);
         let v = ((v & 0xF) << 4) | ((v & 0xF0) >> 4);
         o.set(self, v);
@@ -1600,7 +1547,6 @@ impl <'a> CPU<'a> {
             FlagOp::H(false),
             FlagOp::C(false),
         ]);
-        8 + o.cycle_cost() * 2
     }
 
     fn check_jmp_condition(&mut self, cc: Option<FlagCondition>) -> bool {
@@ -1615,21 +1561,20 @@ impl <'a> CPU<'a> {
 
     // CALL cc, $a16 | CALL $a16
     // Flags = Z:- N:- H:- C:-
-    fn call(&mut self, cc: Option<FlagCondition>, addr: u16) -> u8 {
+    fn call(&mut self, cc: Option<FlagCondition>, addr: u16) {
         if !self.check_jmp_condition(cc) {
-            return 12;
+            return;
         }
         self.advance_clock();
         self.push_and_jump(addr);
-        24
     }
 
     // RET cc | RET | RETI
     // Flags = Z:- N:- H:- C:-
-    fn ret(&mut self, cc: Option<FlagCondition>, ei: bool) -> u8 {
+    fn ret(&mut self, cc: Option<FlagCondition>, ei: bool) {
         if !self.check_jmp_condition(cc) {
             self.advance_clock();
-            return 8;
+            return;
         }
         if cc.is_some() {
             self.advance_clock();
@@ -1640,14 +1585,13 @@ impl <'a> CPU<'a> {
         }
         let pc = self.stack_pop();
         self.pc = pc;
-        16 + (if cc.is_some() { 4 } else { 0 })
     }
 
     // JP cc $a16 | JP $a16
     // Flags = Z:- N:- H:- C:-
-    fn jp(&mut self, cc: Option<FlagCondition>, o: Operand16) -> u8 {
+    fn jp(&mut self, cc: Option<FlagCondition>, o: Operand16) {
         if !self.check_jmp_condition(cc) {
-            return 12;
+            return;
         }
 
         let addr = o.get(self);
@@ -1658,50 +1602,41 @@ impl <'a> CPU<'a> {
         } else {
             self.advance_clock();
         }
-
-        match o {
-            Operand16::Reg(HL) => 4,
-            _ => 16
-        }
     }
 
     // RST 00H | RST 08H | RST 10H ... RST 38H
     // Flags = Z:- N:- H:- C:-
-    fn rst(&mut self, a: u8) -> u8 {
+    fn rst(&mut self, a: u8) {
         self.push_and_jump(a as u16);
         self.advance_clock();
-        16
     }
 
     // PUSH %r16
     // Flags = Z:- N:- H:- C:-
-    fn push(&mut self, r: Reg16) -> u8 {
+    fn push(&mut self, r: Reg16) {
         let v = self.get_reg16(r);
         self.stack_push(v);
         self.advance_clock();
-        16
     }
 
     // POP %r16
     // Flags = Z:* N:* H:* C:*
-    fn pop(&mut self, r: Reg16) -> u8 {
+    fn pop(&mut self, r: Reg16) {
         let mut v = self.stack_pop();
         if let AF = r {
             // Reset bits 0-3 in F.
             v &= 0xFFF0;
         }
         self.set_reg16(r, v);
-        12
     }
 
     // JR cc $r8 | JP $r8
     // Flags = Z:- N:- H:- C:-
-    fn jr(&mut self, cc: Option<FlagCondition>, n: u8) -> u8 {
+    fn jr(&mut self, cc: Option<FlagCondition>, n: u8) {
         if !self.check_jmp_condition(cc) {
-            return 8;
+            return;
         }
         self.advance_clock();
         self.pc = self.pc.wrapping_add(n as i8 as i16 as u16);
-        12
     }
 }
