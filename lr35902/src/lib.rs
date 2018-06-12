@@ -49,7 +49,7 @@ impl Operand8 {
         match *self {
             Operand8::Reg(r) => cpu.get_reg8(r),
             Operand8::Imm(d) => d,
-            Operand8::Addr(rr) => cpu.mem_read8(cpu.get_reg16(rr)),
+            Operand8::Addr(rr) => { let addr = cpu.get_reg16(rr); cpu.mem_read8(addr) },
             Operand8::AddrInc(rr) => {
                 let addr = cpu.get_reg16(rr);
                 cpu.set_reg16(rr, addr.wrapping_add(1));
@@ -62,7 +62,7 @@ impl Operand8 {
             },
             Operand8::ImmAddr(addr) => cpu.mem_read8(addr),
             Operand8::ImmAddrHigh(addr) => cpu.mem_read8(0xFF00 + (addr as u16)),
-            Operand8::AddrHigh(r) => cpu.mem_read8(0xFF00 + (cpu.get_reg8(r) as u16)),
+            Operand8::AddrHigh(r) => { let addr = 0xFF00 + (cpu.get_reg8(r) as u16); cpu.mem_read8(addr) },
         }
     }
 
@@ -127,7 +127,7 @@ enum Operand16 {
 }
 
 impl Operand16 {
-    fn get(&self, cpu: &CPU) -> u16 {
+    fn get(&self, cpu: &mut CPU) -> u16 {
         match *self {
             Operand16::Reg(r) => cpu.get_reg16(r),
             Operand16::Imm(d) => d,
@@ -163,6 +163,7 @@ impl ::fmt::Display for Operand16 {
 }
 
 #[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
 enum Inst {
     NOP,
     EI,
@@ -230,9 +231,9 @@ impl ::fmt::Display for Inst {
             Inst::ADD16(rr) => write!(f, "ADD HL, {:?}", rr),
             Inst::ADD_SP_r8(d) => write!(f, "ADD SP, ${:X}", d),
             Inst::AND(o) => write!(f, "AND {}", o),
-            Inst::BIT(b, o) => write!(f, "BIT {}, {:?}", b, o),
+            Inst::BIT(b, o) => write!(f, "BIT {}, {}", b, o),
             Inst::CALL(None, n) => write!(f, "CALL ${:X}", n),
-            Inst::CALL(Some(cc), n) => write!(f, "CALL {:?} ${:X}", cc, n),
+            Inst::CALL(Some(cc), n) => write!(f, "CALL {:?}, ${:X}", cc, n),
             Inst::CCF => write!(f, "CCF"),
             Inst::CP(o) => write!(f, "CP {}", o),
             Inst::CPL => write!(f, "CPL"),
@@ -353,9 +354,40 @@ impl <'a> CPU<'a> {
     // This is the main "Fetch, decode, execute" cycle.
     pub fn run(&mut self) {
         if self.halted {
-            self.clock_count += 1;
+            self.advance_clock();
         }
 
+        self.process_interrupts();
+
+        if self.halted {
+            return;
+        }
+
+        let _addr = self.pc;
+        let inst = self.decode();
+        self.update_ime();
+        let _inst_cycles = self.execute(inst);
+        // println!("Instr: {} ({})", inst);
+        // self.clock_count += _inst_cycles as u32;
+    }
+
+    // Advances the CPU clock by 1 "instruction cycle", which is actually 4 low level machine cycles.
+    // The accuracy of clock counting is important, as it affects the accuracy of the timer.
+    // It's worth noting that the clock can advance in the middle of processing an instruction that
+    // spans multiple instruction cycles. Because of this, it means that the timer can actually increment
+    // in the middle of a load instruction.
+    // For example, we might be processing a LDH A,(0xFF00+$05) instruction which spans 3 instruction cycles.
+    // At the time we decoded the instruction (first cycle) the TIMA register (0xFF05) might have been "10".
+    // But when we actually fetch that location for the LDH instruction another cycle later, the value could have
+    // incremented to 11. This cycle accuracy is tested in the mem_timing.gb test ROM.
+    fn advance_clock(&mut self) {
+        self.clock_count += 4;
+        self.advance_timer();
+    }
+
+    // Advances the TIMA register depending on how many CPU clock cycles have passed, and the
+    // state of TMA / TAC.
+    fn advance_timer(&mut self) {
         // Advance timer if needed.
         let timer_freq = match self.tac & 3 {
             0 => 1024,
@@ -364,12 +396,11 @@ impl <'a> CPU<'a> {
             3 => 256,
             _ => unreachable!("self.tac & 3 will never get here"),
         };
-        if self.clock_count > timer_freq {
-            let incr = (self.clock_count / timer_freq) as u8;
-            self.clock_count %= timer_freq;
+        while self.clock_count > timer_freq {
+            self.clock_count -= timer_freq;
 
             if self.tac & 4 > 0 {
-                let (tima, overflow) = self.tima.overflowing_add(incr);
+                let (tima, overflow) = self.tima.overflowing_add(1);
                 self.tima = tima;
                 if overflow {
                     self.tima = self.tma;
@@ -377,7 +408,71 @@ impl <'a> CPU<'a> {
                 }
             }
         }
+    }
 
+    fn execute(&mut self, inst: Inst) -> u8 {
+        match inst {
+            Inst::NOP => 4,
+            Inst::ADD(o) => self.add8(o, false),
+            Inst::ADC(o) => self.add8(o, true),
+            Inst::SUB(o) => self.sub8(o, false, true),
+            Inst::SBC(o) => self.sub8(o, true, true),
+            Inst::CP(o)  => self.sub8(o, false, false),
+            Inst::LD8(l, r) => self.ld8(l, r),
+            Inst::LD16(l, r) => self.ld16(l, r),
+            Inst::INC8(o) => self.inc8(o),
+            Inst::DEC8(o) => self.dec8(o),
+            Inst::INC16(r) => self.inc16(r),
+            Inst::DEC16(r) => self.dec16(r),
+            Inst::AND(o) => self.bitwise(BitwiseOp::AND, o),
+            Inst::OR(o) => self.bitwise(BitwiseOp::OR, o),
+            Inst::XOR(o) => self.bitwise(BitwiseOp::XOR, o),
+            Inst::RLC(o) => self.rlc(o, true),
+            Inst::RRC(o) => self.rrc(o, true),
+            Inst::RL(o) => self.rl(o, true, true),
+            Inst::RR(o) => self.rr(o, true),
+            Inst::SLA(o) => self.rl(o, true, false),
+            Inst::SRA(o) => self.shift_right(o, true),
+            Inst::SRL(o) => self.shift_right(o, false),
+            Inst::SWAP(o) => self.swap(o),
+            Inst::BIT(b, o) => self.bit(b, o),
+            Inst::RES(b, o) => self.setbit(b, o, false),
+            Inst::SET(b, o) => self.setbit(b, o, true),
+            Inst::DI => self.set_ime(false),
+            Inst::EI => self.set_ime(true),
+            Inst::JR(cc, n) => self.jr(cc, n),
+            Inst::JP(cc, o) => self.jp(cc, o),
+            Inst::RETI => self.ret(None, true),
+            Inst::STOP => self.stop(),
+            Inst::HALT => self.halt(),
+            Inst::DAA => self.daa(),
+            Inst::CPL => self.cpl(),
+            Inst::CCF => self.ccf(),
+            Inst::SCF => self.scf(),
+            Inst::ADD_SP_r8(d) => self.add_sp_r8(d),
+            Inst::ADD16(rr) => self.add16(rr),
+            Inst::RLA => self.rl(Operand8::Reg(A), false, true),
+            Inst::RLCA => self.rlc(Operand8::Reg(A), false),
+            Inst::RRA => self.rr(Operand8::Reg(A), false),
+            Inst::RRCA => self.rrc(Operand8::Reg(A), false),
+            Inst::LD_HL_SP(d) => self.ld_hl_sp(d), 
+            Inst::CALL(cc, addr) => self.call(cc, addr),
+            Inst::RET(cc) => self.ret(cc, false),
+            Inst::PUSH(r) => self.push(r),
+            Inst::POP(r) => self.pop(r),
+            Inst::RST(a) => self.rst(a),
+        }
+    }
+
+    fn update_ime(&mut self) {
+        // Apply deferred change to IME.
+        if self.ime_defer.is_some() {
+           self.ime = self.ime_defer.unwrap();
+           self.ime_defer = None; 
+        }
+    }
+
+    fn process_interrupts(&mut self) {
         // We exit HALT state if there's any pending interrupts.
         // We do this regardless of IME state.
         if self.halted && self.if_ & self.ie > 0 {
@@ -417,83 +512,11 @@ impl <'a> CPU<'a> {
 
             self.push_and_jump(addr);
         }
-
-        if self.halted {
-            return;
-        }
-
-        let _addr = self.pc;
-        let inst = self.decode();
-
-        // Apply deferred change to IME.
-        if self.ime_defer.is_some() {
-           self.ime = self.ime_defer.unwrap();
-           self.ime_defer = None; 
-        }
-
-        let inst_cycles = match inst {
-            Inst::NOP => 4,
-            Inst::ADD(o) => self.add8(o, false),
-            Inst::ADC(o) => self.add8(o, true),
-            Inst::SUB(o) => self.sub8(o, false, true),
-            Inst::SBC(o) => self.sub8(o, true, true),
-            Inst::CP(o)  => self.sub8(o, false, false),
-            Inst::LD8(l, r) => self.ld8(l, r),
-            Inst::LD16(l, r) => self.ld16(l, r),
-            Inst::INC8(o) => self.inc8(o),
-            Inst::DEC8(o) => self.dec8(o),
-            Inst::INC16(r) => self.inc16(r),
-            Inst::DEC16(r) => self.dec16(r),
-            Inst::AND(o) => self.bitwise(BitwiseOp::AND, o),
-            Inst::OR(o) => self.bitwise(BitwiseOp::OR, o),
-            Inst::XOR(o) => self.bitwise(BitwiseOp::XOR, o),
-
-            Inst::RLC(o) => self.rlc(o, true),
-            Inst::RRC(o) => self.rrc(o, true),
-            Inst::RL(o) => self.rl(o, true, true),
-            Inst::RR(o) => self.rr(o, true),
-            Inst::SLA(o) => self.rl(o, true, false),
-            Inst::SRA(o) => self.shift_right(o, true),
-            Inst::SRL(o) => self.shift_right(o, false),
-            Inst::SWAP(o) => self.swap(o),
-            Inst::BIT(b, o) => self.bit(b, o),
-            Inst::RES(b, o) => self.setbit(b, o, false),
-            Inst::SET(b, o) => self.setbit(b, o, true),
-
-            Inst::DI => self.set_ime(false),
-            Inst::EI => self.set_ime(true),
-            Inst::JR(cc, n) => self.jr(cc, n),
-            Inst::JP(cc, o) => self.jp(cc, o),
-            Inst::RETI => self.ret(None, true),
-            Inst::STOP => self.stop(),
-            Inst::HALT => self.halt(),
-
-            Inst::DAA => self.daa(),
-            Inst::CPL => self.cpl(),
-            Inst::CCF => self.ccf(),
-            Inst::SCF => self.scf(),
-            Inst::ADD_SP_r8(d) => self.add_sp_r8(d),
-            Inst::ADD16(rr) => self.add16(rr),
-            Inst::RLA => self.rl(Operand8::Reg(A), false, true),
-            Inst::RLCA => self.rlc(Operand8::Reg(A), false),
-            Inst::RRA => self.rr(Operand8::Reg(A), false),
-            Inst::RRCA => self.rrc(Operand8::Reg(A), false),
-
-            Inst::LD_HL_SP(d) => self.ld_hl_sp(d), 
-
-            Inst::CALL(cc, addr) => self.call(cc, addr),
-            Inst::RET(cc) => self.ret(cc, false),
-            Inst::PUSH(r) => self.push(r),
-            Inst::POP(r) => self.pop(r),
-            Inst::RST(a) => self.rst(a),
-        };
-
-        // println!("Instr: {} ;${:04X} ({})", inst, _addr, inst_cycles);
-
-        self.clock_count += inst_cycles as u32;
     }
 
-    fn mem_read8(&self, addr: u16) -> u8 {
+    fn mem_read8(&mut self, addr: u16) -> u8 {
+        self.advance_clock();
+
         match addr {
             0x0000 ... 0x100 if self.bootrom_enabled => BOOT_ROM[addr as usize],
 
@@ -528,13 +551,14 @@ impl <'a> CPU<'a> {
         }
     }
 
-    fn mem_read16(&self, addr: u16) -> u16 {
+    fn mem_read16(&mut self, addr: u16) -> u16 {
         let mut v = self.mem_read8(addr) as u16;
         v |= (self.mem_read8(addr + 1) as u16) << 8;
         v
     }
 
     fn mem_write8(&mut self, addr: u16, v: u8) {
+        self.advance_clock();
         match addr {
             0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; },
 
@@ -577,14 +601,16 @@ impl <'a> CPU<'a> {
 
     // Fetches next byte from PC and increments PC.
     fn fetch8(&mut self) -> u8 {
+        let addr = self.pc;
         self.pc += 1;
-        self.mem_read8(self.pc - 1)
+        self.mem_read8(addr)
     }
 
     // Fetches next short from PC and increments PC by 2.
     fn fetch16(&mut self) -> u16 {
+        let addr = self.pc;
         self.pc += 2;
-        self.mem_read16(self.pc - 2)
+        self.mem_read16(addr)
     }
 
     // Decodes the next instruction located at PC.
@@ -606,7 +632,7 @@ impl <'a> CPU<'a> {
             0x0D => Inst::DEC8(Operand8::Reg(C)),
             0x0E => Inst::LD8(Operand8::Reg(C), Operand8::Imm(self.fetch8())),
             0x0F => Inst::RRCA,
-            0x10 => { self.fetch8(); Inst::STOP },
+            0x10 => Inst::STOP,
             0x11 => Inst::LD16(Operand16::Reg(DE), Operand16::Imm(self.fetch16())),
             0x12 => Inst::LD8(Operand8::Addr(DE), Operand8::Reg(A)),
             0x13 => Inst::INC16(DE),
@@ -1186,7 +1212,8 @@ impl <'a> CPU<'a> {
     }
 
     fn stack_pop(&mut self) -> u16 {
-        let v = self.mem_read16(self.sp);
+        let addr = self.sp;
+        let v = self.mem_read16(addr);
         self.sp += 2;
         v
     }
@@ -1208,6 +1235,7 @@ impl <'a> CPU<'a> {
     // Flags = Z:- N:- H:- C:-
     fn stop(&mut self) -> u8 {
         // TODO: this should be more than a noop.
+        self.pc += 1;
         4
     }
 
@@ -1242,6 +1270,7 @@ impl <'a> CPU<'a> {
     fn inc16(&mut self, r: Reg16) -> u8 {
         let v = self.get_reg16(r).wrapping_add(1);
         self.set_reg16(r, v);
+        self.advance_clock();
         8
     }
 
@@ -1250,6 +1279,7 @@ impl <'a> CPU<'a> {
     fn dec16(&mut self, r: Reg16) -> u8 {
         let v = self.get_reg16(r).wrapping_sub(1);
         self.set_reg16(r, v);
+        self.advance_clock();
         8
     }
 
@@ -1355,6 +1385,9 @@ impl <'a> CPU<'a> {
 
         self.sp = sp.wrapping_add(d as i16 as u16);
 
+        self.advance_clock();
+        self.advance_clock();
+
         self.flags_update(&[
             FlagOp::Z(false),
             FlagOp::N(false),
@@ -1370,6 +1403,8 @@ impl <'a> CPU<'a> {
         let v = self.get_reg16(r);
         let (new_hl, overflow) = hl.overflowing_add(v);
         self.set_reg16(HL, new_hl);
+
+        self.advance_clock();
 
         self.flags_update(&[
             FlagOp::N(false),
@@ -1396,6 +1431,15 @@ impl <'a> CPU<'a> {
     fn ld16(&mut self, l: Operand16, r: Operand16) -> u8 {
         let v = r.get(self);
         l.set(self, v);
+        
+        // In the specific case of loading a 16bit reg into another 16bit reg, this consumes
+        // another CPU cycle. I don't truly understand why, since in every instruction the cost
+        // of reading/writing a 16bit reg appears to be free.
+        if let Operand16::Reg(_) = l {
+            if let Operand16::Reg(_) = r {
+                self.advance_clock();
+            }
+        }
         8 + l.cycle_cost() + r.cycle_cost()
     }
 
@@ -1411,6 +1455,7 @@ impl <'a> CPU<'a> {
             FlagOp::N(false),
             FlagOp::H((sp & 0xF) + (d & 0xF) & 0x10 > 0),
             FlagOp::C((sp & 0xFF) + (d & 0xFF) & 0x100 > 0)]);
+        self.advance_clock();
         12
     }
 
@@ -1558,7 +1603,7 @@ impl <'a> CPU<'a> {
         8 + o.cycle_cost() * 2
     }
 
-    fn check_jmp_condition(&self, cc: Option<FlagCondition>) -> bool {
+    fn check_jmp_condition(&mut self, cc: Option<FlagCondition>) -> bool {
         match cc {
             None => true,
             Some(FlagCondition::NZ) => !self.flags_query(FLAG_ZERO),
@@ -1574,6 +1619,7 @@ impl <'a> CPU<'a> {
         if !self.check_jmp_condition(cc) {
             return 12;
         }
+        self.advance_clock();
         self.push_and_jump(addr);
         24
     }
@@ -1582,8 +1628,13 @@ impl <'a> CPU<'a> {
     // Flags = Z:- N:- H:- C:-
     fn ret(&mut self, cc: Option<FlagCondition>, ei: bool) -> u8 {
         if !self.check_jmp_condition(cc) {
+            self.advance_clock();
             return 8;
         }
+        if cc.is_some() {
+            self.advance_clock();
+        }
+        self.advance_clock();
         if ei {
             self.ime_defer = Some(true);
         }
@@ -1602,6 +1653,12 @@ impl <'a> CPU<'a> {
         let addr = o.get(self);
         self.pc = addr;
 
+        if let Operand16::Reg(HL) = o {
+            // For some reason, JP (HL) doesn't cause an extra clock cycle. Very mysterious.
+        } else {
+            self.advance_clock();
+        }
+
         match o {
             Operand16::Reg(HL) => 4,
             _ => 16
@@ -1612,6 +1669,7 @@ impl <'a> CPU<'a> {
     // Flags = Z:- N:- H:- C:-
     fn rst(&mut self, a: u8) -> u8 {
         self.push_and_jump(a as u16);
+        self.advance_clock();
         16
     }
 
@@ -1620,6 +1678,7 @@ impl <'a> CPU<'a> {
     fn push(&mut self, r: Reg16) -> u8 {
         let v = self.get_reg16(r);
         self.stack_push(v);
+        self.advance_clock();
         16
     }
 
@@ -1641,6 +1700,7 @@ impl <'a> CPU<'a> {
         if !self.check_jmp_condition(cc) {
             return 8;
         }
+        self.advance_clock();
         self.pc = self.pc.wrapping_add(n as i8 as i16 as u16);
         12
     }

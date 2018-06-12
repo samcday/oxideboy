@@ -39,4 +39,22 @@ mod tests {
 
         assert_eq!(output, "instr_timing\n\n\nPassed\n");
     }
+
+    #[test]
+    fn mem_timing() {
+        let rom = include_bytes!("../test/mem_timing.gb");
+        let mut cart = ::cartridges::MBC1Cart::new(rom);
+        let mut cpu = ::lr35902::CPU::new(&mut cart);
+
+        let mut output = String::new();
+        while cpu.pc() != 0x06A1 {
+            cpu.run();
+            let ser = cpu.serial_get();
+            if ser.is_some() {
+                output.push(ser.unwrap() as char);
+            }
+        }
+
+        assert_eq!(output, "mem_timing\n\n01:ok  02:ok  03:ok  \n\nPassed all tests");
+    }
 }
