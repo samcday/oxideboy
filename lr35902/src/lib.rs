@@ -1,3 +1,5 @@
+mod ppu;
+
 use std::fmt;
 
 static BOOT_ROM: &[u8; 256] = include_bytes!("boot.rom");
@@ -42,15 +44,6 @@ enum Operand8 {
     ImmAddr(u16),     // Immediate 16 bit value interpreted as memory address.
     ImmAddrHigh(u8),  // Immediate 8 bit value interpreted as memory address from $FF00.
     AddrHigh(Reg8),   // 8 bit register value interpreted as memory address from $FF00.
-}
-
-#[derive(Debug, PartialEq)]
-enum PPUState {
-    Inactive,           // LCD is currently switched off.
-    OAMSearch(u8),      // OAM search phase, with the number of cycles remaining.
-    PixelTransfer(u8),      // 
-    HBlank(u8),         // HBlank phase, with number of cycles remaining.
-    VBlank(u8),
 }
 
 impl Operand8 {
@@ -150,6 +143,11 @@ impl ::fmt::Display for Operand16 {
             Operand16::ImmAddr(d) => write!(f, "({:#04X})", d),
         }
     }
+}
+
+pub enum Interrupt {
+    TimerOverflow,
+    VBlank,
 }
 
 #[allow(non_camel_case_types)]
@@ -289,9 +287,7 @@ pub struct CPU<'a> {
     bootrom_enabled: bool,
 
     // RAM segments.
-    vram: [u8; 0x2000], // 0x8000 - 0x9FFF 
     ram:  [u8; 0x2000], // 0xC000 - 0xDFFF (and echoed in 0xE000 - 0xFDFF)
-    oam:  [u8; 0x9F],   // 0xFE00 - 0xFDFF
     wram: [u8; 0x7F],   // 0xFF80 - 0xFFFE
 
     // Interrupts.
@@ -302,14 +298,7 @@ pub struct CPU<'a> {
     ime_defer: Option<bool>,
 
     // PPU
-    ppu_state: PPUState,
-    
-    scy: u8,
-    scx: u8,
-    ly: u8,
-    lyc: u8,
-    wx: u8,
-    wy: u8,
+    ppu: ppu::PPU,
 
     // Timer.
     clock_count: u32,
@@ -329,9 +318,9 @@ impl <'a> CPU<'a> {
         CPU{
             a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, sp: 0, pc: 0,
             bootrom_enabled: true,
-            vram: [0; 0x2000], ram: [0; 0x2000], oam: [0; 0x9F], wram: [0; 0x7F],
+            ram: [0; 0x2000], wram: [0; 0x7F],
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
-            ppu_state: PPUState::Inactive, scy: 0, scx: 0, ly: 0, lyc: 0, wx: 0, wy: 0,
+            ppu: ppu::PPU::new(),
             clock_count: 0, tima: 0, tma: 0, tac: 0,
             sb: 0, sc: 0,
             cart}
@@ -371,6 +360,13 @@ impl <'a> CPU<'a> {
         // println!("Instr: {} ({})", inst);
     }
 
+    fn request_interrupt(&mut self, intr: Interrupt) {
+        self.if_ |= match intr {
+            Interrupt::TimerOverflow => 0x4,
+            Interrupt::VBlank => 0x1,
+        }
+    }
+
     // Advances the CPU clock by 1 "instruction cycle", which is actually 4 low level machine cycles.
     // The accuracy of clock counting is important, as it affects the accuracy of everything else - the timer
     // PPU, sound, etc.
@@ -384,7 +380,10 @@ impl <'a> CPU<'a> {
     fn advance_clock(&mut self) {
         self.clock_count += 4;
         self.advance_timer();
-        self.advance_ppu();
+
+        if let Some(intr) = self.ppu.advance() {
+             self.request_interrupt(intr);
+        }
     }
 
     // Advances the TIMA register depending on how many CPU clock cycles have passed, and the
@@ -406,53 +405,10 @@ impl <'a> CPU<'a> {
                 self.tima = tima;
                 if overflow {
                     self.tima = self.tma;
-                    self.if_ |= 0x4;
+                    self.request_interrupt(Interrupt::TimerOverflow);
                 }
             }
         }
-    }
-
-    // Advances PPU display. Basically, all the video magic happens in here.
-    fn advance_ppu(&mut self) {
-        // Each scanline is 114 clock cycles. 20 for OAM search, 43+ for pixel transfer, remaining for hblank.
-        let new_state = match self.ppu_state {
-            PPUState::Inactive => { PPUState::Inactive },
-            PPUState::OAMSearch(n) => {
-                if n > 0 {
-                    PPUState::OAMSearch(n - 1)
-                } else {
-                    PPUState::PixelTransfer(43)
-                }
-            },
-            PPUState::PixelTransfer(n) => {
-                if n > 0 {
-                    PPUState::PixelTransfer(n - 1)
-                } else {
-                    PPUState::HBlank(51)
-                }
-            },
-            PPUState::HBlank(n) => {
-                if n > 0 {
-                    PPUState::HBlank(n - 1)
-                } else if self.ly == 144 {
-                    PPUState::VBlank(114)
-                } else {
-                    self.ly += 1;
-                    PPUState::OAMSearch(20)
-                }
-            },
-            PPUState::VBlank(n) => {
-                if n > 0 {
-                    PPUState::VBlank(n - 1)
-                } else if self.ly == 154 {
-                    self.ly = 0;
-                    PPUState::OAMSearch(20)
-                } else {
-                    PPUState::VBlank(114)
-                }
-            }
-        };
-        self.ppu_state = new_state;
     }
 
     fn execute(&mut self, inst: Inst) {
@@ -517,38 +473,6 @@ impl <'a> CPU<'a> {
         }
     }
 
-    fn ppu_lcdc_get(&self) -> u8 {
-        let mut lcdc = 0;
-
-        if self.ppu_state != PPUState::Inactive {
-            lcdc |= 0x80;
-        }
-
-        lcdc
-    }
-
-    fn ppu_lcdc_set(&mut self, v: u8) {
-        // Are we enabling LCD from a previously disabled state?
-        if v & 0x80 > 0 && self.ppu_state == PPUState::Inactive {
-            self.ppu_state = PPUState::OAMSearch(20);
-        }
-    }
-
-    fn ppu_stat_get(&self) -> u8 {
-        let stat = match self.ppu_state {
-            PPUState::Inactive => 0,
-            PPUState::HBlank(_) => 0,
-            PPUState::VBlank(_) => 1,
-            PPUState::OAMSearch(_) => 2,
-            PPUState::PixelTransfer(_) => 3,
-        };
-        stat
-    }
-
-    fn ppu_stat_set(&mut self, _v: u8) {
-
-    }
-
     fn process_interrupts(&mut self) {
         // We exit HALT state if there's any pending interrupts.
         // We do this regardless of IME state.
@@ -598,11 +522,11 @@ impl <'a> CPU<'a> {
             0x0000 ... 0x100 if self.bootrom_enabled => BOOT_ROM[addr as usize],
 
             0x0000 ... 0x7FFF => self.cart.read(addr),
-            0x8000 ... 0x9FFF => self.vram[(addr - 0x8000) as usize],
+            0x8000 ... 0x9FFF => self.ppu.vram_read(addr - 0x8000),
             0xA000 ... 0xBFFF => self.cart.read(addr),
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
-            0xFE00 ... 0xFEFF => self.oam[(addr - 0xFE00) as usize],
+            0xFE00 ... 0xFEFF => self.ppu.oam_read(addr - 0xFE00),
 
             0xFF00            => 0, // TODO: joypad
 
@@ -622,14 +546,14 @@ impl <'a> CPU<'a> {
             0xFF26            => 0,
 
             // PPU
-            0xFF40            => self.ppu_lcdc_get(),
-            0xFF41            => self.ppu_stat_get(),
-            0xFF42            => self.scy,
-            0xFF43            => self.scx,
-            0xFF44            => self.ly,
-            0xFF45            => self.lyc,
-            0xFF4A            => self.wy,
-            0xFF4B            => self.wx,
+            0xFF40            => self.ppu.get_lcdc(),
+            0xFF41            => self.ppu.get_stat(),
+            0xFF42            => self.ppu.scy,
+            0xFF43            => self.ppu.scx,
+            0xFF44            => self.ppu.ly,
+            0xFF45            => self.ppu.lyc,
+            0xFF4A            => self.ppu.wy,
+            0xFF4B            => self.ppu.wx,
 
             0xFF4D            => 0x00,      // KEY1 for CGB.
             0xFF50            => if self.bootrom_enabled { 0 } else { 1 },
@@ -652,11 +576,11 @@ impl <'a> CPU<'a> {
             0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; },
 
             0x0000 ... 0x7FFF => { self.cart.write(addr, v); }
-            0x8000 ... 0x9FFF => { self.vram[(addr - 0x8000) as usize] = v }
+            0x8000 ... 0x9FFF => { self.ppu.vram_write(addr - 0x8000, v) }
             0xA000 ... 0xBFFF => { self.cart.write(addr, v); }
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v }
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v }
-            0xFE00 ... 0xFEFF => { self.oam[(addr - 0xFE00) as usize] = v }
+            0xFE00 ... 0xFEFF => { self.ppu.oam_write(addr - 0xFE00, v) }
             0xFF01            => { self.sb = v }
             0xFF02            => { self.sc = v }
             0xFF05            => { self.tima = v }
@@ -672,16 +596,16 @@ impl <'a> CPU<'a> {
             0xFF24 ... 0xFF26 => { }
 
             // PPU
-            0xFF40            => { self.ppu_lcdc_set(v); }
-            0xFF41            => { self.ppu_stat_set(v); }
-            0xFF42            => { self.scy = v }
-            0xFF43            => { self.scx = v }
+            0xFF40            => { self.ppu.set_lcdc(v); }
+            0xFF41            => { self.ppu.set_stat(v); }
+            0xFF42            => { self.ppu.scy = v }
+            0xFF43            => { self.ppu.scx = v }
             0xFF44            => { }                   // LY is readonly.
-            0xFF45            => { self.lyc = v }
+            0xFF45            => { self.ppu.lyc = v }
             0xFF40 ... 0xFF43 => { }
             0xFF47            => { }
-            0xFF4A            => { self.wy = v },
-            0xFF4B            => { self.wx = v },
+            0xFF4A            => { self.ppu.wy = v },
+            0xFF4B            => { self.ppu.wx = v },
 
             0xFF4D            => { }      // KEY1 for CGB.
             0xFF80 ... 0xFFFE => { self.wram[(addr - 0xFF80) as usize] = v }

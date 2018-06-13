@@ -10,3 +10,6 @@ path = "../lr35902"
 
 [dependencies.gameboy]
 path = "../gameboy"
+
+[profile.release]
+debug = true
