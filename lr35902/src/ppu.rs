@@ -8,6 +8,16 @@ enum PPUState {
 }
 use self::PPUState::{*};
 
+struct OAMEntry {
+    y: u8,
+    x: u8,
+    code: u8,
+    palette: u8,
+    horz_flip: bool,
+    vert_flip: bool,
+    priority: bool,
+}
+
 pub struct PPU {
     state: PPUState,
     pub scy: u8,
@@ -18,7 +28,9 @@ pub struct PPU {
     pub wy: u8,
 
     vram: [u8; 0x2000], // 0x8000 - 0x9FFF 
-    oam:  [u8; 0x9F],   // 0xFE00 - 0xFDFF
+    oam:  [u8; 0xA0],   // 0xFE00 - 0xFDFF
+
+    scanline_objs: Vec<OAMEntry>,
 }
 
 impl PPU {
@@ -28,7 +40,8 @@ impl PPU {
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
             wx: 0, wy: 0,
-            vram: [0; 0x2000], oam: [0; 0x9F],
+            vram: [0; 0x2000], oam: [0; 0xA0],
+            scanline_objs: Vec::new(),
         }
     }
 
@@ -68,8 +81,9 @@ impl PPU {
         let new_state = match self.state {
             Inactive => { Inactive },
             OAMSearch(n) => {
-                if n > 0 {
-                    OAMSearch(n - 1)
+                self.oam_search(n);
+                if n < 19 {
+                    OAMSearch(n + 1)
                 } else {
                     PixelTransfer(43)
                 }
@@ -89,7 +103,7 @@ impl PPU {
                     VBlank(114)
                 } else {
                     self.ly += 1;
-                    OAMSearch(20)
+                    OAMSearch(0)
                 }
             },
             VBlank(n) => {
@@ -97,7 +111,7 @@ impl PPU {
                     VBlank(n - 1)
                 } else if self.ly == 154 {
                     self.ly = 0;
-                    OAMSearch(20)
+                    OAMSearch(0)
                 } else {
                     VBlank(114)
                 }
@@ -106,6 +120,36 @@ impl PPU {
         self.state = new_state;
 
         intr
+    }
+
+    // The first stage of a scanline. Takes 20 cycles.
+    // In this stage, we search the OAM table for OBJs that overlap the current line (LY).
+    // I'm sure it's totally different in hardware, but we simulate this process by searching 2 bytes
+    // of OAM each cycle. OAM is 40 bytes and OAM Search takes 20 cycles, so this divides nicely. 
+    fn oam_search(&mut self, n: u8) {
+        let mut idx = 0;
+        // TODO: this should be 16 in big sprite mode
+        let h = 8;
+        while self.scanline_objs.len() < 10 && idx < 2 {
+            let obj = self.read_oam_entry(n * 2 + idx);
+            if obj.x > 0 && self.ly + 16 >= obj.y && self.ly + 16 < obj.y + h {
+                self.scanline_objs.push(obj);
+            }
+            idx += 1;
+        }
+    }
+
+    fn read_oam_entry(&self, n: u8) -> OAMEntry {
+        let addr = (n * 4) as usize;
+        OAMEntry{
+            y: self.oam[addr],
+            x: self.oam[addr + 1],
+            code: self.oam[addr + 2],
+            palette: (self.oam[addr + 3] & 0x10) >> 4,
+            horz_flip: self.oam[addr + 3] & 0x20 == 0x20,
+            vert_flip: self.oam[addr + 3] & 0x40 == 0x40,
+            priority: self.oam[addr + 3] & 0x80 == 0x80,
+        }
     }
 
     // Compute value of the LCDC register.
@@ -123,7 +167,7 @@ impl PPU {
     pub fn set_lcdc(&mut self, v: u8) {
         // Are we enabling LCD from a previously disabled state?
         if v & 0x80 > 0 && self.state == Inactive {
-            self.state = OAMSearch(20);
+            self.state = OAMSearch(0);
         }
     }
 
