@@ -303,16 +303,19 @@ pub struct CPU<'a> {
     ppu: ppu::PPU,
 
     // Timer.
-    clock_count: u32,
+    timer_enabled: bool,
+    timer_freq: u16,
+    clock_count: u16,
     tima: u8,
     tma: u8,
-    tac: u8,
 
     // Serial I/O
     sb: u8,
     sc: u8,
 
     cart: &'a mut (Cartridge + 'a),
+
+    pub cycle_count: u64,
 }
 
 impl <'a> CPU<'a> {
@@ -323,9 +326,11 @@ impl <'a> CPU<'a> {
             ram: [0; 0x2000], wram: [0; 0x7F],
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
             ppu: ppu::PPU::new(),
-            clock_count: 0, tima: 0, tma: 0, tac: 0,
+            clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
             sb: 0, sc: 0,
-            cart}
+            cart,
+            cycle_count: 0,
+        }
     }
 
     pub fn pc(&self) -> u16 {
@@ -348,15 +353,15 @@ impl <'a> CPU<'a> {
 
     // Runs the CPU for a single instruction.
     // This is the main "Fetch, decode, execute" cycle.
-    pub fn run(&mut self) -> Option<Interrupt> {
+    pub fn run(&mut self) {
         if self.halted {
             self.advance_clock();
         }
 
-        let intr = self.process_interrupts();
+        self.process_interrupts();
 
         if self.halted {
-            return None;
+            return;
         }
 
         let _addr = self.pc;
@@ -364,8 +369,6 @@ impl <'a> CPU<'a> {
         self.update_ime();
         self.execute(inst);
         // println!("Instr: {} ;${:04X}", inst, self.pc);
-
-        intr
     }
 
     pub fn framebuffer(&self) -> &[u32; SCREEN_SIZE] {
@@ -390,35 +393,51 @@ impl <'a> CPU<'a> {
     // But when we actually fetch that location for the LDH instruction another cycle later, the value could have
     // incremented to 11. This cycle accuracy is tested in the mem_timing.gb test ROM.
     fn advance_clock(&mut self) {
+        self.cycle_count += 4;
         self.clock_count += 4;
         self.advance_timer();
 
-        if let Some(intr) = self.ppu.advance() {
-             self.request_interrupt(intr);
-        }
+        // if let Some(intr) = self.ppu.advance() {
+        //      self.request_interrupt(intr);
+        // }
     }
 
     // Advances the TIMA register depending on how many CPU clock cycles have passed, and the
     // state of TMA / TAC.
     fn advance_timer(&mut self) {
-        // Advance timer if needed.
-        let timer_freq = match self.tac & 3 {
-            0 => 1024,
-            1 => 16,
-            2 => 64,
-            3 => 256,
-            _ => unreachable!("self.tac & 3 will never get here"),
-        };
-        while self.clock_count > timer_freq {
-            self.clock_count -= timer_freq;
-
-            if self.tac & 4 > 0 {
+        if self.timer_enabled {
+            while self.clock_count > self.timer_freq {
+                self.clock_count -= self.timer_freq;
                 let (tima, overflow) = self.tima.overflowing_add(1);
                 self.tima = tima;
                 if overflow {
                     self.tima = self.tma;
                     self.request_interrupt(Interrupt::TimerOverflow);
                 }
+            }
+        }
+    }
+
+    fn get_tac(&self) -> u8 {
+        (if self.timer_enabled { 0b100 } else { 0 }) | match self.timer_freq {
+            1024 => 0,
+            16 => 1,
+            64 => 2,
+            256 => 3,
+            _ => unreachable!("timer_freq has fixed set of values")
+        }
+    }
+
+    fn set_tac(&mut self, v: u8) {
+        self.timer_enabled = v & 0b100 > 0;
+        if self.timer_enabled {
+            self.clock_count = 0;
+            self.timer_freq = match v & 0b11{
+                0b00 => 1024,
+                0b01 => 16,
+                0b10 => 64,
+                0b11 => 256,
+                _ => unreachable!("Matched all possible 2 bit values"),
             }
         }
     }
@@ -485,14 +504,12 @@ impl <'a> CPU<'a> {
         }
     }
 
-    fn process_interrupts(&mut self) -> Option<Interrupt> {
+    fn process_interrupts(&mut self) {
         // We exit HALT state if there's any pending interrupts.
         // We do this regardless of IME state.
         if self.halted && self.if_ & self.ie > 0 {
             self.halted = false;
         }
-
-        let mut intr = None;
 
         // Service interrupts.
         if self.ime && (self.if_ & self.ie) > 0 {
@@ -509,7 +526,6 @@ impl <'a> CPU<'a> {
                 },
                 // Timer overflow
                 0x4 => {
-                    intr = Some(Interrupt::TimerOverflow);
                     self.if_ ^= 0x4;
                     0x50
                 },
@@ -520,7 +536,6 @@ impl <'a> CPU<'a> {
                 },
                 // Vertical blanking
                 0x1 => {
-                    intr = Some(Interrupt::VBlank);
                     self.if_ ^= 0x1;
                     0x40
                 },
@@ -529,8 +544,6 @@ impl <'a> CPU<'a> {
 
             self.push_and_jump(addr);
         }
-
-        intr
     }
 
     fn mem_read8(&mut self, addr: u16) -> u8 {
@@ -555,7 +568,7 @@ impl <'a> CPU<'a> {
             // Timer
             0xFF05            => self.tima,
             0xFF06            => self.tma,
-            0xFF07            => self.tac,
+            0xFF07            => self.get_tac(),
 
             // Pending interrupts
             0xFF0F            => self.if_,
@@ -568,7 +581,8 @@ impl <'a> CPU<'a> {
             0xFF41            => self.ppu.get_stat(),
             0xFF42            => self.ppu.scy,
             0xFF43            => self.ppu.scx,
-            0xFF44            => self.ppu.ly,
+            // 0xFF44            => self.ppu.ly,
+            0xFF44            => 0x90,
             0xFF45            => self.ppu.lyc,
             0xFF4A            => self.ppu.wy,
             0xFF4B            => self.ppu.wx,
@@ -603,7 +617,7 @@ impl <'a> CPU<'a> {
             0xFF02            => { self.sc = v }
             0xFF05            => { self.tima = v }
             0xFF06            => { self.tma = v }
-            0xFF07            => { self.tac = v & 0x7; self.clock_count = 0; }
+            0xFF07            => { self.set_tac(v & 0x7); }
             0xFF0F            => { self.if_ = v & 0x1F }
 
             // TODO: joypad
@@ -1287,6 +1301,9 @@ impl <'a> CPU<'a> {
     // Flags = Z:* N:0 H:* C:-
     fn inc8(&mut self, o: Operand8) {
         let v = o.get(self).wrapping_add(1);
+        // self.f &= !FLAG_SUBTRACT;
+        // if v == 0 { self.f |= FLAG_ZERO } else { self.f &= !FLAG_ZERO };
+        // if v & 0x0F == 0 { self.f |= FLAG_HALF_CARRY } else { self.f &= !FLAG_HALF_CARRY };
         self.flags_update(&[FlagOp::Z(v == 0), FlagOp::N(false), FlagOp::H(v & 0x0F == 0)]);
         o.set(self, v);
     }
@@ -1486,13 +1503,17 @@ impl <'a> CPU<'a> {
     fn bitwise(&mut self, op: BitwiseOp, o: Operand8) {
         let a = self.a;
         let v = o.get(self);
+        let mut hc = false;
         self.a = match op {
-            BitwiseOp::AND => a & v,
+            BitwiseOp::AND => { hc = true; a & v },
             BitwiseOp::OR => a | v,
             BitwiseOp::XOR => a ^ v,
         };
+        // self.f = 0;
+        // if self.a == 0 { self.f |= FLAG_ZERO }
+        // if hc { self.f |= FLAG_HALF_CARRY }
+
         let z = self.a == 0;
-        let hc = if let BitwiseOp::AND = op { true } else { false };
         self.flags_update(&[
             FlagOp::Z(z),
             FlagOp::N(false),

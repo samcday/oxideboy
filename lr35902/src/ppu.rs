@@ -122,8 +122,14 @@ impl PPU {
             OAMSearch(n) => {
                 self.oam_search(n)
             },
-            PixelTransfer(pt_state) => {
-                self.pixel_transfer(pt_state)
+            PixelTransfer(mut pt_state) => {
+                pt_state.cycles += 1;
+                if pt_state.cycles == 43 {
+                    HBlank(53)
+                } else {
+                    PixelTransfer(pt_state)
+                }
+                // self.pixel_transfer(pt_state)
             },
             HBlank(n) => {
                 if n > 0 {
