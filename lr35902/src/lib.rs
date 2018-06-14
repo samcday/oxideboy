@@ -4,10 +4,12 @@ use std::fmt;
 
 static BOOT_ROM: &[u8; 256] = include_bytes!("boot.rom");
 
-const FLAG_ZERO: u8      = 0b10000000;
-const FLAG_SUBTRACT: u8  = 0b01000000;
-const FLAG_HALF_CARRY:u8 = 0b00100000;
-const FLAG_CARRY:u8      = 0b00010000;
+const SCREEN_SIZE: usize = 160 * 144;
+
+const FLAG_ZERO:       u8 = 0b10000000;
+const FLAG_SUBTRACT:   u8 = 0b01000000;
+const FLAG_HALF_CARRY: u8 = 0b00100000;
+const FLAG_CARRY:      u8 = 0b00010000;
 
 enum FlagOp {
     Z(bool),
@@ -340,24 +342,34 @@ impl <'a> CPU<'a> {
         }
     }
 
+    pub fn is_vblank(&self) -> bool {
+        self.ppu.is_vblank()
+    }
+
     // Runs the CPU for a single instruction.
     // This is the main "Fetch, decode, execute" cycle.
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> Option<Interrupt> {
         if self.halted {
             self.advance_clock();
         }
 
-        self.process_interrupts();
+        let intr = self.process_interrupts();
 
         if self.halted {
-            return;
+            return None;
         }
 
         let _addr = self.pc;
         let inst = self.decode();
         self.update_ime();
         self.execute(inst);
-        // println!("Instr: {} ({})", inst);
+        // println!("Instr: {} ;${:04X}", inst, self.pc);
+
+        intr
+    }
+
+    pub fn framebuffer(&self) -> &[u32; SCREEN_SIZE] {
+        &self.ppu.framebuffer
     }
 
     fn request_interrupt(&mut self, intr: Interrupt) {
@@ -473,12 +485,14 @@ impl <'a> CPU<'a> {
         }
     }
 
-    fn process_interrupts(&mut self) {
+    fn process_interrupts(&mut self) -> Option<Interrupt> {
         // We exit HALT state if there's any pending interrupts.
         // We do this regardless of IME state.
         if self.halted && self.if_ & self.ie > 0 {
             self.halted = false;
         }
+
+        let mut intr = None;
 
         // Service interrupts.
         if self.ime && (self.if_ & self.ie) > 0 {
@@ -495,6 +509,7 @@ impl <'a> CPU<'a> {
                 },
                 // Timer overflow
                 0x4 => {
+                    intr = Some(Interrupt::TimerOverflow);
                     self.if_ ^= 0x4;
                     0x50
                 },
@@ -505,6 +520,7 @@ impl <'a> CPU<'a> {
                 },
                 // Vertical blanking
                 0x1 => {
+                    intr = Some(Interrupt::VBlank);
                     self.if_ ^= 0x1;
                     0x40
                 },
@@ -513,6 +529,8 @@ impl <'a> CPU<'a> {
 
             self.push_and_jump(addr);
         }
+
+        intr
     }
 
     fn mem_read8(&mut self, addr: u16) -> u8 {

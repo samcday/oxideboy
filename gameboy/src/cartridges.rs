@@ -1,19 +1,22 @@
 // Implementation of the various memory bank controller (MBC) types found in Gameboy cartridges.
 extern crate lr35902;
 
-pub struct MBC1Cart<'a> {
-  rom: &'a[u8],
+pub struct MBC1Cart {
+  rom: Vec<u8>,
   rom_bank_cnt: u8,
   rom_bank_cur: u8,
 
-  ram: Box<[u8]>,
+  ram: Vec<u8>,
   ram_enabled: bool,
   ram_bank_cur: u8,
   _ram_bank_cnt: u8,
 }
 
-impl <'a> MBC1Cart<'a> {
-  pub fn new(rom: &'a[u8]) -> MBC1Cart<'a> {
+impl MBC1Cart {
+  pub fn new(raw: &[u8]) -> MBC1Cart {
+    let mut rom = Vec::new();
+    rom.extend_from_slice(raw);
+
     MBC1Cart{
       rom_bank_cur: 1,
       rom_bank_cnt: match rom[0x148] {
@@ -30,7 +33,7 @@ impl <'a> MBC1Cart<'a> {
         3 => 32768,
         4 => 131072,
         v => panic!("Unexpected RAM size {} encountered", v),
-      }].into_boxed_slice(),
+      }],
       ram_enabled: false,
       ram_bank_cur: 0,
       _ram_bank_cnt: match rom[0x149] {
@@ -46,7 +49,7 @@ impl <'a> MBC1Cart<'a> {
   }
 }
 
-impl <'a> lr35902::Cartridge for MBC1Cart<'a> {
+impl lr35902::Cartridge for MBC1Cart {
   fn read(&self, addr: u16) -> u8 {
     let addr = addr as usize;
     match addr {

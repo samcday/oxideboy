@@ -4,6 +4,8 @@ version = "0.1.0"
 authors = ["Sam Day <me@samcday.com>"]
 
 [dependencies]
+ratelimit = "0.4.3"
+sdl2 = "0.31"
 
 [dependencies.lr35902]
 path = "../lr35902"
