@@ -394,25 +394,26 @@ impl <'a> CPU<'a> {
     // incremented to 11. This cycle accuracy is tested in the mem_timing.gb test ROM.
     fn advance_clock(&mut self) {
         self.cycle_count += 4;
-        self.clock_count += 4;
         self.advance_timer();
 
-        // if let Some(intr) = self.ppu.advance() {
-        //      self.request_interrupt(intr);
-        // }
+        if let Some(intr) = self.ppu.advance() {
+             self.request_interrupt(intr);
+        }
     }
 
     // Advances the TIMA register depending on how many CPU clock cycles have passed, and the
     // state of TMA / TAC.
     fn advance_timer(&mut self) {
         if self.timer_enabled {
+            self.clock_count += 4;
+
             while self.clock_count > self.timer_freq {
                 self.clock_count -= self.timer_freq;
-                let (tima, overflow) = self.tima.overflowing_add(1);
-                self.tima = tima;
-                if overflow {
+                if self.tima == 255 {
                     self.tima = self.tma;
                     self.request_interrupt(Interrupt::TimerOverflow);
+                } else {
+                    self.tima += 1;
                 }
             }
         }
@@ -581,8 +582,7 @@ impl <'a> CPU<'a> {
             0xFF41            => self.ppu.get_stat(),
             0xFF42            => self.ppu.scy,
             0xFF43            => self.ppu.scx,
-            // 0xFF44            => self.ppu.ly,
-            0xFF44            => 0x90,
+            0xFF44            => self.ppu.ly,
             0xFF45            => self.ppu.lyc,
             0xFF4A            => self.ppu.wy,
             0xFF4B            => self.ppu.wx,
@@ -1255,7 +1255,7 @@ impl <'a> CPU<'a> {
         };
 
         *hi = ((v & 0xFF00) >> 8) as u8;
-        *lo = (v & 0xFF) as u8;
+        *lo = v as u8;
     }
 
     fn stack_push(&mut self, v: u16) {

@@ -22,20 +22,20 @@ fn main() -> io::Result<()> {
     let mut rom = Vec::new();
     f.read_to_end(&mut rom)?;
     let mut cart = gameboy::cartridges::MBC1Cart::new(&rom);
-    let mut cpu = lr35902::CPU::new(&mut cart);
+    let cpu = &mut lr35902::CPU::new(&mut cart);
 
-    // let sdl_context = sdl2::init().unwrap();
-    // let video_subsystem = sdl_context.video().unwrap();
-    // let window = video_subsystem.window("oxideboy", 320, 288)
-    //     .position_centered()
-    //     .opengl()
-    //     .build()
-    //     .unwrap();
-    // let mut canvas = window.into_canvas().build().unwrap();
-    // let texture_creator = canvas.texture_creator();
-    // let mut texture = texture_creator.create_texture_streaming(
-    //     PixelFormatEnum::RGB24, 160, 144).unwrap();
-    // let mut event_pump = sdl_context.event_pump().unwrap();
+    let sdl_context = sdl2::init().unwrap();
+    let video_subsystem = sdl_context.video().unwrap();
+    let window = video_subsystem.window("oxideboy", 320, 288)
+        .position_centered()
+        .opengl()
+        .build()
+        .unwrap();
+    let mut canvas = window.into_canvas().build().unwrap();
+    let texture_creator = canvas.texture_creator();
+    let mut texture = texture_creator.create_texture_streaming(
+        PixelFormatEnum::RGB24, 160, 144).unwrap();
+    let mut event_pump = sdl_context.event_pump().unwrap();
 
     let mut ratelimit = ratelimit::Builder::new()
         .capacity(1) //number of tokens the bucket will hold
@@ -46,15 +46,15 @@ fn main() -> io::Result<()> {
     'running: loop {
         // ratelimit.wait();
 
-        // for event in event_pump.poll_iter() {
-        //     match event {
-        //         Event::Quit {..} 
-        //         | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-        //             break 'running
-        //         },
-        //         _ => {}
-        //     }
-        // }
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit {..} 
+                | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                    break 'running
+                },
+                _ => {}
+            }
+        }
 
         loop {
             if cpu.pc() == 0x681 {
@@ -72,29 +72,25 @@ fn main() -> io::Result<()> {
             }
         }
 
-        // if frontend {
-        //     let framebuffer = cpu.framebuffer();
-        //     texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
-        //         for y in 0..144 {
-        //             for x in 0..160 {
-        //                 let offset = y*pitch + (x*3);
-        //                 buffer[offset] = framebuffer[y*160+x] as u8;
-        //                 buffer[offset + 1] = framebuffer[y*160+x] as u8;
-        //                 buffer[offset + 2] = framebuffer[y*160+x] as u8;
-        //             }
-        //         }
-        //     }).unwrap();
-        //     canvas.clear();
-        //     canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
-        //     canvas.present();
-        // }
+        let framebuffer = cpu.framebuffer();
+        texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
+            for y in 0..144 {
+                for x in 0..160 {
+                    let offset = y*pitch + (x*3);
+                    buffer[offset] = framebuffer[y*160+x] as u8;
+                    buffer[offset + 1] = framebuffer[y*160+x] as u8;
+                    buffer[offset + 2] = framebuffer[y*160+x] as u8;
+                }
+            }
+        }).unwrap();
+        canvas.clear();
+        canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
+        canvas.present();
     }
 
-    if cpu.cycle_count != 223305964 {
-        panic!("broken");
-    }
     println!();
     println!("Executed a total of {} clock cycles", cpu.cycle_count);
     println!();
+
     Ok(())
 }
