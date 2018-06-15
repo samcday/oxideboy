@@ -50,19 +50,16 @@ impl MBC1Cart {
 }
 
 impl lr35902::Cartridge for MBC1Cart {
-  fn read(&self, addr: u16) -> u8 {
-    let addr = addr as usize;
-    match addr {
-      0x0000 ... 0x3FFF => self.rom[addr],
-      0x4000 ... 0x7FFF => self.rom[(self.rom_bank_cur as usize) * 0x4000 + ((addr - 0x4000))],
-      0xA000 ... 0xBFFF => {
-        if !self.ram_enabled {
-          panic!("Attempt to read from disabled RAM addr {}", addr);
-        }
-        self.ram[(self.ram_bank_cur as usize) * 0x2000 + addr - 0xA000]
-      }
-      _ => panic!("Unexpected cartridge read from addr: {:X}", addr),
-    }
+  fn lo_rom(&self) -> &[u8] {
+    &self.rom[0x0000 .. 0x4000]
+  }
+  fn hi_rom(&self) -> &[u8] {
+    let base = (self.rom_bank_cur as usize) * 0x4000;
+    &self.rom[base .. base + 0x4000]
+  }
+  fn ram(&self) -> &[u8] {
+    let base = (self.ram_bank_cur as usize) * 0x2000;
+    &self.ram[base .. base + 0x2000]
   }
 
   fn write(&mut self, addr: u16, v: u8) {

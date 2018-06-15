@@ -4,9 +4,13 @@
 use std::collections::VecDeque;
 
 const LCDC_LCD_ENABLED: u8 = 0b1000_0000;
-const LCDC_BG_ENABLED:  u8 = 0b0000_0001;
-const LCDC_BG_CODE_HI:  u8 = 0b0000_1000;
+const LCDC_WIN_ENABLED: u8 = 0b0100_0000;
+const LCDC_WIN_CODE_HI: u8 = 0b0010_0000;
 const LCDC_BG_DATA_HI:  u8 = 0b0001_0000;
+const LCDC_BG_CODE_HI:  u8 = 0b0000_1000;
+const LCDC_OBJ_COMP_HI: u8 = 0b0000_0100;
+const LCDC_OBJ_ENABLED: u8 = 0b0000_0010;
+const LCDC_BG_ENABLED:  u8 = 0b0000_0001;
 
 #[derive(Debug, PartialEq)]
 enum PPUState {
@@ -37,6 +41,8 @@ struct OAMEntry {
 }
 
 pub struct PPU {
+    pub debug: bool,
+
     state: PPUState,
     cycles: u8,         // Counts how many CPU cycles have elapsed in the current PPU stage.
 
@@ -47,12 +53,23 @@ pub struct PPU {
     pub wx: u8,
     pub wy: u8,
 
+    pub bgp: u8,
+    pub obp0: u8,
+    pub obp1: u8,
+
+    win_enabled: bool,  // Toggles window display on/off.
+    win_code_hi: bool,
+
     bg_enabled: bool,   // Toggles BG tile display on/off.
     bg_code_hi: bool,   // Toggles where we look for BG code data. true: 0x9C00-0x9FFF, false: 0x9800-0x9BFF
     bg_data_hi: bool,   // Toggles where we look for BG tile data. true: 0x8800-0x97FF, false: 0x8000-0x8FFF
 
-    vram: [u8; 0x2000], // 0x8000 - 0x9FFF
-    oam:  [u8; 0xA0],   // 0xFE00 - 0xFDFF
+    obj_enabled: bool,  // Toggles display of sprites on/off.
+    obj_tall: bool,     // If true, we're rendering 8x16 sprites.
+
+
+    pub vram: [u8; 0x2000], // 0x8000 - 0x9FFF
+    pub oam: [u8; 0xA0],// 0xFE00 - 0xFDFF
 
     scanline_objs: Vec<OAMEntry>,
 
@@ -65,11 +82,16 @@ pub struct PPU {
 impl PPU {
     pub fn new() -> PPU {
         PPU {
+            debug: false,
+
             state: Inactive, cycles: 0,
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
             wx: 0, wy: 0,
-            bg_enabled: false, bg_code_hi: false, bg_data_hi: false,
+            bgp: 0, obp0: 0, obp1: 0,
+            win_enabled: false, win_code_hi: false,
+            bg_enabled: false, bg_code_hi: false, bg_data_hi: true,
+            obj_enabled: false, obj_tall: false,
             vram: [0; 0x2000], oam: [0; 0xA0],
             pt_state: PixelTransferState{scratch: [0; 8], pixel_fifo: VecDeque::new(), flush: false, x: 0},
             scanline_objs: Vec::new(),
@@ -116,14 +138,15 @@ impl PPU {
     }
 
     fn next_state(&mut self, new: PPUState) {
+        if self.debug {
+            println!("Transitioning state {:?}", new);
+        }
         self.cycles = 0;
         self.state = new;
     }
 
     // Advances PPU display by a single clock cycle. Basically, all the video magic happens in here.
     pub fn advance(&mut self) -> Option<::Interrupt> {
-        self.cycles += 1;
-
         // Each scanline is 114 clock cycles. 20 for OAM search, 43+ for pixel transfer, remaining for hblank.
         match self.state {
             Inactive => {
@@ -131,18 +154,21 @@ impl PPU {
                 None
             },
             OAMSearch => {
+                self.cycles += 1;
                 self.oam_search();
                 None
             },
             PixelTransfer => {
+                self.cycles += 1;
                 self.pixel_transfer();
                 None
             },
             HBlank(n) => {
+                self.cycles += 1;
                 if self.cycles == n {
                     self.ly += 1;
 
-                    if self.ly == 143 {
+                    if self.ly == 144 {
                         self.next_state(VBlank);
                         Some(::Interrupt::VBlank)
                     } else {
@@ -154,6 +180,7 @@ impl PPU {
                 }
             },
             VBlank => {
+                self.cycles += 1;
                 if self.cycles == 114 {
                     if self.ly == 154 {
                         self.ly = 0;
@@ -212,21 +239,6 @@ impl PPU {
     // Note that the first 4 cycles are spent waiting for the fetcher to fill the FIFO, which is why
     // this stage takes a minimum of 43 cycles.
     fn pixel_transfer(&mut self) {
-        if self.pt_state.pixel_fifo.len() >= 12 || self.pt_state.x == 160 {
-            // Send out 4 pixels.
-            for _ in 0..4 {
-                let pix = self.pt_state.pixel_fifo.pop_front().unwrap() as u32;
-                self.framebuffer[self.fb_pos] = match pix {
-                    0 => { 255 },
-                    1 => { 100 },
-                    2 => { 50 },
-                    3 => { 0 },
-                    _ => panic!("lol: {}", pix)
-                };
-                self.fb_pos += 1;
-            }
-        }
-
         if self.pt_state.x < 160 && self.pt_state.flush {
             for pix in self.pt_state.scratch.iter() {
                 self.pt_state.pixel_fifo.push_back(*pix);
@@ -234,9 +246,15 @@ impl PPU {
             self.pt_state.x += 8;
             self.pt_state.flush = false;
         } else if self.pt_state.x < 160 {
-            if self.bg_enabled {
+            // if self.bg_enabled {
+            if true {
                 let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
                 let data_base_addr = if self.bg_data_hi { 0x0800 } else { 0 };
+
+
+                    // if self.debug {
+                    //     println!("this really is testing the patience I never had: {:?}", &self.vram[code_base_addr..code_base_addr+(32*32)]);
+                    // }
 
                 let scanline_x = self.pt_state.x as u16;
                 let scy = self.scy as u16;
@@ -251,18 +269,26 @@ impl PPU {
 
                     // Figure out which BG tile we're rendering.
                     let bg_x = ((scanline_x + scx + i) / 8) % 32;
-                    let tile_num = bg_y * 32 + bg_x;
+                    let tile_num = (bg_y * 32 + bg_x) as usize;
                     let tile = self.vram[(code_base_addr + tile_num) as usize] as usize;
 
+                    if self.debug {
+                        println!("OKAY CUNT. ly={}, bg_y={} tile_num={} tile={}", ly, bg_y, tile_num, tile);
+                    }
                     let tile_addr = data_base_addr + (tile * 16);
 
                     // Now figure out which pixels in this particular tile we need.
                     let tile_x = (i + scx + scanline_x) % 8;
 
                     let lo = self.vram[tile_addr + (tile_y * 2) + 0] >> (7 - tile_x);
-                    let hi = self.vram[tile_addr + (tile_y * 2) + 1] >> (7 - tile_x) << 1;
+                    let hi = (self.vram[tile_addr + (tile_y * 2) + 1] >> (7 - tile_x)) << 1;
+                    let result = (lo & 1) | (hi & 2);
+                    if self.debug && tile == 9 {
+                        // println!("tile: {} @ {},{}. scx: {} scy: {}, {}", tile, self.pt_state.x, self.ly, self.scx, self.scy, data_base_addr);
+                        // println!("tile (x={}) hi: {:08b} lo: {:08b}. my shit: hi:{:08b} lo:{:08b} res={:08b}", tile_x, self.vram[tile_addr + (tile_y * 2) + 1], self.vram[tile_addr + (tile_y * 2) + 0], hi, lo, result);
+                    }
 
-                    self.pt_state.scratch[i as usize] = (lo & 1) | (hi & 2);
+                    self.pt_state.scratch[i as usize] = result;
                 }
             } else {
                 for i in 0..8 {
@@ -271,6 +297,21 @@ impl PPU {
             }
 
             self.pt_state.flush = true;
+        }
+
+        if self.pt_state.pixel_fifo.len() >= 12 || self.pt_state.x == 160 {
+            // Send out 4 pixels.
+            for _ in 0..4 {
+                let pix = self.pt_state.pixel_fifo.pop_front().unwrap() as u32;
+                self.framebuffer[self.fb_pos] = match pix {
+                    0 => { 255 },
+                    1 => { 100 },
+                    2 => { 50 },
+                    3 => { 0 },
+                    _ => panic!("lol: {}", pix)
+                };
+                self.fb_pos += 1;
+            }
         }
 
         if self.pt_state.x == 160 && self.pt_state.pixel_fifo.len() == 0 {
@@ -296,19 +337,22 @@ impl PPU {
     pub fn get_lcdc(&self) -> u8 {
         let mut lcdc = 0;
 
-        if self.state != Inactive {
-            lcdc |= LCDC_LCD_ENABLED;
-        }
-
-        lcdc |= if self.bg_enabled { LCDC_BG_ENABLED } else { 0 };
-        lcdc |= if self.bg_code_hi { LCDC_BG_CODE_HI } else { 0 };
-        lcdc |= if self.bg_data_hi { 0 } else { LCDC_BG_DATA_HI };
+        lcdc |= if self.state != Inactive { LCDC_LCD_ENABLED } else { 0 };
+        lcdc |= if self.win_enabled { LCDC_WIN_ENABLED } else { 0 };
+        lcdc |= if self.win_code_hi { LCDC_WIN_CODE_HI } else { 0 };
+        lcdc |= if self.bg_data_hi  { 0 } else { LCDC_BG_DATA_HI };
+        lcdc |= if self.bg_code_hi  { LCDC_BG_CODE_HI } else { 0 };
+        lcdc |= if self.obj_tall    { LCDC_OBJ_COMP_HI } else { 0 };
+        lcdc |= if self.obj_enabled { LCDC_OBJ_ENABLED } else { 0 };
+        lcdc |= if self.bg_enabled  { LCDC_BG_ENABLED } else { 0 };
 
         lcdc
     }
 
     // Update PPU state based on new LCDC value.
     pub fn set_lcdc(&mut self, v: u8) {
+        println!("Updating LCDC! {:b}", v);
+
         // Are we enabling LCD from a previously disabled state?
         if v & LCDC_LCD_ENABLED > 0 && self.state == Inactive {
             self.next_state(OAMSearch);
@@ -317,15 +361,24 @@ impl PPU {
             self.scanline_objs.clear();
         } else if v & LCDC_LCD_ENABLED == 0 && self.state != Inactive {
             // TODO: check current state here, can't switch LCD off in the middle of pixel transfer.
+            if self.debug {
+                println!("WUT? {:?}", self.state);
+            }
             self.state = Inactive;
         }
-        self.bg_enabled = v & LCDC_BG_ENABLED > 0;
-        self.bg_code_hi = v & LCDC_BG_CODE_HI > 0;
-        self.bg_data_hi = v & LCDC_BG_DATA_HI == 0;
-    }
+
+        self.win_enabled = v & LCDC_WIN_ENABLED > 0;
+        self.win_code_hi = v & LCDC_WIN_CODE_HI > 0;
+        self.bg_data_hi  = v & LCDC_BG_DATA_HI == 0;
+        self.bg_code_hi  = v & LCDC_BG_CODE_HI > 0;
+        self.obj_tall    = v & LCDC_OBJ_COMP_HI > 0;
+        self.obj_enabled = v & LCDC_OBJ_ENABLED > 0;
+        self.bg_enabled  = v & LCDC_BG_ENABLED > 0;
+    } 
 
     // Compute value of the STAT register.
     pub fn get_stat(&self) -> u8 {
+        panic!("fuck");
         let stat = match self.state {
             Inactive => 0,
             HBlank(_) => 0,
@@ -338,6 +391,5 @@ impl PPU {
 
     // Update PPU state based on new STAT value.
     pub fn set_stat(&mut self, _v: u8) {
-
     }
 }

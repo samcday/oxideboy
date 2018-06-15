@@ -19,7 +19,9 @@ enum FlagOp {
 }
 
 pub trait Cartridge {
-    fn read(&self, addr: u16) -> u8;
+    fn lo_rom(&self) -> &[u8];
+    fn hi_rom(&self) -> &[u8];
+    fn ram(&self) -> &[u8];
     fn write(&mut self, addr: u16, v: u8);
 }
 
@@ -368,7 +370,9 @@ impl <'a> CPU<'a> {
         let inst = self.decode();
         self.update_ime();
         self.execute(inst);
-        // println!("Instr: {} ;${:04X}", inst, self.pc);
+        if self.pc > 0x100 {
+            // println!("Instr: {} ;${:04X}", inst, self.pc);
+        }
     }
 
     pub fn framebuffer(&self) -> &[u32; SCREEN_SIZE] {
@@ -553,14 +557,16 @@ impl <'a> CPU<'a> {
         match addr {
             0x0000 ... 0x100 if self.bootrom_enabled => BOOT_ROM[addr as usize],
 
-            0x0000 ... 0x7FFF => self.cart.read(addr),
+            0x0000 ... 0x3FFF => self.cart.lo_rom()[addr as usize],
+            0x4000 ... 0x7FFF => self.cart.hi_rom()[(addr - 0x4000) as usize],
             0x8000 ... 0x9FFF => self.ppu.vram_read(addr - 0x8000),
-            0xA000 ... 0xBFFF => self.cart.read(addr),
+            0xA000 ... 0xBFFF => self.cart.ram()[(addr - 0xA000) as usize],
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
-            0xFE00 ... 0xFEFF => self.ppu.oam_read(addr - 0xFE00),
+            0xFE00 ... 0xFE9F => self.ppu.oam_read(addr - 0xFE00),
+            0xFEA0 ... 0xFEFF => 0x00,
 
-            0xFF00            => 0, // TODO: joypad
+            0xFF00            => 0x00, // TODO: joypad
 
             // Serial
             0xFF01            => self.sb,
@@ -575,7 +581,7 @@ impl <'a> CPU<'a> {
             0xFF0F            => self.if_,
 
             // Sound
-            0xFF26            => 0,
+            0xFF26            => 0x00,
 
             // PPU
             0xFF40            => self.ppu.get_lcdc(),
@@ -584,6 +590,9 @@ impl <'a> CPU<'a> {
             0xFF43            => self.ppu.scx,
             0xFF44            => self.ppu.ly,
             0xFF45            => self.ppu.lyc,
+            0xFF47            => self.ppu.bgp,
+            0xFF48            => self.ppu.obp0,
+            0xFF49            => self.ppu.obp1,
             0xFF4A            => self.ppu.wy,
             0xFF4B            => self.ppu.wx,
 
@@ -612,7 +621,8 @@ impl <'a> CPU<'a> {
             0xA000 ... 0xBFFF => { self.cart.write(addr, v); }
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v }
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v }
-            0xFE00 ... 0xFEFF => { self.ppu.oam_write(addr - 0xFE00, v) }
+            0xFE00 ... 0xFE9F => { self.ppu.oam_write(addr - 0xFE00, v) }
+            0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
             0xFF01            => { self.sb = v }
             0xFF02            => { self.sc = v }
             0xFF05            => { self.tima = v }
@@ -624,8 +634,7 @@ impl <'a> CPU<'a> {
             0xFF00            => { } // TODO:
 
             // Sound
-            0xFF11 ... 0xFF19 => { }
-            0xFF24 ... 0xFF26 => { }
+            0xFF10 ... 0xFF3F => { }
 
             // PPU
             0xFF40            => { self.ppu.set_lcdc(v); }
@@ -634,17 +643,47 @@ impl <'a> CPU<'a> {
             0xFF43            => { self.ppu.scx = v }
             0xFF44            => { }                   // LY is readonly.
             0xFF45            => { self.ppu.lyc = v }
+            0xFF46            => { self.dma(v) }
+            0xFF47            => { self.ppu.bgp = v }
+            0xFF48            => { self.ppu.obp0 = v }
+            0xFF49            => { self.ppu.obp1 = v }
             0xFF40 ... 0xFF43 => { }
-            0xFF47            => { }
             0xFF4A            => { self.ppu.wy = v },
             0xFF4B            => { self.ppu.wx = v },
 
             0xFF4D            => { }      // KEY1 for CGB.
+            0xFF7F            => { }      // No idea what this is.
             0xFF80 ... 0xFFFE => { self.wram[(addr - 0xFF80) as usize] = v }
             0xFFFF            => { self.ie = v & 0x1F }
 
             _                 => { panic!("Unhandled write to ${:X}", addr) }
         };
+    }
+
+    fn dma(&mut self, v: u8) {
+        {
+            let addr = (((v & 0xF1) as u16) << 8) as usize;
+            let source = match addr {
+                0x8000 ... 0x9FFF => { &self.ppu.vram[(addr - 0x8000) .. (addr - 0x8000+0xA0)] }
+                0xA000 ... 0xBFFF => { &self.cart.ram()[(addr - 0xA000) .. (addr - 0xA000+0xA0)] }
+                0xC000 ... 0xDFFF => { &self.ram[(addr - 0xC000) .. (addr - 0xC000+0xA0)] }
+                _ => panic!("Unhandled DMA from {}", addr)
+            };
+
+            if !self.ppu.debug {
+                // println!("wtf mang");
+                // println!("here we go: {:?}", &self.ppu.vram[..]);
+                self.ppu.debug = true;
+            }
+            // println!("DMA: {:X} {:X}: {:?}", v, addr, source);
+            self.ppu.oam.copy_from_slice(source);
+        }
+        // println!("DMA start");
+        // // DMA takes 40 cycles.
+        // for _ in 0..40 {
+        //     self.advance_clock();
+        // }
+        // println!("DMA end");
     }
 
     fn mem_write16(&mut self, addr: u16, v: u16) {
