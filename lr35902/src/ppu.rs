@@ -11,19 +11,18 @@ const LCDC_BG_DATA_HI:  u8 = 0b0001_0000;
 #[derive(Debug, PartialEq)]
 enum PPUState {
     Inactive,           // LCD is currently switched off.
-    OAMSearch(u8),      // OAM search phase, with the number of cycles remaining.
-    PixelTransfer(PixelTransferState),  // 
-    HBlank(u8),         // HBlank phase, with number of cycles remaining.
-    VBlank(u8),
+    OAMSearch,          // OAM search phase
+    PixelTransfer,  // 
+    HBlank(u8),         // HBlank phase for given number of cycles.
+    VBlank,             // VBlank for 114 cycles.
 }
 use self::PPUState::{*};
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 struct PixelTransferState {
-    cycles: u8,     // Counts the number of cycles we've consumed. We use this to calculate how
-                    // many cycles HBlank should subsequently consume.
+    pixel_fifo: VecDeque<u8>,
+    scratch: [u8; 8], // The next set of pixels being worked on by fetcher.
     x: u8,          // Tracks which pixel in the scanline we're up to fetching.
-    next: [u8; 8],  // The next set of pixels being worked on by fetcher.
     flush: bool,    // When true, the next 8 pixels are written into FIFO.
 }
 
@@ -39,6 +38,8 @@ struct OAMEntry {
 
 pub struct PPU {
     state: PPUState,
+    cycles: u8,         // Counts how many CPU cycles have elapsed in the current PPU stage.
+
     pub scy: u8,
     pub scx: u8,
     pub ly: u8,
@@ -50,11 +51,12 @@ pub struct PPU {
     bg_code_hi: bool,   // Toggles where we look for BG code data. true: 0x9C00-0x9FFF, false: 0x9800-0x9BFF
     bg_data_hi: bool,   // Toggles where we look for BG tile data. true: 0x8800-0x97FF, false: 0x8000-0x8FFF
 
-    vram: [u8; 0x2000], // 0x8000 - 0x9FFF 
+    vram: [u8; 0x2000], // 0x8000 - 0x9FFF
     oam:  [u8; 0xA0],   // 0xFE00 - 0xFDFF
 
     scanline_objs: Vec<OAMEntry>,
-    pixel_fifo: VecDeque<u8>,
+
+    pt_state: PixelTransferState,
 
     pub framebuffer: [u32; ::SCREEN_SIZE],
     fb_pos: usize,
@@ -63,20 +65,21 @@ pub struct PPU {
 impl PPU {
     pub fn new() -> PPU {
         PPU {
-            state: Inactive,
+            state: Inactive, cycles: 0,
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
             wx: 0, wy: 0,
             bg_enabled: false, bg_code_hi: false, bg_data_hi: false,
             vram: [0; 0x2000], oam: [0; 0xA0],
-            scanline_objs: Vec::new(), pixel_fifo: VecDeque::new(),
+            pt_state: PixelTransferState{scratch: [0; 8], pixel_fifo: VecDeque::new(), flush: false, x: 0},
+            scanline_objs: Vec::new(),
             framebuffer: [0; 160*144], fb_pos: 0,
         }
     }
 
     pub fn is_vblank(&self) -> bool {
         if self.ly == 144 {
-            if let VBlank(0) = self.state {
+            if self.cycles == 0 && self.state == VBlank {
                 return true;
             }
         }
@@ -86,75 +89,86 @@ impl PPU {
 
     pub fn oam_read(&self, addr: u16) -> u8 {
         match self.state {
-            Inactive | HBlank(_) | VBlank(_) => self.oam[addr as usize],
-            OAMSearch(_) | PixelTransfer(_) => 0xFF,
+            Inactive | HBlank(_) | VBlank => self.oam[addr as usize],
+            OAMSearch | PixelTransfer => 0xFF,
         }
     }
 
     pub fn oam_write(&mut self, addr: u16, v: u8) {
         match self.state {
-            Inactive | HBlank(_) | VBlank(_) => { self.oam[addr as usize] = v },
-            OAMSearch(_) | PixelTransfer(_) => { },
+            Inactive | HBlank(_) | VBlank => { self.oam[addr as usize] = v },
+            OAMSearch | PixelTransfer => { },
         }
     }
 
     pub fn vram_read(&self, addr: u16) -> u8 {
         match self.state {
-            Inactive | OAMSearch(_) | HBlank(_) | VBlank(_) => self.vram[addr as usize],
-            PixelTransfer(_) => 0xFF,
+            Inactive | OAMSearch | HBlank(_) | VBlank => self.vram[addr as usize],
+            PixelTransfer => 0xFF,
         }
     }
 
     pub fn vram_write(&mut self, addr: u16, v: u8) {
         match self.state {
-            Inactive | OAMSearch(_) | HBlank(_) | VBlank(_) => { self.vram[addr as usize] = v },
-            PixelTransfer(_) => { },
+            Inactive | OAMSearch | HBlank(_) | VBlank => { self.vram[addr as usize] = v },
+            PixelTransfer => { },
         }
+    }
+
+    fn next_state(&mut self, new: PPUState) {
+        self.cycles = 0;
+        self.state = new;
     }
 
     // Advances PPU display by a single clock cycle. Basically, all the video magic happens in here.
     pub fn advance(&mut self) -> Option<::Interrupt> {
-        let mut intr = None;
+        self.cycles += 1;
 
         // Each scanline is 114 clock cycles. 20 for OAM search, 43+ for pixel transfer, remaining for hblank.
-        let new_state = match self.state {
-            Inactive => { Inactive },
-            OAMSearch(n) => {
-                self.oam_search(n)
+        match self.state {
+            Inactive => {
+                // PPU is currently disabled (LCDC LCD flag is cleared).
+                None
             },
-            PixelTransfer(mut pt_state) => {
-                self.pixel_transfer(pt_state)
+            OAMSearch => {
+                self.oam_search();
+                None
+            },
+            PixelTransfer => {
+                self.pixel_transfer();
+                None
             },
             HBlank(n) => {
-                if n > 0 {
-                    HBlank(n - 1)
-                } else {
+                if self.cycles == n {
                     self.ly += 1;
+
                     if self.ly == 143 {
-                        intr = Some(::Interrupt::VBlank);
-                        VBlank(0)
+                        self.next_state(VBlank);
+                        Some(::Interrupt::VBlank)
                     } else {
-                        OAMSearch(0)
+                        self.next_state(OAMSearch);
+                        None
                     }
+                } else {
+                    None
                 }
             },
-            VBlank(n) => {
-                if n < 113 {
-                    VBlank(n + 1)
-                } else if self.ly == 154 {
-                    self.ly = 0;
-                    self.scanline_objs.clear();
-                    self.fb_pos = 0;
-                    OAMSearch(0)
-                } else {
-                    self.ly += 1;
-                    VBlank(0)
+            VBlank => {
+                if self.cycles == 114 {
+                    if self.ly == 154 {
+                        self.ly = 0;
+                        self.scanline_objs.clear();
+                        self.fb_pos = 0;
+                        self.next_state(OAMSearch);
+                    } else {
+                        self.ly += 1;
+                        self.next_state(VBlank);
+                    }
                 }
-            }
-        };
-        self.state = new_state;
 
-        intr
+                None
+            }
+        }
     }
 
     // The first stage of a scanline. Takes 20 cycles.
@@ -162,22 +176,22 @@ impl PPU {
     // I'm sure it's totally different in hardware, but we simulate this process by searching 2 bytes
     // of OAM each cycle. OAM is 40 bytes and OAM Search takes 20 cycles, so this divides nicely.
     // TODO: need to resolve sprite conflicts based on x pos here.
-    fn oam_search(&mut self, n: u8) -> PPUState {
+    fn oam_search(&mut self) {
         let mut idx = 0;
         // TODO: this should be 16 in big sprite mode
         let h = 8;
         while self.scanline_objs.len() < 10 && idx < 2 {
-            let obj = self.read_oam_entry(n * 2 + idx);
+            let obj = self.read_oam_entry((self.cycles-1) * 2 + idx);
             if obj.x > 0 && self.ly + 16 >= obj.y && self.ly + 16 < obj.y + h {
                 self.scanline_objs.push(obj);
             }
             idx += 1;
         }
 
-        if n < 19 {
-            OAMSearch(n + 1)
-        } else {
-            PixelTransfer(PixelTransferState{cycles: 0, x: 0, next: [0; 8], flush: false})
+        if self.cycles == 20 {
+            self.pt_state.x = 0;
+            self.pt_state.flush = false;
+            self.next_state(PixelTransfer);
         }
     }
 
@@ -197,11 +211,11 @@ impl PPU {
     // emulate ok.
     // Note that the first 4 cycles are spent waiting for the fetcher to fill the FIFO, which is why
     // this stage takes a minimum of 43 cycles.
-    fn pixel_transfer(&mut self, mut pt_state: PixelTransferState) -> PPUState {
-        if self.pixel_fifo.len() >= 12 || pt_state.x == 160 {
+    fn pixel_transfer(&mut self) {
+        if self.pt_state.pixel_fifo.len() >= 12 || self.pt_state.x == 160 {
             // Send out 4 pixels.
             for _ in 0..4 {
-                let pix = self.pixel_fifo.pop_front().unwrap() as u32;
+                let pix = self.pt_state.pixel_fifo.pop_front().unwrap() as u32;
                 self.framebuffer[self.fb_pos] = match pix {
                     0 => { 255 },
                     1 => { 100 },
@@ -213,18 +227,18 @@ impl PPU {
             }
         }
 
-        if pt_state.x < 160 && pt_state.flush {
-            for pix in pt_state.next.iter() {
-                self.pixel_fifo.push_back(*pix);
+        if self.pt_state.x < 160 && self.pt_state.flush {
+            for pix in self.pt_state.scratch.iter() {
+                self.pt_state.pixel_fifo.push_back(*pix);
             }
-            pt_state.x += 8;
-            pt_state.flush = false;
-        } else if pt_state.x < 160 {
+            self.pt_state.x += 8;
+            self.pt_state.flush = false;
+        } else if self.pt_state.x < 160 {
             if self.bg_enabled {
                 let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
                 let data_base_addr = if self.bg_data_hi { 0x0800 } else { 0 };
 
-                let scanline_x = pt_state.x as u16;
+                let scanline_x = self.pt_state.x as u16;
                 let scy = self.scy as u16;
                 let scx = self.scx as u16;
                 let ly = self.ly as u16;
@@ -248,22 +262,20 @@ impl PPU {
                     let lo = self.vram[tile_addr + (tile_y * 2) + 0] >> (7 - tile_x);
                     let hi = self.vram[tile_addr + (tile_y * 2) + 1] >> (7 - tile_x) << 1;
 
-                    pt_state.next[i as usize] = (lo & 1) | (hi & 2);
+                    self.pt_state.scratch[i as usize] = (lo & 1) | (hi & 2);
                 }
             } else {
                 for i in 0..8 {
-                    pt_state.next[i] = 0;
+                    self.pt_state.scratch[i] = 0;
                 }
             }
 
-            pt_state.flush = true;
+            self.pt_state.flush = true;
         }
-        pt_state.cycles += 1;
 
-        if pt_state.x == 160 && self.pixel_fifo.len() == 0 {
-            HBlank(51+43 - pt_state.cycles)
-        } else {
-            PixelTransfer(pt_state)
+        if self.pt_state.x == 160 && self.pt_state.pixel_fifo.len() == 0 {
+            let hblank_cycles = 51+43 - self.cycles;
+            self.next_state(HBlank(hblank_cycles));
         }
     }
 
@@ -299,7 +311,7 @@ impl PPU {
     pub fn set_lcdc(&mut self, v: u8) {
         // Are we enabling LCD from a previously disabled state?
         if v & LCDC_LCD_ENABLED > 0 && self.state == Inactive {
-            self.state = OAMSearch(0);
+            self.next_state(OAMSearch);
             self.fb_pos = 0;
             self.ly = 0;
             self.scanline_objs.clear();
@@ -317,9 +329,9 @@ impl PPU {
         let stat = match self.state {
             Inactive => 0,
             HBlank(_) => 0,
-            VBlank(_) => 1,
-            OAMSearch(_) => 2,
-            PixelTransfer(_) => 3,
+            VBlank => 1,
+            OAMSearch => 2,
+            PixelTransfer => 3,
         };
         stat
     }
