@@ -370,8 +370,8 @@ impl <'a> CPU<'a> {
         let inst = self.decode();
         self.update_ime();
         self.execute(inst);
-        if self.pc > 0x100 {
-            // println!("Instr: {} ;${:04X}", inst, self.pc);
+        if self.pc > 0x100 && self.ppu.debug {
+            println!("Instr: {} ;${:04X} ({})", inst, self.pc, self.cycle_count);
         }
     }
 
@@ -542,10 +542,17 @@ impl <'a> CPU<'a> {
                 // Vertical blanking
                 0x1 => {
                     self.if_ ^= 0x1;
+                    // TODO: Temporary gross hack. If the LCD has since been disabled, we clear this interrupt
+                    // and don't process it.
+                    if !self.ppu.enabled {
+                        return;
+                    }
                     0x40
                 },
                 _ => unreachable!("Non-existent interrupt ${:X} encountered", 123)
             };
+
+            println!("Interrupt! {}", addr);
 
             self.push_and_jump(addr);
         }
@@ -614,7 +621,7 @@ impl <'a> CPU<'a> {
     fn mem_write8(&mut self, addr: u16, v: u8) {
         self.advance_clock();
         match addr {
-            0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; },
+            0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; self.ppu.debug = true; },
 
             0x0000 ... 0x7FFF => { self.cart.write(addr, v); }
             0x8000 ... 0x9FFF => { self.ppu.vram_write(addr - 0x8000, v) }
@@ -661,6 +668,11 @@ impl <'a> CPU<'a> {
     }
 
     fn dma(&mut self, v: u8) {
+        if !self.ppu.dma_ok() {
+            println!("DMA during {:?}", self.ppu.state);
+            panic!();
+        }
+
         {
             let addr = (((v & 0xF1) as u16) << 8) as usize;
             let source = match addr {
@@ -675,15 +687,14 @@ impl <'a> CPU<'a> {
                 // println!("here we go: {:?}", &self.ppu.vram[..]);
                 self.ppu.debug = true;
             }
-            // println!("DMA: {:X} {:X}: {:?}", v, addr, source);
+            println!("DMA: {:X} {:X}: {:?}", v, addr, source);
             self.ppu.oam.copy_from_slice(source);
         }
         // println!("DMA start");
-        // // DMA takes 40 cycles.
+        // DMA takes 40 cycles.
         // for _ in 0..40 {
         //     self.advance_clock();
         // }
-        // println!("DMA end");
     }
 
     fn mem_write16(&mut self, addr: u16, v: u16) {

@@ -13,8 +13,7 @@ const LCDC_OBJ_ENABLED: u8 = 0b0000_0010;
 const LCDC_BG_ENABLED:  u8 = 0b0000_0001;
 
 #[derive(Debug, PartialEq)]
-enum PPUState {
-    Inactive,           // LCD is currently switched off.
+pub enum PPUState {
     OAMSearch,          // OAM search phase
     PixelTransfer,  // 
     HBlank(u8),         // HBlank phase for given number of cycles.
@@ -43,7 +42,8 @@ struct OAMEntry {
 pub struct PPU {
     pub debug: bool,
 
-    state: PPUState,
+    pub enabled: bool,      // Master switch to turn LCD on/off.
+    pub state: PPUState,
     cycles: u8,         // Counts how many CPU cycles have elapsed in the current PPU stage.
 
     pub scy: u8,
@@ -84,7 +84,7 @@ impl PPU {
         PPU {
             debug: false,
 
-            state: Inactive, cycles: 0,
+            enabled: false, state: OAMSearch, cycles: 0,
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
             wx: 0, wy: 0,
@@ -111,28 +111,28 @@ impl PPU {
 
     pub fn oam_read(&self, addr: u16) -> u8 {
         match self.state {
-            Inactive | HBlank(_) | VBlank => self.oam[addr as usize],
+            HBlank(_) | VBlank => self.oam[addr as usize],
             OAMSearch | PixelTransfer => 0xFF,
         }
     }
 
     pub fn oam_write(&mut self, addr: u16, v: u8) {
         match self.state {
-            Inactive | HBlank(_) | VBlank => { self.oam[addr as usize] = v },
+            HBlank(_) | VBlank => { self.oam[addr as usize] = v },
             OAMSearch | PixelTransfer => { },
         }
     }
 
     pub fn vram_read(&self, addr: u16) -> u8 {
         match self.state {
-            Inactive | OAMSearch | HBlank(_) | VBlank => self.vram[addr as usize],
+            OAMSearch | HBlank(_) | VBlank => self.vram[addr as usize],
             PixelTransfer => 0xFF,
         }
     }
 
     pub fn vram_write(&mut self, addr: u16, v: u8) {
         match self.state {
-            Inactive | OAMSearch | HBlank(_) | VBlank => { self.vram[addr as usize] = v },
+            OAMSearch | HBlank(_) | VBlank => { self.vram[addr as usize] = v },
             PixelTransfer => { },
         }
     }
@@ -147,12 +147,12 @@ impl PPU {
 
     // Advances PPU display by a single clock cycle. Basically, all the video magic happens in here.
     pub fn advance(&mut self) -> Option<::Interrupt> {
+        if !self.enabled {
+            return None
+        }
+
         // Each scanline is 114 clock cycles. 20 for OAM search, 43+ for pixel transfer, remaining for hblank.
         match self.state {
-            Inactive => {
-                // PPU is currently disabled (LCDC LCD flag is cleared).
-                None
-            },
             OAMSearch => {
                 self.cycles += 1;
                 self.oam_search();
@@ -246,8 +246,7 @@ impl PPU {
             self.pt_state.x += 8;
             self.pt_state.flush = false;
         } else if self.pt_state.x < 160 {
-            // if self.bg_enabled {
-            if true {
+            if self.bg_enabled {
                 let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
                 let data_base_addr = if self.bg_data_hi { 0x0800 } else { 0 };
 
@@ -273,7 +272,7 @@ impl PPU {
                     let tile = self.vram[(code_base_addr + tile_num) as usize] as usize;
 
                     if self.debug {
-                        println!("OKAY CUNT. ly={}, bg_y={} tile_num={} tile={}", ly, bg_y, tile_num, tile);
+                        println!("pixels!??! ly={}, bg_y={} tile_num={} tile={}", ly, bg_y, tile_num, tile);
                     }
                     let tile_addr = data_base_addr + (tile * 16);
 
@@ -337,7 +336,7 @@ impl PPU {
     pub fn get_lcdc(&self) -> u8 {
         let mut lcdc = 0;
 
-        lcdc |= if self.state != Inactive { LCDC_LCD_ENABLED } else { 0 };
+        lcdc |= if self.enabled     { LCDC_LCD_ENABLED } else { 0 };
         lcdc |= if self.win_enabled { LCDC_WIN_ENABLED } else { 0 };
         lcdc |= if self.win_code_hi { LCDC_WIN_CODE_HI } else { 0 };
         lcdc |= if self.bg_data_hi  { 0 } else { LCDC_BG_DATA_HI };
@@ -354,17 +353,18 @@ impl PPU {
         println!("Updating LCDC! {:b}", v);
 
         // Are we enabling LCD from a previously disabled state?
-        if v & LCDC_LCD_ENABLED > 0 && self.state == Inactive {
+        if v & LCDC_LCD_ENABLED > 0 && !self.enabled {
+            self.enabled = true;
             self.next_state(OAMSearch);
             self.fb_pos = 0;
             self.ly = 0;
             self.scanline_objs.clear();
-        } else if v & LCDC_LCD_ENABLED == 0 && self.state != Inactive {
+        } else if v & LCDC_LCD_ENABLED == 0 && self.enabled {
             // TODO: check current state here, can't switch LCD off in the middle of pixel transfer.
             if self.debug {
                 println!("WUT? {:?}", self.state);
             }
-            self.state = Inactive;
+            self.enabled = false;
         }
 
         self.win_enabled = v & LCDC_WIN_ENABLED > 0;
@@ -380,7 +380,6 @@ impl PPU {
     pub fn get_stat(&self) -> u8 {
         panic!("fuck");
         let stat = match self.state {
-            Inactive => 0,
             HBlank(_) => 0,
             VBlank => 1,
             OAMSearch => 2,
@@ -391,5 +390,12 @@ impl PPU {
 
     // Update PPU state based on new STAT value.
     pub fn set_stat(&mut self, _v: u8) {
+    }
+
+    pub fn dma_ok(&self) -> bool {
+        match self.state {
+            HBlank(_) | VBlank => true,
+            _ => false,
+        }
     }
 }
