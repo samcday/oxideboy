@@ -275,6 +275,18 @@ impl ::fmt::Display for Inst {
     }
 }
 
+#[derive(Default)]
+struct Joypad {
+    up: bool,
+    down: bool,
+    left: bool,
+    right: bool,
+    a: bool,
+    b: bool,
+    select: bool,
+    start: bool,
+}
+
 pub struct CPU<'a> {
     // Registers.
     a: u8,
@@ -311,6 +323,11 @@ pub struct CPU<'a> {
     tima: u8,
     tma: u8,
 
+    // Joypad.
+    joypad_btn: bool,
+    joypad_dir: bool,
+    joypad: Joypad,
+
     // Serial I/O
     sb: u8,
     sc: u8,
@@ -329,6 +346,7 @@ impl <'a> CPU<'a> {
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
             ppu: ppu::PPU::new(),
             clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
+            joypad_btn: false, joypad_dir: false, joypad: Default::default(),
             sb: 0, sc: 0,
             cart,
             cycle_count: 0,
@@ -370,8 +388,8 @@ impl <'a> CPU<'a> {
         let inst = self.decode();
         self.update_ime();
         self.execute(inst);
-        if self.pc > 0x100 && self.ppu.debug {
-            println!("Instr: {} ;${:04X} ({})", inst, self.pc, self.cycle_count);
+        if self.pc > 0x100 {
+            // println!("Instr: {} ;${:04X} ({})", inst, _addr, self.cycle_count);
         }
     }
 
@@ -403,6 +421,7 @@ impl <'a> CPU<'a> {
         if let Some(intr) = self.ppu.advance() {
              self.request_interrupt(intr);
         }
+        //
     }
 
     // Advances the TIMA register depending on how many CPU clock cycles have passed, and the
@@ -542,17 +561,10 @@ impl <'a> CPU<'a> {
                 // Vertical blanking
                 0x1 => {
                     self.if_ ^= 0x1;
-                    // TODO: Temporary gross hack. If the LCD has since been disabled, we clear this interrupt
-                    // and don't process it.
-                    if !self.ppu.enabled {
-                        return;
-                    }
                     0x40
                 },
                 _ => unreachable!("Non-existent interrupt ${:X} encountered", 123)
             };
-
-            println!("Interrupt! {}", addr);
 
             self.push_and_jump(addr);
         }
@@ -573,7 +585,7 @@ impl <'a> CPU<'a> {
             0xFE00 ... 0xFE9F => self.ppu.oam_read(addr - 0xFE00),
             0xFEA0 ... 0xFEFF => 0x00,
 
-            0xFF00            => 0x00, // TODO: joypad
+            0xFF00            => self.read_joypad(),
 
             // Serial
             0xFF01            => self.sb,
@@ -621,7 +633,7 @@ impl <'a> CPU<'a> {
     fn mem_write8(&mut self, addr: u16, v: u8) {
         self.advance_clock();
         match addr {
-            0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; self.ppu.debug = true; },
+            0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; },
 
             0x0000 ... 0x7FFF => { self.cart.write(addr, v); }
             0x8000 ... 0x9FFF => { self.ppu.vram_write(addr - 0x8000, v) }
@@ -637,14 +649,20 @@ impl <'a> CPU<'a> {
             0xFF07            => { self.set_tac(v & 0x7); }
             0xFF0F            => { self.if_ = v & 0x1F }
 
-            // TODO: joypad
-            0xFF00            => { } // TODO:
+            0xFF00            => { self.write_joypad(v); }
 
             // Sound
             0xFF10 ... 0xFF3F => { }
 
             // PPU
-            0xFF40            => { self.ppu.set_lcdc(v); }
+            0xFF40            => {
+                self.ppu.set_lcdc(v);
+                // TODO: Temporary gross hack. If the LCD has since been disabled, we clear this interrupt
+                // and don't process it.
+                if !self.ppu.enabled {
+                    self.if_ ^= 1;
+                }
+            }
             0xFF41            => { self.ppu.set_stat(v); }
             0xFF42            => { self.ppu.scy = v }
             0xFF43            => { self.ppu.scx = v }
@@ -667,8 +685,34 @@ impl <'a> CPU<'a> {
         };
     }
 
+    fn read_joypad(&self) -> u8 {
+        let mut v = 0x3F;
+
+        if self.joypad_btn {
+            v ^= 0x20;
+            if self.joypad.a      { v ^= 1 }
+            if self.joypad.b      { v ^= 2 }
+            if self.joypad.select { v ^= 4 }
+            if self.joypad.start  { v ^= 8 }
+        } else if self.joypad_dir {
+            v ^= 0x10;
+            if self.joypad.right  { v ^= 1 }
+            if self.joypad.left   { v ^= 2 }
+            if self.joypad.up     { v ^= 4 }
+            if self.joypad.down   { v ^= 8 }
+        }
+
+        v
+    }
+
+    fn write_joypad(&mut self, v: u8) {
+        self.joypad_btn = v & 0x20 == 0;
+        self.joypad_dir = v & 0x10 == 0;
+    }
+
     fn dma(&mut self, v: u8) {
         if !self.ppu.dma_ok() {
+            // TODO:
             println!("DMA during {:?}", self.ppu.state);
             panic!();
         }
@@ -682,19 +726,8 @@ impl <'a> CPU<'a> {
                 _ => panic!("Unhandled DMA from {}", addr)
             };
 
-            if !self.ppu.debug {
-                // println!("wtf mang");
-                // println!("here we go: {:?}", &self.ppu.vram[..]);
-                self.ppu.debug = true;
-            }
-            println!("DMA: {:X} {:X}: {:?}", v, addr, source);
             self.ppu.oam.copy_from_slice(source);
         }
-        // println!("DMA start");
-        // DMA takes 40 cycles.
-        // for _ in 0..40 {
-        //     self.advance_clock();
-        // }
     }
 
     fn mem_write16(&mut self, addr: u16, v: u16) {

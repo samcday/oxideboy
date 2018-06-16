@@ -40,8 +40,6 @@ struct OAMEntry {
 }
 
 pub struct PPU {
-    pub debug: bool,
-
     pub enabled: bool,      // Master switch to turn LCD on/off.
     pub state: PPUState,
     cycles: u8,         // Counts how many CPU cycles have elapsed in the current PPU stage.
@@ -82,8 +80,6 @@ pub struct PPU {
 impl PPU {
     pub fn new() -> PPU {
         PPU {
-            debug: false,
-
             enabled: false, state: OAMSearch, cycles: 0,
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
@@ -138,9 +134,6 @@ impl PPU {
     }
 
     fn next_state(&mut self, new: PPUState) {
-        if self.debug {
-            println!("Transitioning state {:?}", new);
-        }
         self.cycles = 0;
         self.state = new;
     }
@@ -250,11 +243,6 @@ impl PPU {
                 let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
                 let data_base_addr = if self.bg_data_hi { 0x0800 } else { 0 };
 
-
-                    // if self.debug {
-                    //     println!("this really is testing the patience I never had: {:?}", &self.vram[code_base_addr..code_base_addr+(32*32)]);
-                    // }
-
                 let scanline_x = self.pt_state.x as u16;
                 let scy = self.scy as u16;
                 let scx = self.scx as u16;
@@ -271,9 +259,6 @@ impl PPU {
                     let tile_num = (bg_y * 32 + bg_x) as usize;
                     let tile = self.vram[(code_base_addr + tile_num) as usize] as usize;
 
-                    if self.debug {
-                        println!("pixels!??! ly={}, bg_y={} tile_num={} tile={}", ly, bg_y, tile_num, tile);
-                    }
                     let tile_addr = data_base_addr + (tile * 16);
 
                     // Now figure out which pixels in this particular tile we need.
@@ -282,10 +267,6 @@ impl PPU {
                     let lo = self.vram[tile_addr + (tile_y * 2) + 0] >> (7 - tile_x);
                     let hi = (self.vram[tile_addr + (tile_y * 2) + 1] >> (7 - tile_x)) << 1;
                     let result = (lo & 1) | (hi & 2);
-                    if self.debug && tile == 9 {
-                        // println!("tile: {} @ {},{}. scx: {} scy: {}, {}", tile, self.pt_state.x, self.ly, self.scx, self.scy, data_base_addr);
-                        // println!("tile (x={}) hi: {:08b} lo: {:08b}. my shit: hi:{:08b} lo:{:08b} res={:08b}", tile_x, self.vram[tile_addr + (tile_y * 2) + 1], self.vram[tile_addr + (tile_y * 2) + 0], hi, lo, result);
-                    }
 
                     self.pt_state.scratch[i as usize] = result;
                 }
@@ -350,7 +331,7 @@ impl PPU {
 
     // Update PPU state based on new LCDC value.
     pub fn set_lcdc(&mut self, v: u8) {
-        println!("Updating LCDC! {:b}", v);
+        // println!("Updating LCDC! {:b}", v);
 
         // Are we enabling LCD from a previously disabled state?
         if v & LCDC_LCD_ENABLED > 0 && !self.enabled {
@@ -361,8 +342,8 @@ impl PPU {
             self.scanline_objs.clear();
         } else if v & LCDC_LCD_ENABLED == 0 && self.enabled {
             // TODO: check current state here, can't switch LCD off in the middle of pixel transfer.
-            if self.debug {
-                println!("WUT? {:?}", self.state);
+            if self.state != VBlank {
+                panic!("Tried to disable LCD in incorrect state: {:?}", self.state);
             }
             self.enabled = false;
         }
