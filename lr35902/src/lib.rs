@@ -442,9 +442,9 @@ impl <'a> CPU<'a> {
     // state of TMA / TAC.
     fn advance_timer(&mut self) {
         // DIV register increments at a rate of 16384hz, which is every 64 CPU cycles.
-        self.div_counter.wrapping_add(1);
+        self.div_counter = self.div_counter.wrapping_add(1);
         if self.div_counter == 64 {
-            self.div.wrapping_add(1);
+            self.div = self.div.wrapping_add(1);
             self.div_counter = 0;
         }
 
