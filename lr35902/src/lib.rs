@@ -317,6 +317,8 @@ pub struct CPU<'a> {
     ppu: ppu::PPU,
 
     // Timer.
+    div: u8,
+    div_counter: u8,
     timer_enabled: bool,
     timer_freq: u16,
     clock_count: u16,
@@ -350,7 +352,7 @@ impl <'a> CPU<'a> {
             ram: [0; 0x2000], wram: [0; 0x7F],
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
             ppu: ppu::PPU::new(),
-            clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
+            div: 0, div_counter: 0, clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
             sb: 0, sc: 0,
             cart,
@@ -439,6 +441,13 @@ impl <'a> CPU<'a> {
     // Advances the TIMA register depending on how many CPU clock cycles have passed, and the
     // state of TMA / TAC.
     fn advance_timer(&mut self) {
+        // DIV register increments at a rate of 16384hz, which is every 64 CPU cycles.
+        self.div_counter.wrapping_add(1);
+        if self.div_counter == 64 {
+            self.div.wrapping_add(1);
+            self.div_counter = 0;
+        }
+
         if self.timer_enabled {
             self.clock_count += 4;
 
@@ -609,6 +618,7 @@ impl <'a> CPU<'a> {
             0xFF02            => self.sc,
 
             // Timer
+            0xFF04            => self.div,
             0xFF05            => self.tima,
             0xFF06            => self.tma,
             0xFF07            => self.get_tac(),
@@ -661,6 +671,7 @@ impl <'a> CPU<'a> {
             0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
             0xFF01            => { self.sb = v }
             0xFF02            => { self.sc = v }
+            0xFF04            => { self.div = 0 }
             0xFF05            => { self.tima = v }
             0xFF06            => { self.tma = v }
             0xFF07            => { self.set_tac(v & 0x7); }
