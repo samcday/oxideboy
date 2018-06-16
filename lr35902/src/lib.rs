@@ -276,15 +276,15 @@ impl ::fmt::Display for Inst {
 }
 
 #[derive(Default)]
-struct Joypad {
-    up: bool,
-    down: bool,
-    left: bool,
-    right: bool,
-    a: bool,
-    b: bool,
-    select: bool,
-    start: bool,
+pub struct Joypad {
+    pub up: bool,
+    pub down: bool,
+    pub left: bool,
+    pub right: bool,
+    pub a: bool,
+    pub b: bool,
+    pub select: bool,
+    pub start: bool,
 }
 
 pub struct CPU<'a> {
@@ -326,7 +326,7 @@ pub struct CPU<'a> {
     // Joypad.
     joypad_btn: bool,
     joypad_dir: bool,
-    joypad: Joypad,
+    pub joypad: Joypad,
 
     // Serial I/O
     sb: u8,
@@ -335,6 +335,11 @@ pub struct CPU<'a> {
     cart: &'a mut (Cartridge + 'a),
 
     pub cycle_count: u64,
+
+    // Debugging stuff.
+    instr_addr: u16,            // Address of the current instruction
+    instrs: Vec<(Inst, u16)>,   // The last 1000 instructions we've executed (and their address).
+    instrs_idx: usize,          // Instrs is a ring buffer. We keep track of where the last inserted item is.
 }
 
 impl <'a> CPU<'a> {
@@ -350,6 +355,7 @@ impl <'a> CPU<'a> {
             sb: 0, sc: 0,
             cart,
             cycle_count: 0,
+            instr_addr: 0, instrs: Vec::with_capacity(1000), instrs_idx: 0,
         }
     }
 
@@ -384,12 +390,18 @@ impl <'a> CPU<'a> {
             return;
         }
 
-        let _addr = self.pc;
+        self.instr_addr = self.pc;
         let inst = self.decode();
+        if self.instrs.len() == 1000 {
+            self.instrs[self.instrs_idx] = (inst, self.instr_addr);
+            self.instrs_idx = (self.instrs_idx + 1) % 1000;
+        } else {
+            self.instrs.push((inst, self.instr_addr));
+        }
         self.update_ime();
         self.execute(inst);
         if self.pc > 0x100 {
-            // println!("Instr: {} ;${:04X} ({})", inst, _addr, self.cycle_count);
+            // println!("Instr: {} ;${:04X} ({})", inst, self.instr_addr, self.cycle_count);
         }
     }
 
@@ -561,6 +573,11 @@ impl <'a> CPU<'a> {
                 // Vertical blanking
                 0x1 => {
                     self.if_ ^= 0x1;
+                    // TODO: gross hack. If LCD is no longer enabled we clear this interrupt.
+                    if !self.ppu.enabled {
+                        return;
+                    }
+
                     0x40
                 },
                 _ => unreachable!("Non-existent interrupt ${:X} encountered", 123)
@@ -656,12 +673,8 @@ impl <'a> CPU<'a> {
 
             // PPU
             0xFF40            => {
+                
                 self.ppu.set_lcdc(v);
-                // TODO: Temporary gross hack. If the LCD has since been disabled, we clear this interrupt
-                // and don't process it.
-                if !self.ppu.enabled {
-                    self.if_ ^= 1;
-                }
             }
             0xFF41            => { self.ppu.set_stat(v); }
             0xFF42            => { self.ppu.scy = v }
@@ -711,21 +724,18 @@ impl <'a> CPU<'a> {
     }
 
     fn dma(&mut self, v: u8) {
-        if !self.ppu.dma_ok() {
-            // TODO:
-            println!("DMA during {:?}", self.ppu.state);
-            panic!();
-        }
+        let addr = (((v & 0xF1) as u16) << 8) as usize;
+        let source = match addr {
+            0x8000 ... 0x9FFF => { &self.ppu.vram[(addr - 0x8000) .. (addr - 0x8000+0xA0)] }
+            0xA000 ... 0xBFFF => { &self.cart.ram()[(addr - 0xA000) .. (addr - 0xA000+0xA0)] }
+            0xC000 ... 0xDFFF => { &self.ram[(addr - 0xC000) .. (addr - 0xC000+0xA0)] }
+            _ => self.core_panic(format!("Unhandled DMA from {}", addr))
+        };
 
-        {
-            let addr = (((v & 0xF1) as u16) << 8) as usize;
-            let source = match addr {
-                0x8000 ... 0x9FFF => { &self.ppu.vram[(addr - 0x8000) .. (addr - 0x8000+0xA0)] }
-                0xA000 ... 0xBFFF => { &self.cart.ram()[(addr - 0xA000) .. (addr - 0xA000+0xA0)] }
-                0xC000 ... 0xDFFF => { &self.ram[(addr - 0xC000) .. (addr - 0xC000+0xA0)] }
-                _ => panic!("Unhandled DMA from {}", addr)
-            };
-
+        // We'll only DMA if we're in HBlank / VBlank.
+        // The very first game I tested with this emulator, Tetris, has a nasty habit of kicking off
+        // DMAs at invalid times.
+        if self.ppu.dma_ok() {
             self.ppu.oam.copy_from_slice(source);
         }
     }
@@ -999,7 +1009,7 @@ impl <'a> CPU<'a> {
             0xFF => Inst::RST(0x38),
 
             n => {
-                panic!("Unexpected opcode 0x{:X} encountered", n);
+                self.core_panic(format!("Unexpected opcode 0x{:X} encountered", n));
             }
         }
     }
@@ -1265,7 +1275,7 @@ impl <'a> CPU<'a> {
             0xFF => Inst::SET(7, Operand8::Reg(A)),
 
             n => {
-                panic!("Unexpected extended opcode 0x{:X} encountered", n);
+                self.core_panic(format!("Unexpected extended opcode 0x{:X} encountered", n));
             }
         }
     }
@@ -1801,5 +1811,15 @@ impl <'a> CPU<'a> {
         }
         self.advance_clock();
         self.pc = self.pc.wrapping_add(n as i8 as i16 as u16);
+    }
+
+    fn core_panic(&self, msg: String) -> ! {
+        let mut instr_dump = String::new();
+        for i in 0..self.instrs.len() {
+            let (instr, addr) = self.instrs[(self.instrs_idx+i)%1000];
+            instr_dump += &format!("{} ; ${:04X}\n", instr, addr);
+        }
+
+        panic!("{}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}\n\nInstructions:\n{}", msg, self.a, self.b, self.c, self.d, self.e, self.f, self.h, self.l, self.sp, self.pc, instr_dump);
     }
 }

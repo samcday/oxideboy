@@ -169,13 +169,13 @@ impl PPU {
             },
             VBlank => {
                 if self.cycles == 114 {
-                    if self.ly == 154 {
+                    if self.ly < 153 {
+                        self.ly += 1;
+                        self.next_state(VBlank);
+                    } else {
                         self.ly = 0;
                         self.fb_pos = 0;
                         self.next_state(OAMSearch);
-                    } else {
-                        self.ly += 1;
-                        self.next_state(VBlank);
                     }
                 }
             }
