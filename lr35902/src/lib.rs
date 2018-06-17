@@ -5,7 +5,7 @@ use std::fmt;
 
 static BOOT_ROM: &[u8; 256] = include_bytes!("boot.rom");
 
-const SCREEN_SIZE: usize = 160 * 144;
+pub const SCREEN_SIZE: usize = 160 * 144;
 
 const FLAG_ZERO:       u8 = 0b10000000;
 const FLAG_SUBTRACT:   u8 = 0b01000000;
@@ -288,7 +288,7 @@ pub struct Joypad {
     pub start: bool,
 }
 
-pub struct CPU<'a> {
+pub struct CPU {
     // Registers.
     a: u8,
     b: u8,
@@ -332,13 +332,13 @@ pub struct CPU<'a> {
     // Joypad.
     joypad_btn: bool,
     joypad_dir: bool,
-    pub joypad: Joypad,
+    joypad: Joypad,
 
     // Serial I/O
     sb: u8,
     sc: u8,
 
-    cart: &'a mut (Cartridge + 'a),
+    cart: Box<Cartridge>,
 
     pub cycle_count: u64,
 
@@ -348,8 +348,8 @@ pub struct CPU<'a> {
     instrs_idx: usize,          // Instrs is a ring buffer. We keep track of where the last inserted item is.
 }
 
-impl <'a> CPU<'a> {
-    pub fn new(cart: &'a mut (Cartridge + 'a)) -> CPU {
+impl CPU {
+    pub fn new(cart: Box<Cartridge>) -> CPU {
         CPU{
             a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, sp: 0, pc: 0,
             bootrom_enabled: true,
@@ -386,34 +386,41 @@ impl <'a> CPU<'a> {
 
     // Runs the CPU for a single instruction.
     // This is the main "Fetch, decode, execute" cycle.
-    pub fn run(&mut self) {
+    // Returns the number of CPU cycles consumed.
+    pub fn run(&mut self) -> u8 {
+        let start_count = self.cycle_count;
+
         if self.halted {
             self.advance_clock();
         }
 
         self.process_interrupts();
 
-        if self.halted {
-            return;
+        if !self.halted {
+            self.instr_addr = self.pc;
+            let inst = self.decode();
+            if self.instrs.len() == 1000 {
+                self.instrs[self.instrs_idx] = (inst, self.instr_addr);
+                self.instrs_idx = (self.instrs_idx + 1) % 1000;
+            } else {
+                self.instrs.push((inst, self.instr_addr));
+            }
+            self.update_ime();
+            self.execute(inst);
+            if self.pc > 0x100 {
+                // println!("Instr: {} ;${:04X} ({})", inst, self.instr_addr, self.cycle_count);
+            }
         }
 
-        self.instr_addr = self.pc;
-        let inst = self.decode();
-        if self.instrs.len() == 1000 {
-            self.instrs[self.instrs_idx] = (inst, self.instr_addr);
-            self.instrs_idx = (self.instrs_idx + 1) % 1000;
-        } else {
-            self.instrs.push((inst, self.instr_addr));
-        }
-        self.update_ime();
-        self.execute(inst);
-        if self.pc > 0x100 {
-            // println!("Instr: {} ;${:04X} ({})", inst, self.instr_addr, self.cycle_count);
-        }
+        return (self.cycle_count - start_count) as u8;
     }
 
     pub fn framebuffer(&self) -> &[u32; SCREEN_SIZE] {
         &self.ppu.framebuffer
+    }
+
+    pub fn joypad(&mut self) -> &mut Joypad {
+        &mut self.joypad
     }
 
     fn request_interrupt(&mut self, intr: Interrupt) {
@@ -434,7 +441,7 @@ impl <'a> CPU<'a> {
     // But when we actually fetch that location for the LDH instruction another cycle later, the value could have
     // incremented to 11. This cycle accuracy is tested in the mem_timing.gb test ROM.
     fn advance_clock(&mut self) {
-        self.cycle_count += 4;
+        self.cycle_count += 1;
         self.advance_timer();
         self.sound.advance();
 

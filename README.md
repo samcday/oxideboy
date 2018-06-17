@@ -8,7 +8,8 @@ Nothing to really see here yet, unless you're really into terrible codez.
 
  * Pass all gb-test-roms oam_bug tests
  * Finish MBC1 impl (sram)
- * Implement video
+ * Finish sprite implementation.
+ * Implement windows
  * Implement sound
 
 # Resources
