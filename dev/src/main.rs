@@ -47,7 +47,7 @@ fn main() -> Result<()> {
         PixelFormatEnum::RGB24, 160, 144).unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    let mut limit = true;
+    let mut limit = false;
     let mut ratelimit = ratelimit::Builder::new()
         .capacity(1) //number of tokens the bucket will hold
         .quantum(1) //add one token per interval
@@ -121,25 +121,29 @@ fn main() -> Result<()> {
             }
         }
 
-        let (framebuffer, audio_samples) = gameboy.run_frame();
-        audio_device.clear();
-        audio_device.queue(audio_samples);
-        
-        texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
-            for y in 0..144 {
-                for x in 0..160 {
-                    let offset = y*pitch + (x*3);
-                    buffer[offset] = framebuffer[y*160+x] as u8;
-                    buffer[offset + 1] = framebuffer[y*160+x] as u8;
-                    buffer[offset + 2] = framebuffer[y*160+x] as u8;
+        {
+            let (framebuffer, audio_samples) = gameboy.run_frame();
+            // audio_device.clear();
+            // audio_device.queue(audio_samples);
+
+            texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
+                for y in 0..144 {
+                    for x in 0..160 {
+                        let offset = y*pitch + (x*3);
+                        buffer[offset] = framebuffer[y*160+x] as u8;
+                        buffer[offset + 1] = framebuffer[y*160+x] as u8;
+                        buffer[offset + 2] = framebuffer[y*160+x] as u8;
+                    }
                 }
-            }
-        }).unwrap();
+            }).unwrap();
 
-        canvas.clear();
-        canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
-        canvas.present();
-
+            canvas.clear();
+            canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
+            canvas.present();
+        }
+        if gameboy.breakpoint_hit {
+            break 'running;
+        }
     }
 
     Ok(())

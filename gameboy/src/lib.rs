@@ -3,14 +3,19 @@ extern crate lr35902;
 pub mod cartridges;
 
 pub struct Gameboy {
-    cpu: lr35902::CPU
+    cpu: lr35902::CPU,
+
+    pub breakpoint_hit: bool,
 }
 
 impl Gameboy {
     /// Creates a new Gameboy instance with the given ROM data.
     pub fn new(rom: &[u8]) -> Result<Gameboy, String> {
         let cart = cartridges::create(rom)?;
-        Ok(Gameboy{cpu: lr35902::CPU::new(cart)})
+        Ok(Gameboy{
+            cpu: lr35902::CPU::new(cart),
+            breakpoint_hit: false,
+        })
     }
 
     /// Runs the Gameboy emulation core until a whole video frame has been generated.
@@ -21,6 +26,10 @@ impl Gameboy {
 
         self.cpu.run();
         while !self.cpu.is_vblank() {
+            if self.cpu.pc() == 0x681 {
+                self.breakpoint_hit = true;
+                break;
+            }
             self.cpu.run();
         }
         (self.cpu.framebuffer(), self.cpu.sound.get_samples())
