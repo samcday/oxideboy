@@ -1,4 +1,5 @@
 mod ppu;
+mod sound;
 
 use std::fmt;
 
@@ -316,6 +317,9 @@ pub struct CPU<'a> {
     // PPU
     ppu: ppu::PPU,
 
+    // Sound
+    sound: sound::SoundController,
+
     // Timer.
     div: u8,
     div_counter: u8,
@@ -352,6 +356,7 @@ impl <'a> CPU<'a> {
             ram: [0; 0x2000], wram: [0; 0x7F],
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
             ppu: ppu::PPU::new(),
+            sound: Default::default(),
             div: 0, div_counter: 0, clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
             sb: 0, sc: 0,
@@ -431,6 +436,7 @@ impl <'a> CPU<'a> {
     fn advance_clock(&mut self) {
         self.cycle_count += 4;
         self.advance_timer();
+        self.sound.advance();
 
         if let Some(intr) = self.ppu.advance() {
              self.request_interrupt(intr);
@@ -627,7 +633,9 @@ impl <'a> CPU<'a> {
             0xFF0F            => self.if_,
 
             // Sound
-            0xFF26            => 0x00,
+            0xFF24            => self.sound.read_nr50(),
+            0xFF25            => self.sound.read_nr51(),
+            0xFF26            => self.sound.read_nr52(),
 
             // PPU
             0xFF40            => self.ppu.get_lcdc(),
@@ -651,12 +659,6 @@ impl <'a> CPU<'a> {
         }
     }
 
-    fn mem_read16(&mut self, addr: u16) -> u16 {
-        let mut v = self.mem_read8(addr) as u16;
-        v |= (self.mem_read8(addr + 1) as u16) << 8;
-        v
-    }
-
     fn mem_write8(&mut self, addr: u16, v: u8) {
         self.advance_clock();
         match addr {
@@ -674,20 +676,20 @@ impl <'a> CPU<'a> {
             0xFF04            => { self.div = 0 }
             0xFF05            => { self.tima = v }
             0xFF06            => { self.tma = v }
-            0xFF07            => { self.set_tac(v & 0x7); }
+            0xFF07            => { self.set_tac(v & 0x7) }
             0xFF0F            => { self.if_ = v & 0x1F }
 
-            0xFF00            => { self.write_joypad(v); }
+            0xFF00            => { self.write_joypad(v) }
 
             // Sound
+            0xFF24            => { self.sound.write_nr50(v) }
+            0xFF25            => { self.sound.write_nr51(v) }
+            0xFF26            => { self.sound.write_nr52(v) }
             0xFF10 ... 0xFF3F => { }
 
             // PPU
-            0xFF40            => {
-                
-                self.ppu.set_lcdc(v);
-            }
-            0xFF41            => { self.ppu.set_stat(v); }
+            0xFF40            => { self.ppu.set_lcdc(v) }
+            0xFF41            => { self.ppu.set_stat(v) }
             0xFF42            => { self.ppu.scy = v }
             0xFF43            => { self.ppu.scx = v }
             0xFF44            => { }                   // LY is readonly.
@@ -707,6 +709,17 @@ impl <'a> CPU<'a> {
 
             _                 => { panic!("Unhandled write to ${:X}", addr) }
         };
+    }
+
+    fn mem_read16(&mut self, addr: u16) -> u16 {
+        let mut v = self.mem_read8(addr) as u16;
+        v |= (self.mem_read8(addr + 1) as u16) << 8;
+        v
+    }
+
+    fn mem_write16(&mut self, addr: u16, v: u16) {
+        self.mem_write8(addr, (v & 0xFF) as u8);
+        self.mem_write8(addr + 1, ((v & 0xFF00) >> 8) as u8);
     }
 
     fn read_joypad(&self) -> u8 {
@@ -749,11 +762,6 @@ impl <'a> CPU<'a> {
         if self.ppu.dma_ok() {
             self.ppu.oam.copy_from_slice(source);
         }
-    }
-
-    fn mem_write16(&mut self, addr: u16, v: u16) {
-        self.mem_write8(addr, (v & 0xFF) as u8);
-        self.mem_write8(addr + 1, ((v & 0xFF00) >> 8) as u8);
     }
 
     // Fetches next byte from PC and increments PC.
