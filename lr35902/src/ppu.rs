@@ -399,7 +399,7 @@ impl PPU {
         self.obj_tall    = v & LCDC_OBJ_COMP_HI > 0;
         self.obj_enabled = v & LCDC_OBJ_ENABLED > 0;
         self.bg_enabled  = v & LCDC_BG_ENABLED > 0;
-    } 
+    }
 
     // Compute value of the STAT register.
     pub fn get_stat(&self) -> u8 {

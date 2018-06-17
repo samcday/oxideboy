@@ -20,11 +20,6 @@ use sdl2::rect::Rect;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 
-enum KeyEvent {
-    Down(Keycode),
-    Up(Keycode),
-}
-
 type Result<T> = std::result::Result<T, Box<std::error::Error>>;
 
 fn main() -> Result<()> {
@@ -52,7 +47,7 @@ fn main() -> Result<()> {
         PixelFormatEnum::RGB24, 160, 144).unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    let mut limit = false;
+    let mut limit = true;
     let mut ratelimit = ratelimit::Builder::new()
         .capacity(1) //number of tokens the bucket will hold
         .quantum(1) //add one token per interval
@@ -63,37 +58,9 @@ fn main() -> Result<()> {
     let print_serial = env::var_os("PRINT_SERIAL").map(|s| &s == "1").unwrap_or(false);
 
     let mut gameboy = gameboy::Gameboy::new(&rom)?;
-    // let cart = gameboy::cartridges::MBC1Cart::new(&rom);
-    // let cpu = &mut lr35902::CPU::new(Box::new(cart));
 
             // if cpu.pc() == 0x681 {
             //     break;
-            // }
-
-            // match keys.next() {
-            //     None => {},
-            //     Some(KeyEvent::Down(key)) => {
-            //         if key == Keycode::Up { cpu.joypad().up = true; }
-            //         if key == Keycode::Down { cpu.joypad().down = true; }
-            //         if key == Keycode::Right { cpu.joypad().right = true; }
-            //         if key == Keycode::Left { cpu.joypad().left = true; }
-            //         if key == Keycode::A { cpu.joypad().a = true; }
-            //         if key == Keycode::S { cpu.joypad().b = true; }
-            //         if key == Keycode::Return { cpu.joypad().start = true; }
-            //         if key == Keycode::RShift { cpu.joypad().select = true; }
-            //     }
-            //     Some(KeyEvent::Up(key)) => {
-            //         if key == Keycode::Up { cpu.joypad().up = false; }
-            //         if key == Keycode::Down { cpu.joypad().down = false; }
-            //         if key == Keycode::Right { cpu.joypad().right = false; }
-            //         if key == Keycode::Left { cpu.joypad().left = false; }
-            //         if key == Keycode::A { cpu.joypad().a = false; }
-            //         if key == Keycode::S { cpu.joypad().b = false; }
-            //         if key == Keycode::Return { cpu.joypad().start = false; }
-            //         if key == Keycode::RShift { cpu.joypad().select = false; }
-
-            //         if key == Keycode::L { limit = !limit; };
-            //     }
             // }
 
     //         let cycles = cpu.run();
@@ -132,17 +99,32 @@ fn main() -> Result<()> {
                 | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                     break 'running
                 },
-                Event::KeyDown {keycode: Some(keycode), ..} => {
-                    // keytx.send(KeyEvent::Down(keycode)).unwrap();
-                },
-                Event::KeyUp {keycode: Some(keycode), ..} => {
-                    // keytx.send(KeyEvent::Up(keycode)).unwrap();
-                },
+                Event::KeyDown {keycode: Some(Keycode::Up), ..} => { gameboy.joypad().up = true; }
+                Event::KeyDown {keycode: Some(Keycode::Down), ..} => { gameboy.joypad().down = true; }
+                Event::KeyDown {keycode: Some(Keycode::Right), ..} => { gameboy.joypad().right = true; }
+                Event::KeyDown {keycode: Some(Keycode::Left), ..} => { gameboy.joypad().left = true; }
+                Event::KeyDown {keycode: Some(Keycode::A), ..} => { gameboy.joypad().a = true; }
+                Event::KeyDown {keycode: Some(Keycode::S), ..} => { gameboy.joypad().b = true; }
+                Event::KeyDown {keycode: Some(Keycode::Return), ..} => { gameboy.joypad().start = true; }
+                Event::KeyDown {keycode: Some(Keycode::RShift), ..} => { gameboy.joypad().select = true; }
+                Event::KeyUp {keycode: Some(Keycode::Up), ..} => { gameboy.joypad().up = false; }
+                Event::KeyUp {keycode: Some(Keycode::Down), ..} => { gameboy.joypad().down = false; }
+                Event::KeyUp {keycode: Some(Keycode::Right), ..} => { gameboy.joypad().right = false; }
+                Event::KeyUp {keycode: Some(Keycode::Left), ..} => { gameboy.joypad().left = false; }
+                Event::KeyUp {keycode: Some(Keycode::A), ..} => { gameboy.joypad().a = false; }
+                Event::KeyUp {keycode: Some(Keycode::S), ..} => { gameboy.joypad().b = false; }
+                Event::KeyUp {keycode: Some(Keycode::Return), ..} => { gameboy.joypad().start = false; }
+                Event::KeyUp {keycode: Some(Keycode::RShift), ..} => { gameboy.joypad().select = false; }
+
+                Event::KeyUp {keycode: Some(Keycode::L), ..} => { limit = !limit; }
                 _ => {}
             }
         }
 
-        let framebuffer = gameboy.run_frame();
+        let (framebuffer, audio_samples) = gameboy.run_frame();
+        audio_device.clear();
+        audio_device.queue(audio_samples);
+        
         texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
             for y in 0..144 {
                 for x in 0..160 {
@@ -158,7 +140,6 @@ fn main() -> Result<()> {
         canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
         canvas.present();
 
-        // audio_device.queue(&(0..735).map(|i| 1.0f32).collect::<Vec<f32>>());
     }
 
     Ok(())

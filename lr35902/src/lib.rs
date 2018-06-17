@@ -318,7 +318,7 @@ pub struct CPU {
     ppu: ppu::PPU,
 
     // Sound
-    sound: sound::SoundController,
+    pub sound: sound::SoundController,
 
     // Timer.
     div: u8,
@@ -640,6 +640,8 @@ impl CPU {
             0xFF0F            => self.if_,
 
             // Sound
+            0xFF10            => self.sound.read_nr10(),
+            0xFF11            => self.sound.read_nr11(),
             0xFF1A            => self.sound.read_nr30(),
             0xFF1B            => self.sound.read_nr31(),
             0xFF1C            => self.sound.read_nr32(),
@@ -648,7 +650,7 @@ impl CPU {
             0xFF24            => self.sound.read_nr50(),
             0xFF25            => self.sound.read_nr51(),
             0xFF26            => self.sound.read_nr52(),
-            0xFF30 ... 0xFF3F => self.sound.sound3_wave_ram[(addr - 0xFF30) as usize],
+            0xFF30 ... 0xFF3F => self.sound.sound3_wave_ram.data[(addr - 0xFF30) as usize],
 
             // PPU
             0xFF40            => self.ppu.get_lcdc(),
@@ -695,6 +697,8 @@ impl CPU {
             0xFF00            => { self.write_joypad(v) }
 
             // Sound
+            0xFF10            => { self.sound.write_nr10(v) }
+            0xFF11            => { self.sound.write_nr11(v) }
             0xFF1A            => { self.sound.write_nr30(v) }
             0xFF1B            => { self.sound.write_nr31(v) }
             0xFF1C            => { self.sound.write_nr32(v) }
@@ -703,7 +707,7 @@ impl CPU {
             0xFF24            => { self.sound.write_nr50(v) }
             0xFF25            => { self.sound.write_nr51(v) }
             0xFF26            => { self.sound.write_nr52(v) }
-            0xFF30 ... 0xFF3F => { self.sound.sound3_wave_ram[(addr - 0xFF30) as usize] = v }
+            0xFF30 ... 0xFF3F => { self.sound.sound3_wave_ram.data[(addr - 0xFF30) as usize] = v }
             0xFF10 ... 0xFF3F => { }
 
             // PPU

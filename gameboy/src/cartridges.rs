@@ -4,7 +4,7 @@ extern crate lr35902;
 /// Creates a Cartridge implementation for given ROM data, selecting the appropriate MBC implementation
 /// based on metadata in the ROM.
 pub fn create(rom: &[u8]) -> Result<Box<lr35902::Cartridge>, String> {
-    match rom[0x148] {
+    match rom[0x147] {
         0 => Ok(Box::new(BasicCart::new(rom))),
         1 | 2 | 3 => Ok(Box::new(MBC1Cart::new(rom))),
         v => Err(format!("ROM had unknown cartridge type {}", v))
@@ -35,10 +35,8 @@ impl lr35902::Cartridge for BasicCart {
     }
 
     fn write(&mut self, _: u16, _: u8) {
-        panic!("BasicCart has no MBC to write to");
     }
 }
-
 
 pub struct MBC1Cart {
     rom: Vec<u8>,

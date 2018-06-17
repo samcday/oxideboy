@@ -16,12 +16,18 @@ impl Gameboy {
     /// Runs the Gameboy emulation core until a whole video frame has been generated.
     /// The native Gameboy renders frames at a rate of 59.7Hz, it is up to the caller to rate limit
     /// itself to provide a realistic frame rate.
-    pub fn run_frame(&mut self) -> &[u32; lr35902::SCREEN_SIZE] {
+    pub fn run_frame(&mut self) -> (&[u32; lr35902::SCREEN_SIZE], &[f32]) {
+        self.cpu.sound.clear_samples();
+
         self.cpu.run();
         while !self.cpu.is_vblank() {
             self.cpu.run();
         }
-        self.cpu.framebuffer()
+        (self.cpu.framebuffer(), self.cpu.sound.get_samples())
+    }
+
+    pub fn joypad(&mut self) -> &mut lr35902::Joypad {
+        self.cpu.joypad()
     }
 }
 

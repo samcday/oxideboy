@@ -1,5 +1,20 @@
+const SAMPLE_RATE: f64 = 44100.0;  // TODO: configurable?
+
+#[derive(Default)]
+pub struct WaveRam {
+    pub data: [u8; 16],
+}
+
+impl WaveRam {
+    fn get_step(&self, n: u8) -> f32 {
+        (self.data[(n / 2) as usize] >> (n % 2 * 4) & 0b1111) as f32
+    }
+}
+
 #[derive(Default)]
 pub struct SoundController {
+    sample_cycles: f64,
+
     timer: u16,
     frame_seq_timer: u8,         // Main timer to drive other clocks. 512hz (2048 CPU cycles)
 
@@ -11,6 +26,14 @@ pub struct SoundController {
     sound1_on: bool,
     sound1_left: bool,
     sound1_right: bool,
+    sound1_sweep_num: u8,
+    sound1_sweep_sub: bool,
+    sound1_sweep_time: u8,
+    sound1_length: u8,
+    sound1_duty: u8,
+    sound1_env_init: u8,
+    sound1_env_inc: bool,
+    sound1_env_num: u8,
 
     // Tone voice
     sound2_on: bool,
@@ -25,7 +48,7 @@ pub struct SoundController {
     sound3_level: u8,
     sound3_freq: u16,
     sound3_counter: bool,
-    pub sound3_wave_ram: [u8; 16],
+    pub sound3_wave_ram: WaveRam,
     sound3_pos: u8,
     sound3_timer: u16,
 
@@ -33,9 +56,19 @@ pub struct SoundController {
     sound4_on: bool,
     sound4_left: bool,
     sound4_right: bool,
+
+    samples: Vec<f32>,
 }
 
 impl SoundController {
+    pub fn get_samples(&self) -> &[f32] {
+        &self.samples
+    }
+
+    pub fn clear_samples(&mut self) {
+        self.samples.clear();
+    }
+
     pub fn advance(&mut self) {
         if !self.enabled {
             return;
@@ -63,6 +96,26 @@ impl SoundController {
                 self.sound3_pos = (self.sound3_pos + 1) % 32;
             }
         }
+
+        self.sample_cycles += 1.0;
+        let cycles_per_sample = 1048576.0 / SAMPLE_RATE;
+        if self.sample_cycles >= cycles_per_sample {
+            self.sample_cycles -= cycles_per_sample;
+            self.generate_sample();
+        }
+    }
+
+    fn generate_sample(&mut self) {
+        let mut l = 0.0;
+        let mut r = 0.0;
+
+        if self.sound3_on {
+            l = self.sound3_wave_ram.get_step(self.sound3_pos) / 15.0 * 0.5;
+            r = self.sound3_wave_ram.get_step(self.sound3_pos) / 15.0 * 0.5;
+        }
+
+        self.samples.push(l);
+        self.samples.push(r);
     }
 
     fn length_clock(&mut self) {
@@ -80,6 +133,37 @@ impl SoundController {
 
     fn sweep_clock(&self) {
 
+    }
+
+    pub fn read_nr10(&self) -> u8 {
+        if !self.enabled {
+            return 0;
+        }
+        0
+            | self.sound1_sweep_num
+            | if self.sound1_sweep_sub { 0b0000_1000 } else { 0 }
+            | self.sound1_sweep_time << 5
+    }
+
+    pub fn write_nr10(&mut self, v: u8) {
+        if !self.enabled {
+            return;
+        }
+        self.sound1_sweep_num  = v & 0x07;
+        self.sound1_sweep_sub  = v & 0b0000_1000 > 0;
+        self.sound1_sweep_time = v & 0b0111_0000 >> 5;
+    }
+
+    pub fn read_nr11(&self) -> u8 {
+        if self.enabled { self.sound1_duty << 6 } else { 0 }
+    }
+
+    pub fn write_nr11(&mut self, v: u8) {
+        if !self.enabled {
+            return;
+        }
+        self.sound1_length = v & 0b0011_1111;
+        self.sound1_duty   = v & 0b1100_0000 >> 6;
     }
 
     pub fn read_nr30(&self) -> u8 {
@@ -208,6 +292,7 @@ impl SoundController {
         self.enabled = v & 0b1000_0000 > 0;
         // Turning off sound controller turns off all voices.
         if !self.enabled {
+            self.sample_cycles = 0.0;
             self.timer = 0;
             self.frame_seq_timer = 0;
             self.sound1_on = false;
