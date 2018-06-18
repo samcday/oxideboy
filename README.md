@@ -6,11 +6,13 @@ Nothing to really see here yet, unless you're really into terrible codez.
 
 # Current TODO list:
 
+ * Finish sprite implementation.
+ * Implement window
+ * Implement sound
+ * Pass all gb-test-roms dmg_sound tests
  * Pass all gb-test-roms oam_bug tests
  * Finish MBC1 impl (sram)
- * Finish sprite implementation.
- * Implement windows
- * Implement sound
+ * GBVideoPlayer running smoothly
 
 # Resources
 

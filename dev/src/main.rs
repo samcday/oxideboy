@@ -81,9 +81,6 @@ fn main() -> Result<()> {
     //         if limit { emu_ratelimit.wait_for(cycles as usize); }
     //     }
 
-    //     println!();
-    //     println!("Executed a total of {} clock cycles", cpu.cycle_count);
-    //     println!();
     // });
 
     audio_device.resume();
@@ -145,6 +142,10 @@ fn main() -> Result<()> {
             break 'running;
         }
     }
+
+    println!();
+    println!("Executed a total of {} clock cycles", gameboy.cpu.cycle_count);
+    println!();
 
     Ok(())
 }

@@ -2,6 +2,7 @@ mod ppu;
 mod sound;
 
 use std::fmt;
+use std::fmt::Display;
 
 static BOOT_ROM: &[u8; 256] = include_bytes!("boot.rom");
 
@@ -99,7 +100,7 @@ impl Operand8 {
     }
 }
 
-impl ::fmt::Display for Operand8 {
+impl Display for Operand8 {
     fn fmt(&self, f: &mut ::fmt::Formatter) -> ::fmt::Result {
         match *self {
             Operand8::Reg(r) => write!(f, "{:?}", r),
@@ -140,7 +141,7 @@ impl Operand16 {
     }
 }
 
-impl ::fmt::Display for Operand16 {
+impl Display for Operand16 {
     fn fmt(&self, f: &mut ::fmt::Formatter) -> ::fmt::Result {
         match *self {
             Operand16::Reg(r) => write!(f, "{:?}", r),
@@ -148,11 +149,6 @@ impl ::fmt::Display for Operand16 {
             Operand16::ImmAddr(d) => write!(f, "({:#04X})", d),
         }
     }
-}
-
-pub enum Interrupt {
-    TimerOverflow,
-    VBlank,
 }
 
 #[allow(non_camel_case_types)]
@@ -216,7 +212,7 @@ enum Inst {
     SCF,
 }
 
-impl ::fmt::Display for Inst {
+impl Display for Inst {
     fn fmt(&self, f: &mut ::fmt::Formatter) -> ::fmt::Result {
         match self {
             Inst::ADC(o) => write!(f, "ADC A, {}", o),
@@ -344,8 +340,6 @@ pub struct CPU {
 
     // Debugging stuff.
     instr_addr: u16,            // Address of the current instruction
-    instrs: Vec<(Inst, u16)>,   // The last 1000 instructions we've executed (and their address).
-    instrs_idx: usize,          // Instrs is a ring buffer. We keep track of where the last inserted item is.
 }
 
 impl CPU {
@@ -362,7 +356,7 @@ impl CPU {
             sb: 0, sc: 0,
             cart,
             cycle_count: 0,
-            instr_addr: 0, instrs: Vec::with_capacity(1000), instrs_idx: 0,
+            instr_addr: 0,
         }
     }
 
@@ -399,12 +393,6 @@ impl CPU {
         if !self.halted {
             self.instr_addr = self.pc;
             let inst = self.decode();
-            if self.instrs.len() == 1000 {
-                self.instrs[self.instrs_idx] = (inst, self.instr_addr);
-                self.instrs_idx = (self.instrs_idx + 1) % 1000;
-            } else {
-                self.instrs.push((inst, self.instr_addr));
-            }
             self.update_ime();
             self.execute(inst);
             if self.pc > 0x100 {
@@ -423,13 +411,6 @@ impl CPU {
         &mut self.joypad
     }
 
-    fn request_interrupt(&mut self, intr: Interrupt) {
-        self.if_ |= match intr {
-            Interrupt::TimerOverflow => 0x4,
-            Interrupt::VBlank => 0x1,
-        }
-    }
-
     // Advances the CPU clock by 1 "instruction cycle", which is actually 4 low level machine cycles.
     // The accuracy of clock counting is important, as it affects the accuracy of everything else - the timer
     // PPU, sound, etc.
@@ -444,11 +425,7 @@ impl CPU {
         self.cycle_count += 1;
         self.advance_timer();
         self.sound.advance();
-
-        if let Some(intr) = self.ppu.advance() {
-             self.request_interrupt(intr);
-        }
-        //
+        self.if_ |= self.ppu.advance();
     }
 
     // Advances the TIMA register depending on how many CPU clock cycles have passed, and the
@@ -468,7 +445,7 @@ impl CPU {
                 self.clock_count -= self.timer_freq;
                 if self.tima == 255 {
                     self.tima = self.tma;
-                    self.request_interrupt(Interrupt::TimerOverflow);
+                    self.if_ |= 0x4;
                 } else {
                     self.tima += 1;
                 }
@@ -1856,12 +1833,6 @@ impl CPU {
     }
 
     fn core_panic(&self, msg: String) -> ! {
-        let mut instr_dump = String::new();
-        for i in 0..self.instrs.len() {
-            let (instr, addr) = self.instrs[(self.instrs_idx+i)%1000];
-            instr_dump += &format!("{} ; ${:04X}\n", instr, addr);
-        }
-
-        panic!("{}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}\n\nInstructions:\n{}", msg, self.a, self.b, self.c, self.d, self.e, self.f, self.h, self.l, self.sp, self.pc, instr_dump);
+        panic!("{}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}", msg, self.a, self.b, self.c, self.d, self.e, self.f, self.h, self.l, self.sp, self.pc);
     }
 }
