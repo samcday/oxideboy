@@ -73,6 +73,7 @@ impl SoundController {
         if !self.enabled {
             return;
         }
+        return;
 
         self.timer += 1;
         if self.timer == 2048 {

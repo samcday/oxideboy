@@ -108,34 +108,6 @@ impl PPU {
         false
     }
 
-    pub fn oam_read(&self, addr: u16) -> u8 {
-        match self.state {
-            HBlank | VBlank => self.oam[addr as usize],
-            OAMSearch | PixelTransfer => 0xFF,
-        }
-    }
-
-    pub fn oam_write(&mut self, addr: u16, v: u8) {
-        match self.state {
-            HBlank | VBlank => { self.oam[addr as usize] = v },
-            OAMSearch | PixelTransfer => { },
-        }
-    }
-
-    pub fn vram_read(&self, addr: u16) -> u8 {
-        match self.state {
-            OAMSearch | HBlank | VBlank => self.vram[addr as usize],
-            PixelTransfer => 0xFF,
-        }
-    }
-
-    pub fn vram_write(&mut self, addr: u16, v: u8) {
-        match self.state {
-            OAMSearch | HBlank | VBlank => { self.vram[addr as usize] = v },
-            PixelTransfer => { },
-        }
-    }
-
     fn next_state(&mut self, new: PPUState) {
         self.cycles = 0;
         self.state = new;
@@ -239,11 +211,6 @@ impl PPU {
     // this stage takes a minimum of 43 cycles.
     // TODO: window rendering
     fn pixel_transfer(&mut self) {
-        // if self.cycles == 43 {
-        //     self.next_state(HBlank(51));
-        // }
-        // return;
-
         // On the first cycle of this stage we ensure our state info is clean.
         if self.cycles == 1 {
             let scy = self.scy as u16;
@@ -259,18 +226,20 @@ impl PPU {
             // Send out 4 pixels.
             let fifo_x = self.pt_state.x - self.pt_state.fifo_size;
 
-            'fifo_flush: for i in 0..4 {
-                // First, we need to make sure there isn't a sprite starting on this pixel that
-                // needs to be processed.
-                // TODO: need to resolve x conflicts here.
-                for (j, idx) in self.scanline_objs.iter().enumerate() {
-                    let x = self.read_obj_x(*idx);
-                    if (fifo_x + i) == x - 8 {
-                        self.pt_state.fifo_stalled = Some(j);
-                        break 'fifo_flush;
-                    }
+            // First, we need to make sure there isn't a sprite starting somewhere in the next 4 pixels.
+            // If there is, we note where it is, and mark ourselves as stalled, and flush the pixels up to the
+            // beginning of the sprite.
+            // TODO: need to resolve x conflicts here.
+            let mut max = 4;
+            for (i, idx) in self.scanline_objs.iter().enumerate() {
+                let x = self.read_obj_x(*idx);
+                if fifo_x + 4 > x - 8 {
+                    max = x - 8 - fifo_x;
+                    self.pt_state.fifo_stalled = Some(i);
                 }
+            }
 
+            for _ in 0..max {
                 let pix = self.pt_state.fifo & 0b11;
                 self.pt_state.fifo >>= 2;
                 self.pt_state.fifo_size -= 1;
@@ -356,12 +325,18 @@ impl PPU {
 
         let mut lo = self.vram[tile_addr] as u16;
         let mut hi = self.vram[tile_addr + 1] as u16;
+
+        if !flip {
+            lo = (((lo as u64) * 0x0202020202 & 0x010884422010) % 1023) as u16;
+            hi = (((hi as u64) * 0x0202020202 & 0x010884422010) % 1023) as u16;
+        }
+
         let mut mask = 0b1111111100000000;
 
-        for i in 0..8 {
+        for _ in 0..8 {
             lo = ((lo & mask) << 1) | (lo & !mask);
             hi = ((hi & mask) << 1) | (hi & !mask);
-            mask |= 1 << (7-i);
+            mask |= mask >> 1;
         }
 
         lo | (hi << 1)
@@ -389,8 +364,37 @@ impl PPU {
         self.oam[(n * 4) as usize]
     }
 
+
+    pub fn read_oam(&self, addr: u16) -> u8 {
+        match self.state {
+            HBlank | VBlank => self.oam[addr as usize],
+            OAMSearch | PixelTransfer => 0xFF,
+        }
+    }
+
+    pub fn write_oam(&mut self, addr: u16, v: u8) {
+        match self.state {
+            HBlank | VBlank => { self.oam[addr as usize] = v },
+            OAMSearch | PixelTransfer => { },
+        }
+    }
+
+    pub fn read_vram(&self, addr: u16) -> u8 {
+        match self.state {
+            OAMSearch | HBlank | VBlank => self.vram[addr as usize],
+            PixelTransfer => 0xFF,
+        }
+    }
+
+    pub fn write_vram(&mut self, addr: u16, v: u8) {
+        match self.state {
+            OAMSearch | HBlank | VBlank => { self.vram[addr as usize] = v },
+            PixelTransfer => { },
+        }
+    }
+
     // Compute value of the LCDC register.
-    pub fn get_lcdc(&self) -> u8 {
+    pub fn read_lcdc(&self) -> u8 {
         let mut lcdc = 0;
 
         lcdc |= if self.enabled     { LCDC_LCD_ENABLED } else { 0 };
@@ -406,7 +410,7 @@ impl PPU {
     }
 
     // Update PPU state based on new LCDC value.
-    pub fn set_lcdc(&mut self, v: u8) {
+    pub fn write_lcdc(&mut self, v: u8) {
         // Are we enabling LCD from a previously disabled state?
         if v & LCDC_LCD_ENABLED > 0 && !self.enabled {
             self.enabled = true;
@@ -432,7 +436,7 @@ impl PPU {
     }
 
     // Compute value of the STAT register.
-    pub fn get_stat(&self) -> u8 {
+    pub fn read_stat(&self) -> u8 {
         let stat = match self.state {
             HBlank => 0,
             VBlank => 1,
@@ -443,7 +447,7 @@ impl PPU {
     }
 
     // Update PPU state based on new STAT value.
-    pub fn set_stat(&mut self, _v: u8) {
+    pub fn write_stat(&mut self, _v: u8) {
         // TODO:
     }
 

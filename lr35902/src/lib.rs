@@ -617,11 +617,11 @@ impl CPU {
 
             0x0000 ... 0x3FFF => self.cart.lo_rom()[addr as usize],
             0x4000 ... 0x7FFF => self.cart.hi_rom()[(addr - 0x4000) as usize],
-            0x8000 ... 0x9FFF => self.ppu.vram_read(addr - 0x8000),
+            0x8000 ... 0x9FFF => self.ppu.read_vram(addr - 0x8000),
             0xA000 ... 0xBFFF => self.cart.ram()[(addr - 0xA000) as usize],
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
-            0xFE00 ... 0xFE9F => self.ppu.oam_read(addr - 0xFE00),
+            0xFE00 ... 0xFE9F => self.ppu.read_oam(addr - 0xFE00),
             0xFEA0 ... 0xFEFF => 0x00,
 
             0xFF00            => self.read_joypad(),
@@ -653,8 +653,8 @@ impl CPU {
             0xFF30 ... 0xFF3F => self.sound.sound3_wave_ram.data[(addr - 0xFF30) as usize],
 
             // PPU
-            0xFF40            => self.ppu.get_lcdc(),
-            0xFF41            => self.ppu.get_stat(),
+            0xFF40            => self.ppu.read_lcdc(),
+            0xFF41            => self.ppu.read_stat(),
             0xFF42            => self.ppu.scy,
             0xFF43            => self.ppu.scx,
             0xFF44            => self.ppu.ly,
@@ -680,11 +680,11 @@ impl CPU {
             0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; },
 
             0x0000 ... 0x7FFF => { self.cart.write(addr, v); }
-            0x8000 ... 0x9FFF => { self.ppu.vram_write(addr - 0x8000, v) }
+            0x8000 ... 0x9FFF => { self.ppu.write_vram(addr - 0x8000, v) }
             0xA000 ... 0xBFFF => { self.cart.write(addr, v); }
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v }
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v }
-            0xFE00 ... 0xFE9F => { self.ppu.oam_write(addr - 0xFE00, v) }
+            0xFE00 ... 0xFE9F => { self.ppu.write_oam(addr - 0xFE00, v) }
             0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
             0xFF01            => { self.sb = v }
             0xFF02            => { self.sc = v }
@@ -711,8 +711,8 @@ impl CPU {
             0xFF10 ... 0xFF3F => { }
 
             // PPU
-            0xFF40            => { self.ppu.set_lcdc(v) }
-            0xFF41            => { self.ppu.set_stat(v) }
+            0xFF40            => { self.ppu.write_lcdc(v) }
+            0xFF41            => { self.ppu.write_stat(v) }
             0xFF42            => { self.ppu.scy = v }
             0xFF43            => { self.ppu.scx = v }
             0xFF44            => { }                   // LY is readonly.
