@@ -18,7 +18,8 @@ use self::PPUState::{*};
 
 #[derive(Debug, PartialEq)]
 struct PixelTransferState {
-    fifo_stalled: Option<usize>, // Will be Some(sprite num in OAM table) if fifo is blocked waiting for sprite mixin.
+    fifo_stalled: bool,     // If true, we're stalled on flushing out pixels until a sprite has been drawn.
+    fetch_obj: u8,    // If fifo_stalled is true, this will be set to the sprite index (in OAM table).
     fifo: u64,
     fifo_size: u8,
     scratch: u16,
@@ -72,7 +73,7 @@ pub struct PPU {
     pub vram: [u8; 0x2000], // 0x8000 - 0x9FFF
     pub oam: [u8; 0xA0],// 0xFE00 - 0xFDFF
 
-    scanline_objs: Vec<u8>,
+    scanline_objs: Vec<(u8, u8)>,
 
     pt_state: PixelTransferState,
 
@@ -92,7 +93,9 @@ impl PPU {
             bg_enabled: false, bg_code_hi: false, bg_data_hi: true,
             obj_enabled: false, obj_tall: false,
             vram: [0; 0x2000], oam: [0; 0xA0],
-            pt_state: PixelTransferState{scratch: 0, fifo_stalled: None, fifo: 0, fifo_size: 0, flush: false, obj_flush: false, x: 0, tile_y: 0, bg_y: 0},
+            pt_state: PixelTransferState{
+                scratch: 0, fifo_stalled: false, fetch_obj: 0, fifo: 0, fifo_size: 0, flush: false,
+                obj_flush: false, x: 0, tile_y: 0, bg_y: 0},
             scanline_objs: Vec::new(),
             framebuffer: [0; 160*144], fb_pos: 0,
         }
@@ -182,10 +185,19 @@ impl PPU {
                 let y = self.read_obj_y(idx);
 
                 if x > 0 && ly_bound >= y && ly_bound < y + h {
-                    self.scanline_objs.push(idx);
+                    self.scanline_objs.push((idx, x));
                 }
                 idx += 1;
             }
+
+            // Once the list is built, we ensure the elements are ordered by the OBJ x coord.
+            // If two OBJs have the same x coord, then we prioritise the OBJ by its position in OAM table.
+            // This ordering is important, we build the list here once, but then access it many times during
+            // pixel transfer, so this makes things more efficient.
+            // Also, in the name of effiency, the list is ordered with the lowest x co-ord coming last.
+            // This way, as we encounter OBJs, we just pop them off the list.
+            self.scanline_objs.sort_unstable_by(|(a_idx, a_x), (b_idx, b_x)| a_x.cmp(b_x).then(a_idx.cmp(b_idx)));
+            self.scanline_objs.reverse();
 
             self.sleep_cycles = 19;
         } else if self.cycles == 20 {
@@ -215,67 +227,89 @@ impl PPU {
         if self.cycles == 1 {
             let scy = self.scy as u16;
             let ly = self.ly as u16;
-
             self.pt_state.tile_y = ((scy + ly) % 8) as usize;
             self.pt_state.bg_y = ((ly + scy) / 8) % 32;
             self.pt_state.x = 0;
             self.pt_state.flush = false;
         }
 
-        if self.pt_state.fifo_size >= 12 || self.pt_state.x == 160 {
-            // Send out 4 pixels.
-            let fifo_x = self.pt_state.x - self.pt_state.fifo_size;
+        self.pixel_transfer_flush_pixels();
+        self.pixel_transfer_fetch_pixels();
 
-            // First, we need to make sure there isn't a sprite starting somewhere in the next 4 pixels.
-            // If there is, we note where it is, and mark ourselves as stalled, and flush the pixels up to the
-            // beginning of the sprite.
-            // TODO: need to resolve x conflicts here.
-            let mut max = 4;
-            for (i, idx) in self.scanline_objs.iter().enumerate() {
-                let x = self.read_obj_x(*idx);
-                if fifo_x + 4 > x - 8 {
-                    max = x - 8 - fifo_x;
-                    self.pt_state.fifo_stalled = Some(i);
-                }
-            }
+        if self.pt_state.x == 160 && self.pt_state.fifo_size == 0 {
+            let hblank_cycles = 51+43 - self.cycles;
+            self.next_state(HBlank);
+            self.sleep_cycles = hblank_cycles;
+        }
+    }
 
-            for _ in 0..max {
-                let pix = self.pt_state.fifo & 0b11;
-                self.pt_state.fifo >>= 2;
-                self.pt_state.fifo_size -= 1;
-                // TODO: better palette choice here :)
-                self.framebuffer[self.fb_pos] = match pix {
-                    0 => { 255 },
-                    1 => { 100 },
-                    2 => { 50 },
-                    3 => { 0 },
-                    _ => panic!("lol: {}", pix)
-                };
-                self.fb_pos += 1;
+    fn pixel_transfer_flush_pixels(&mut self) {
+        // The FIFO must always have at least 8 pixels in it.
+        if self.pt_state.fifo_stalled || (self.pt_state.fifo_size < 12 && self.pt_state.x < 160) {
+            return;
+        }
+
+        // Send out 4 pixels.
+        let fifo_x = self.pt_state.x - self.pt_state.fifo_size;
+
+        // First, we need to make sure there isn't a sprite starting somewhere in the next 4 pixels.
+        // If there is, we note where it is, and mark ourselves as stalled, then flush the pixels up to the
+        // beginning of the sprite.
+        // TODO: need to resolve x conflicts here.
+        let mut max = 4;
+
+        if self.scanline_objs.len() > 0 {
+            let (obj_idx, obj_x) = self.scanline_objs.last().unwrap();
+            if fifo_x + 4 > obj_x - 8 {
+                max = obj_x - 8 - fifo_x;
+                self.pt_state.fifo_stalled = true;
+                self.pt_state.fetch_obj = *obj_idx;
             }
         }
 
-        if let Some(num) = self.pt_state.fifo_stalled {
+        for _ in 0..max {
+            let pix = (self.pt_state.fifo & (0b11 << (self.pt_state.fifo_size * 2))) >> (self.pt_state.fifo_size * 2);
+            self.pt_state.fifo_size -= 1;
+            // TODO: better palette choice here :)
+            self.framebuffer[self.fb_pos] = match pix {
+                0 => { 255 },
+                1 => { 100 },
+                2 => { 50 },
+                3 => { 0 },
+                _ => unreachable!("Pixels are 2bpp")
+            };
+            self.fb_pos += 1;
+        }
+    }
+
+    fn pixel_transfer_fetch_pixels(&mut self) {
+        if self.pt_state.fifo_stalled {
             if self.pt_state.obj_flush {
-                self.scanline_objs.remove(num);
-                self.pt_state.fifo_stalled = None;
+                self.scanline_objs.pop();
+                self.pt_state.fifo_stalled = false;
                 self.pt_state.obj_flush = false;
             } else {
-                let obj = self.read_oam_entry(self.scanline_objs[num]);
+                let obj = self.read_oam_entry(self.pt_state.fetch_obj);
                 let obj_pixels = self.get_tile_row((obj.code) as usize, (self.ly + 16 - obj.y) as usize, false, false);
                 // TODO: need to be tracking where pixel came from (BG/sprite num) to resolve conflicts.
                 // and ensure empty pixels are preserved on target.
                 // self.pt_state.fifo &= !(0b11 << i*2);
-                self.pt_state.fifo |= obj_pixels as u64;
-
+                self.pt_state.fifo |= (obj_pixels as u64) << 16;
                 self.pt_state.obj_flush = true;
             }
-        } else if self.pt_state.x < 160 && self.pt_state.flush {
-            self.pt_state.fifo |= (self.pt_state.scratch as u64) << self.pt_state.fifo_size*2;
+            return;
+        }
+
+        if self.pt_state.x < 160 && self.pt_state.flush {
+            self.pt_state.fifo <<= 16;
+            self.pt_state.fifo |= self.pt_state.scratch as u64;
             self.pt_state.fifo_size += 8;
             self.pt_state.x += 8;
             self.pt_state.flush = false;
-        } else if self.pt_state.x < 160 {
+            return;
+        }
+
+        if self.pt_state.x < 160 {
             if self.bg_enabled {
                 let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
 
@@ -305,12 +339,6 @@ impl PPU {
 
             self.pt_state.flush = true;
         }
-
-        if self.pt_state.x == 160 && self.pt_state.fifo_size == 0 {
-            let hblank_cycles = 51+43 - self.cycles;
-            self.next_state(HBlank);
-            self.sleep_cycles = hblank_cycles;
-        }
     }
 
     // Decodes a row of pixels for a tile.
@@ -326,7 +354,9 @@ impl PPU {
         let mut lo = self.vram[tile_addr] as u16;
         let mut hi = self.vram[tile_addr + 1] as u16;
 
-        if !flip {
+        if flip {
+            // This insanity flips the order of the bits in each byte using dark sorcery.
+            // http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
             lo = (((lo as u64) * 0x0202020202 & 0x010884422010) % 1023) as u16;
             hi = (((hi as u64) * 0x0202020202 & 0x010884422010) % 1023) as u16;
         }
