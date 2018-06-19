@@ -59,30 +59,6 @@ fn main() -> Result<()> {
 
     let mut gameboy = gameboy::Gameboy::new(&rom)?;
 
-            // if cpu.pc() == 0x681 {
-            //     break;
-            // }
-
-    //         let cycles = cpu.run();
-    //         if print_serial {
-    //             let ser = cpu.serial_get();
-    //             if ser.is_some() {
-    //               io::stdout().write(&[ser.unwrap()]).unwrap();
-    //               io::stdout().flush().unwrap();
-    //             }
-    //         }
-    //         if cpu.is_vblank() {
-    //             {
-    //                 let mut emu_framebuffer = emu_framebuffer.lock().unwrap();
-    //                 emu_framebuffer.copy_from_slice(&cpu.framebuffer()[..]);
-    //             }
-    //         }
-
-    //         if limit { emu_ratelimit.wait_for(cycles as usize); }
-    //     }
-
-    // });
-
     audio_device.resume();
 
     'running: loop {
@@ -120,6 +96,7 @@ fn main() -> Result<()> {
 
         {
             let (framebuffer, audio_samples) = gameboy.run_frame();
+
             // audio_device.clear();
             // audio_device.queue(audio_samples);
 
@@ -138,6 +115,15 @@ fn main() -> Result<()> {
             canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
             canvas.present();
         }
+
+        if print_serial {
+            let ser = gameboy.cpu.serial_get();
+            if ser.is_some() {
+              io::stdout().write(&[ser.unwrap()]).unwrap();
+              io::stdout().flush().unwrap();
+            }
+        }
+
         if gameboy.breakpoint_hit {
             break 'running;
         }

@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate bitflags;
+
 mod ppu;
 mod sound;
 
@@ -8,16 +11,13 @@ static BOOT_ROM: &[u8; 256] = include_bytes!("boot.rom");
 
 pub const SCREEN_SIZE: usize = 160 * 144;
 
-const FLAG_ZERO:       u8 = 0b10000000;
-const FLAG_SUBTRACT:   u8 = 0b01000000;
-const FLAG_HALF_CARRY: u8 = 0b00100000;
-const FLAG_CARRY:      u8 = 0b00010000;
-
-enum FlagOp {
-    Z(bool),
-    N(bool),
-    H(bool),
-    C(bool),
+bitflags! {
+    struct Flags: u8 {
+        const Z = 0b10000000;
+        const N = 0b01000000;
+        const H = 0b00100000;
+        const C = 0b00010000;
+    }
 }
 
 pub trait Cartridge {
@@ -293,7 +293,7 @@ pub struct CPU {
     e: u8,
     h: u8,
     l: u8,
-    f: u8,
+    f: Flags,
     sp: u16,
     pc: u16,
 
@@ -345,7 +345,7 @@ pub struct CPU {
 impl CPU {
     pub fn new(cart: Box<Cartridge>) -> CPU {
         CPU{
-            a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, sp: 0, pc: 0,
+            a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Flags::empty(), sp: 0, pc: 0,
             bootrom_enabled: true,
             ram: [0; 0x2000], wram: [0; 0x7F],
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
@@ -707,7 +707,8 @@ impl CPU {
             0xFF80 ... 0xFFFE => { self.wram[(addr - 0xFF80) as usize] = v }
             0xFFFF            => { self.ie = v & 0x1F }
 
-            _                 => { panic!("Unhandled write to ${:X}", addr) }
+            _ => {},
+            // _                 => { panic!("Unhandled write to ${:X}", addr) }
         };
     }
 
@@ -1299,28 +1300,6 @@ impl CPU {
         }
     }
 
-    fn flags_query(&self, f: u8) -> bool {
-        self.f & f > 0
-    }
-
-    fn flags_update(&mut self, ops: &[FlagOp]) {
-        let mut mask: u8 = 0;
-        let mut new: u8 = 0;
-        for op in ops {
-            match op {
-                FlagOp::Z(true)  => { mask |= FLAG_ZERO; new |= FLAG_ZERO },
-                FlagOp::Z(false) => { mask |= FLAG_ZERO; },
-                FlagOp::N(true)  => { mask |= FLAG_SUBTRACT; new |= FLAG_SUBTRACT },
-                FlagOp::N(false) => { mask |= FLAG_SUBTRACT; },
-                FlagOp::H(true)  => { mask |= FLAG_HALF_CARRY; new |= FLAG_HALF_CARRY },
-                FlagOp::H(false) => { mask |= FLAG_HALF_CARRY; },
-                FlagOp::C(true)  => { mask |= FLAG_CARRY; new |= FLAG_CARRY },
-                FlagOp::C(false) => { mask |= FLAG_CARRY; },
-            }
-        }
-        self.f = (self.f & !(mask)) | new;
-    }
-
     fn get_reg8(&self, reg: Reg8) -> u8 {
         match reg {
             A => self.a,
@@ -1347,7 +1326,7 @@ impl CPU {
 
     fn get_reg16(&self, reg: Reg16) -> u16 {
         let (hi, lo) = match reg {
-            AF => { (self.a, self.f) },
+            AF => { (self.a, self.f.bits()) },
             BC => { (self.b, self.c) },
             DE => { (self.d, self.e) },
             HL => { (self.h, self.l) },
@@ -1359,7 +1338,11 @@ impl CPU {
 
     fn set_reg16(&mut self, reg: Reg16, v: u16) {
         let (hi, lo) = match reg {
-            AF => { (&mut self.a, &mut self.f) },
+            AF => {
+                self.a = ((v & 0xFF00) >> 8) as u8;
+                self.f = Flags::from_bits_truncate(v as u8);
+                return;
+            },
             BC => { (&mut self.b, &mut self.c) },
             DE => { (&mut self.d, &mut self.e) },
             HL => { (&mut self.h, &mut self.l) },
@@ -1413,10 +1396,9 @@ impl CPU {
     // Flags = Z:* N:0 H:* C:-
     fn inc8(&mut self, o: Operand8) {
         let v = o.get(self).wrapping_add(1);
-        // self.f &= !FLAG_SUBTRACT;
-        // if v == 0 { self.f |= FLAG_ZERO } else { self.f &= !FLAG_ZERO };
-        // if v & 0x0F == 0 { self.f |= FLAG_HALF_CARRY } else { self.f &= !FLAG_HALF_CARRY };
-        self.flags_update(&[FlagOp::Z(v == 0), FlagOp::N(false), FlagOp::H(v & 0x0F == 0)]);
+        self.f.set(Flags::Z, v == 0);
+        self.f.remove(Flags::N);
+        self.f.set(Flags::H, v & 0x0F == 0);
         o.set(self, v);
     }
 
@@ -1424,7 +1406,9 @@ impl CPU {
     // Flags = Z:* N:1 H:* C:-
     fn dec8(&mut self, o: Operand8) {
         let v = o.get(self).wrapping_sub(1);
-        self.flags_update(&[FlagOp::Z(v == 0), FlagOp::N(true), FlagOp::H(v & 0x0F == 0x0F)]);
+        self.f.set(Flags::Z, v == 0);
+        self.f.insert(Flags::N);
+        self.f.set(Flags::H, v & 0x0F == 0x0F);
         o.set(self, v);
     }
 
@@ -1450,72 +1434,67 @@ impl CPU {
     fn daa(&mut self) {
         let mut carry = false;
 
-        if self.f & FLAG_SUBTRACT == 0 {
-            if self.f & FLAG_CARRY > 0 || self.a > 0x99 {
+        if !self.f.contains(Flags::N) {
+            if self.f.contains(Flags::C) || self.a > 0x99 {
                 self.a = self.a.wrapping_add(0x60);
                 carry = true;
             }
-            if self.f & FLAG_HALF_CARRY > 0 || (self.a & 0xF) > 9 {
+            if self.f.contains(Flags::H) || (self.a & 0xF) > 9 {
                 self.a = self.a.wrapping_add(0x06);
             }
-        } else if self.f & FLAG_CARRY > 0 {
+        } else if self.f.contains(Flags::C) {
             carry = true;
-            self.a = self.a.wrapping_add(if self.f & FLAG_HALF_CARRY > 0 { 0x9A } else { 0xA0 });
-        } else if self.f & FLAG_HALF_CARRY > 0 {
+            self.a = self.a.wrapping_add(if self.f.contains(Flags::H) { 0x9A } else { 0xA0 });
+        } else if self.f.contains(Flags::H) {
             self.a = self.a.wrapping_add(0xFA);
         }
 
-        self.f &= !(FLAG_HALF_CARRY | FLAG_ZERO | FLAG_CARRY);
-        if carry {
-            self.f |= FLAG_CARRY;
-        }
-        if self.a == 0 {
-            self.f |= FLAG_ZERO;
-        }
+        self.f.set(Flags::Z, self.a == 0);
+        self.f.remove(Flags::H);
+        self.f.set(Flags::C, carry);
     }
 
     // CPL
     // Flags = Z:- N:1 H:1 C:-
     fn cpl(&mut self) {
         self.a = !self.a;
-        self.flags_update(&[FlagOp::N(true), FlagOp::H(true)]);
+        self.f |= Flags::N|Flags::H;
     }
 
     // CCF
     // Flags = Z:- N:0 H:0 C:*
     fn ccf(&mut self) {
-        let carry = self.flags_query(FLAG_CARRY);
-        self.flags_update(&[FlagOp::N(false), FlagOp::H(false), FlagOp::C(!carry)]);
+        self.f &= Flags::Z|Flags::C;
+        self.f.toggle(Flags::C);
     }
 
     // SCF
     // Flags = Z:- N:0 H:0 C:1
     fn scf(&mut self) {
-        self.flags_update(&[FlagOp::N(false), FlagOp::H(false), FlagOp::C(true)]);
+        self.f = (self.f & Flags::Z) | Flags::C;
     }
 
     // ADD A, %r8 | ADD A, (HL) | ADD A, $d8
     // ADC A, %r8 | ADC A, (HL) | ADC A, $d8
     // Flags = Z:* N:0 H:* C:*
     fn add8(&mut self, o: Operand8, carry: bool) {
-        let carry = if carry && (self.f & FLAG_CARRY > 0) { 1 } else { 0 };
+        let carry = if carry && self.f.contains(Flags::C) { 1 } else { 0 };
 
         let old = self.a;
         let v = o.get(self);
         let new = old.wrapping_add(v).wrapping_add(carry);
         self.a = new;
-        self.flags_update(&[
-            FlagOp::Z(new == 0),
-            FlagOp::N(false),
-            FlagOp::H((((old & 0xF) + (v & 0xF)) + carry) & 0x10 == 0x10),
-            FlagOp::C((old as u16) + (v as u16) + (carry as u16) > 0xFF)]);
+        self.f.set(Flags::Z, new == 0);
+        self.f.remove(Flags::N);
+        self.f.set(Flags::H, (((old & 0xF) + (v & 0xF)) + carry) & 0x10 == 0x10);
+        self.f.set(Flags::C, (old as u16) + (v as u16) + (carry as u16) > 0xFF);
     }
 
     // SUB    %r8 | SUB    (HL) | SUB    $d8
     // SBC A, %r8 | SBC A, (HL) | SBC A, $d8
     // Flags = Z:* N:1 H:* C:*
     fn sub8(&mut self, o: Operand8, carry: bool, store: bool) {
-        let carry = if carry && (self.f & FLAG_CARRY != 0) { 1 } else { 0 };
+        let carry = if carry && self.f.contains(Flags::C) { 1 } else { 0 };
 
         let a = self.a;
         let v = o.get(self);
@@ -1524,11 +1503,10 @@ impl CPU {
             self.a = new_a;
         }
 
-        self.flags_update(&[
-            FlagOp::Z(new_a == 0),
-            FlagOp::N(true),
-            FlagOp::H(((a & 0xF) as u16) < ((v & 0xF) as u16) + (carry as u16)),
-            FlagOp::C((a as u16) < (v as u16) + (carry as u16))]);
+        self.f.set(Flags::Z, new_a == 0);
+        self.f.set(Flags::N, true);
+        self.f.set(Flags::H, ((a & 0xF) as u16) < ((v & 0xF) as u16) + (carry as u16));
+        self.f.set(Flags::C, (a as u16) < (v as u16) + (carry as u16));
     }
 
     // ADD SP, r8
@@ -1542,11 +1520,10 @@ impl CPU {
         self.advance_clock();
         self.advance_clock();
 
-        self.flags_update(&[
-            FlagOp::Z(false),
-            FlagOp::N(false),
-            FlagOp::H(((sp & 0xF) + (d & 0xF)) & 0x10 > 0),
-            FlagOp::C(((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0)]);
+        self.f.remove(Flags::Z);
+        self.f.remove(Flags::N);
+        self.f.set(Flags::H, ((sp & 0xF) + (d & 0xF)) & 0x10 > 0);
+        self.f.set(Flags::C, ((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0);
     }
 
     // ADD HL, rr
@@ -1559,10 +1536,9 @@ impl CPU {
 
         self.advance_clock();
 
-        self.flags_update(&[
-            FlagOp::N(false),
-            FlagOp::H(((hl & 0xFFF) + (v & 0xFFF)) & 0x1000 > 0),
-            FlagOp::C(overflow)]);
+        self.f.remove(Flags::N);
+        self.f.set(Flags::H, ((hl & 0xFFF) + (v & 0xFFF)) & 0x1000 > 0);
+        self.f.set(Flags::C, overflow);
     }
 
     // LD %r8, %r8
@@ -1600,11 +1576,9 @@ impl CPU {
         let d = d as i16 as u16;
         let v = sp.wrapping_add(d);
         self.set_reg16(HL, v);
-        self.flags_update(&[
-            FlagOp::Z(false),
-            FlagOp::N(false),
-            FlagOp::H((sp & 0xF) + (d & 0xF) & 0x10 > 0),
-            FlagOp::C((sp & 0xFF) + (d & 0xFF) & 0x100 > 0)]);
+        self.f = Flags::empty();
+        self.f.set(Flags::H, (sp & 0xF) + (d & 0xF) & 0x10 > 0);
+        self.f.set(Flags::C, (sp & 0xFF) + (d & 0xFF) & 0x100 > 0);
         self.advance_clock();
     }
 
@@ -1621,26 +1595,19 @@ impl CPU {
             BitwiseOp::OR => a | v,
             BitwiseOp::XOR => a ^ v,
         };
-        // self.f = 0;
-        // if self.a == 0 { self.f |= FLAG_ZERO }
-        // if hc { self.f |= FLAG_HALF_CARRY }
 
-        let z = self.a == 0;
-        self.flags_update(&[
-            FlagOp::Z(z),
-            FlagOp::N(false),
-            FlagOp::H(hc),
-            FlagOp::C(false)]);
+        self.f = Flags::empty();
+        self.f.set(Flags::Z, self.a == 0);
+        self.f.set(Flags::H, hc);
     }
 
     // BIT b, r
     // Flags = Z:* N:0 H:1 C:-
     fn bit(&mut self, b: u8, o: Operand8) {
         let v = o.get(self) & (1 << b);
-        self.flags_update(&[
-            FlagOp::Z(v == 0),
-            FlagOp::N(false),
-            FlagOp::H(true)]);
+        self.f.set(Flags::Z, v == 0);
+        self.f.remove(Flags::N);
+        self.f.insert(Flags::H);
     }
 
     // RES b, r
@@ -1656,14 +1623,12 @@ impl CPU {
     // Flags = Z:* N:0 H:0 C:*
     fn rr(&mut self, o: Operand8, extended: bool) {
         let v = o.get(self);
-        let msb = if self.f & FLAG_CARRY > 0 { 0x80 } else { 0 };
+        let msb = if self.f.contains(Flags::C) { 0x80 } else { 0 };
         let carry = v & 0x1 > 0;
         let v = o.set(self, v >> 1 | msb);
-        self.flags_update(&[
-            FlagOp::Z(extended && v == 0),
-            FlagOp::N(false),
-            FlagOp::H(false),
-            FlagOp::C(carry)]);
+        self.f = Flags::empty();
+        self.f.set(Flags::Z, extended && v == 0);
+        self.f.set(Flags::C, carry);
     }
 
     // RL %r8
@@ -1672,14 +1637,12 @@ impl CPU {
     // Flags = Z:* N:0 H:0 C:*
     fn rl(&mut self, o: Operand8, set_zero: bool, preserve_lsb: bool) {
         let v = o.get(self);
-        let lsb = if preserve_lsb && self.f & FLAG_CARRY > 0 { 1 } else { 0 };
+        let lsb = if preserve_lsb && self.f.contains(Flags::C) { 1 } else { 0 };
         let carry = v & 0x80 > 0;
         let v = o.set(self, v << 1 | lsb);
-        self.flags_update(&[
-            FlagOp::Z(set_zero && v == 0),
-            FlagOp::N(false),
-            FlagOp::H(false),
-            FlagOp::C(carry)]);
+        self.f = Flags::empty();
+        self.f.set(Flags::Z, set_zero && v == 0);
+        self.f.set(Flags::C, carry);
     }
 
     // RLC %r8
@@ -1690,11 +1653,9 @@ impl CPU {
         let carry = v & 0x80 > 0;
         let lsb = if carry { 1 } else { 0 };
         let v = o.set(self, v << 1 | lsb);
-        self.flags_update(&[
-            FlagOp::Z(extended && v == 0),
-            FlagOp::N(false),
-            FlagOp::H(false),
-            FlagOp::C(carry)]);
+        self.f = Flags::empty();
+        self.f.set(Flags::Z, extended && v == 0);
+        self.f.set(Flags::C, carry);
     }
 
     // SRA r
@@ -1704,12 +1665,9 @@ impl CPU {
         let carry = v & 0x01 > 0;
         let preserve = if preserve_msb { v & 0x80 } else { 0 };
         let v = o.set(self, v >> 1 | preserve);
-        self.flags_update(&[
-            FlagOp::Z(v == 0),
-            FlagOp::N(false),
-            FlagOp::H(false),
-            FlagOp::C(carry),
-        ]);
+        self.f = Flags::empty();
+        self.f.set(Flags::Z, v == 0);
+        self.f.set(Flags::C, carry);
     }
 
     // RRC r
@@ -1719,12 +1677,9 @@ impl CPU {
         let carry = v & 0x1 > 0;
         let msb = if carry { 0x80 } else { 0 };
         let v = o.set(self, v >> 1 | msb);
-        self.flags_update(&[
-            FlagOp::Z(extended && v == 0),
-            FlagOp::N(false),
-            FlagOp::H(false),
-            FlagOp::C(carry),
-        ]);
+        self.f = Flags::empty();
+        self.f.set(Flags::Z, extended && v == 0);
+        self.f.set(Flags::C, carry);
     }
 
     // SWAP r
@@ -1733,21 +1688,17 @@ impl CPU {
         let v = o.get(self);
         let v = ((v & 0xF) << 4) | ((v & 0xF0) >> 4);
         o.set(self, v);
-        self.flags_update(&[
-            FlagOp::Z(v == 0),
-            FlagOp::N(false),
-            FlagOp::H(false),
-            FlagOp::C(false),
-        ]);
+        self.f = Flags::empty();
+        self.f.set(Flags::Z, v == 0);
     }
 
     fn check_jmp_condition(&mut self, cc: Option<FlagCondition>) -> bool {
         match cc {
             None => true,
-            Some(FlagCondition::NZ) => !self.flags_query(FLAG_ZERO),
-            Some(FlagCondition::Z)  => self.flags_query(FLAG_ZERO),
-            Some(FlagCondition::NC) => !self.flags_query(FLAG_CARRY),
-            Some(FlagCondition::C)  => self.flags_query(FLAG_CARRY),
+            Some(FlagCondition::NZ) => !self.f.contains(Flags::Z),
+            Some(FlagCondition::Z)  => self.f.contains(Flags::Z),
+            Some(FlagCondition::NC) => !self.f.contains(Flags::C),
+            Some(FlagCondition::C)  => self.f.contains(Flags::C),
         }
     }
 
