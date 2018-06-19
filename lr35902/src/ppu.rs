@@ -40,10 +40,10 @@ impl PixelFifo {
 
     // Pushes a BG tile row into the FIFO.
     fn push_bg(&mut self, row: u16, mask: u16) {
-        self.obj_mask = 0;  // TODO:
-
         // Shift the bits in the FIFO left by 16. 8 pixels, each pixel has 2 bits.
         self.fifo <<= 16;
+        self.bg_mask <<= 16;
+        self.obj_mask <<= 16;
         self.fifo |= row as u32;
         self.bg_mask |= mask as u32;
         self.size += 16;
@@ -73,7 +73,7 @@ impl PixelFifo {
 
         row &= mask;
 
-        // And now all that's left to do is merge the final pixel data + mask data into the FIFO.
+        // And now all that's left to do is merge the final pixel data + mask data into the FIFO. Easy, right?
         self.fifo |= row;
         self.obj_mask |= mask;
     }
@@ -108,9 +108,9 @@ pub struct PPU {
     pub lyc: u8,
     pub wx: u8,
     pub wy: u8,
-    pub bgp: u8,
-    pub obp0: u8,
-    pub obp1: u8,
+    bgp: [u8; 4],
+    obp0: [u8; 4],
+    obp1: [u8; 4],
 
     interrupt_oam: bool,
     interrupt_hblank: bool,
@@ -145,7 +145,7 @@ impl PPU {
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
             wx: 0, wy: 0,
-            bgp: 0, obp0: 0, obp1: 0,
+            bgp: [0, 1, 2, 3], obp0: [0, 1, 2, 3], obp1: [0, 1, 2, 3],
             win_enabled: false, win_code_hi: false,
             bg_enabled: false, bg_code_hi: false, bg_data_lo: false,
             obj_enabled: false, obj_tall: false,
@@ -378,8 +378,9 @@ impl PPU {
                 self.pt_state.obj_flush = false;
             } else {
                 let obj = self.read_oam_entry(self.pt_state.fetch_obj);
+                let palette = if obj.palette == 1 { &self.obp1 } else { &self.obp0 };
                 // TODO: vert flip.
-                let (obj_pixels, obj_mask) = self.get_tile_row((obj.code) as usize, (self.ly + 16 - obj.y) as usize, false, obj.horz_flip);
+                let (obj_pixels, obj_mask) = self.get_tile_row((obj.code) as usize, (self.ly + 16 - obj.y) as usize, false, obj.horz_flip, palette);
                 self.pt_state.fifo.blend_obj(obj_pixels, obj_mask, !obj.priority);
                 self.pt_state.obj_flush = true;
             }
@@ -418,14 +419,14 @@ impl PPU {
 
             // Now figure out which pixels in this particular tile we need.
 
-            self.pt_state.scratch = self.get_tile_row(tile, self.pt_state.tile_y, !self.bg_data_lo, false);
+            self.pt_state.scratch = self.get_tile_row(tile, self.pt_state.tile_y, !self.bg_data_lo, false, &self.bgp);
         }
     }
 
     // Decodes a row of pixels for a tile.
     // Can fetch tiles from either the low range (0x8000-0x8FFF in VRAM)
     // Or from the high range (0x8800) in which case the tile num is interpreted as a signed offset.
-    fn get_tile_row(&self, tile_num: usize, y: usize, hi: bool, horiz_flip: bool) -> (u16, u16) {
+    fn get_tile_row(&self, tile_num: usize, y: usize, hi: bool, horiz_flip: bool, pal: &[u8; 4]) -> (u16, u16) {
         let tile_addr: usize = if hi {
             0x800 + (((tile_num as u8 as i8) as usize) * 16)
         } else {
@@ -442,27 +443,33 @@ impl PPU {
             hi = (((hi as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
         }
 
-        PPU::interleave_bits(lo, hi)
+        PPU::build_tile(lo, hi, pal)
     }
 
     // Tile pixels are stored as 2 bytes which must be interleaved. Each pixel is 2 bit. The first byte
     // contains the high bit for each pixel, and the second byte contains the low bits.
     // Both the pixels and a mask are returned. The mask specifies which bits contain active pixels.
     // The mask information is used by PixelFifo when blending OBJs.
-    fn interleave_bits(lo: u8, hi: u8) -> (u16, u16) {
-        let lo = lo as u16;
-        let hi = hi as u16;
+    // Finally, we apply the relevant palette transformation to each pixel. The palette can be either
+    // the BGP, OBP0 or OBP1 tables. An interesting thing to note here is that we specify the mask based
+    // on the original value. This means a pixel with value 00 is considered "transparent" or "not present", even
+    // if that pixel then maps to some other value via the palette.
+    fn build_tile(lo: u8, hi: u8, pal: &[u8; 4]) -> (u16, u16) {
+        let mut lo = lo as u16;
+        let mut hi = hi as u16;
         let mut mask: u16 = 0;
         let mut row: u16 = 0;
 
         // Loop through each bit pair in lo+hi and interleave them. If the result is anything but zero
         // we also set the mask.
+        hi <<= 1;
         for i in 0..8 {
-            let pix = (lo & 1 << i) << i | (hi & 1 << i) << i + 1;
-            row |= pix;
+            let pix = (lo & 1) | (hi & 2);
+            lo >>= 1; hi >>= 1;
             if pix > 0 {
                 mask |= 0b11 << (i*2);
             }
+            row |= (pal[pix as usize] as u16) << (i * 2);
         }
 
         (row, mask)
@@ -545,7 +552,6 @@ impl PPU {
             self.fb_pos = 0;
             self.ly = 0;
         } else if !enabled && self.enabled {
-            // TODO: check current state here, can't switch LCD off in the middle of pixel transfer.
             if let VBlank = self.state {
                 self.enabled = false;
             } else {
@@ -585,6 +591,39 @@ impl PPU {
         self.interrupt_lyc    = v & 0b0100_0000 > 0;
     }
 
+    pub fn read_bgp(&self) -> u8 {
+        self.bgp[0] | self.bgp[1] << 2 | self.bgp[2] << 4 | self.bgp[3] << 6
+    }
+
+    pub fn write_bgp(&mut self, v: u8) {
+        self.bgp[0] = v & 0b11;
+        self.bgp[1] = (v & 0b1100) >> 2;
+        self.bgp[2] = (v & 0b110000) >> 4;
+        self.bgp[3] = (v & 0b11000000) >> 6;
+    }
+
+    pub fn read_obp0(&self) -> u8 {
+        self.obp0[0] | self.obp0[1] << 2 | self.obp0[2] << 4 | self.obp0[3] << 6
+    }
+
+    pub fn write_obp0(&mut self, v: u8) {
+        self.obp0[0] = v & 0b11;
+        self.obp0[1] = (v & 0b1100) >> 2;
+        self.obp0[2] = (v & 0b110000) >> 4;
+        self.obp0[3] = (v & 0b11000000) >> 6;
+    }
+
+    pub fn read_obp1(&self) -> u8 {
+        self.obp1[0] | self.obp1[1] << 2 | self.obp1[2] << 4 | self.obp1[3] << 6
+    }
+
+    pub fn write_obp1(&mut self, v: u8) {
+        self.obp1[0] = v & 0b11;
+        self.obp1[1] = (v & 0b1100) >> 2;
+        self.obp1[2] = (v & 0b110000) >> 4;
+        self.obp1[3] = (v & 0b11000000) >> 6;
+    }
+
     pub fn dma_ok(&self) -> bool {
         match self.state {
             HBlank(_) | VBlank => true,
@@ -598,9 +637,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn interleave_bits() {
-        let (row, mask) = PPU::interleave_bits(0b10101010, 0b10000001);
+    fn build_tile() {
+        // Check that row and mask are built correctly.
+        let (row, mask) = PPU::build_tile(0b10101010, 0b10000001, &[0b00, 0b01, 0b10, 0b11]);
         assert_eq!(row,  0b1100010001000110);
+        assert_eq!(mask, 0b1100110011001111);
+
+        // Check that palette transformation is done with correct mask.
+        let (row, mask) = PPU::build_tile(0b10101010, 0b10000001, &[0b11, 0b10, 0b01, 0b00]);
+        assert_eq!(row,  0b0000000010001001);
         assert_eq!(mask, 0b1100110011001111);
     }
 

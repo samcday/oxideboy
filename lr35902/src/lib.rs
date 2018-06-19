@@ -636,9 +636,9 @@ impl CPU {
             0xFF43            => self.ppu.scx,
             0xFF44            => self.ppu.ly,
             0xFF45            => self.ppu.lyc,
-            0xFF47            => self.ppu.bgp,
-            0xFF48            => self.ppu.obp0,
-            0xFF49            => self.ppu.obp1,
+            0xFF47            => self.ppu.read_bgp(),
+            0xFF48            => self.ppu.read_obp0(),
+            0xFF49            => self.ppu.read_obp1(),
             0xFF4A            => self.ppu.wy,
             0xFF4B            => self.ppu.wx,
 
@@ -695,9 +695,9 @@ impl CPU {
             0xFF44            => { }                   // LY is readonly.
             0xFF45            => { self.ppu.lyc = v }
             0xFF46            => { self.dma(v) }
-            0xFF47            => { self.ppu.bgp = v }
-            0xFF48            => { self.ppu.obp0 = v }
-            0xFF49            => { self.ppu.obp1 = v }
+            0xFF47            => { self.ppu.write_bgp(v) }
+            0xFF48            => { self.ppu.write_obp0(v) }
+            0xFF49            => { self.ppu.write_obp1(v) }
             0xFF40 ... 0xFF43 => { }
             0xFF4A            => { self.ppu.wy = v },
             0xFF4B            => { self.ppu.wx = v },
