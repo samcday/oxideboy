@@ -7,7 +7,7 @@ pub fn create(rom: &[u8]) -> Result<Box<lr35902::Cartridge>, String> {
     match rom[0x147] {
         0 => Ok(Box::new(BasicCart::new(rom))),
         1 | 2 | 3 => Ok(Box::new(MBC1Cart::new(rom))),
-        v => Err(format!("ROM had unknown cartridge type {}", v))
+        v => Err(format!("ROM had unknown cartridge type {:X}", v))
     }
 }
 

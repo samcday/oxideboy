@@ -16,7 +16,10 @@ struct PixelTransferState {
     flush: bool,        // When true, the next 8 pixels are written into FIFO.
     obj_flush: bool,
     tile_y: usize,
+    win_tile_y: usize,
     bg_y: u16,
+    win_y: u16,
+    in_win: bool,
 }
 
 // While drawing a scanline, we keep a small number of pixels in a FIFO queue before writing them to framebuffer.
@@ -32,6 +35,10 @@ struct PixelFifo {
 impl PixelFifo {
     fn new() -> PixelFifo {
         PixelFifo { fifo: 0, obj_mask: 0, bg_mask: 0, size: 0 }
+    }
+
+    fn clear(&mut self) {
+        self.size = 0;
     }
 
     fn len(&self) -> u8 {
@@ -153,7 +160,7 @@ impl PPU {
             vram: [0; 0x2000], oam: [0; 0xA0],
             pt_state: PixelTransferState{
                 scratch: (0, 0), fifo_stalled: false, fetch_obj: 0, fifo: PixelFifo::new(), flush: false,
-                obj_flush: false, x: 0, tile_y: 0, bg_y: 0},
+                obj_flush: false, x: 0, tile_y: 0, bg_y: 0, in_win: false, win_tile_y: 0, win_y: 0, },
             scanline_objs: Vec::new(),
             framebuffer: [0; 160*144], fb_pos: 0,
         }
@@ -304,16 +311,19 @@ impl PPU {
     // emulate ok.
     // Note that the first 4 cycles are spent waiting for the fetcher to fill the FIFO, which is why
     // this stage takes a minimum of 43 cycles.
-    // TODO: window rendering
     fn pixel_transfer(&mut self) {
         // On the first cycle of this stage we ensure our state info is clean.
         if self.cycles == 1 {
             let scy = self.scy as u16;
             let ly = self.ly as u16;
+            let wy = self.wy as u16;
             self.pt_state.tile_y = ((scy + ly) % 8) as usize;
             self.pt_state.bg_y = ((ly + scy) / 8) % 32;
+            self.pt_state.win_y = ((ly + wy) / 8) % 32;
+            self.pt_state.win_tile_y = ((wy + ly) % 8) as usize;
             self.pt_state.x = 0;
             self.pt_state.flush = false;
+            self.pt_state.in_win = false;
         }
 
         self.pixel_transfer_flush_pixels();
@@ -340,7 +350,7 @@ impl PPU {
         }
 
         // Send out 4 pixels.
-        let fifo_x = self.pt_state.x - self.pt_state.fifo.len();
+        let mut fifo_x = self.pt_state.x - self.pt_state.fifo.len();
 
         // First, we need to make sure there isn't a sprite starting somewhere in the next 4 pixels.
         // If there is, we note where it is, and mark ourselves as stalled, then flush the pixels up to the
@@ -356,9 +366,16 @@ impl PPU {
         }
 
         for _ in 0..max {
+            if self.win_enabled && self.ly >= self.wx {
+                if fifo_x == (self.wx - 7) {
+                    self.pt_state.in_win = true;
+                    self.pt_state.fifo_stalled = false;
+                    self.pt_state.fifo.clear();
+                    break;
+                }
+            }
             let pix = self.pt_state.fifo.pop();
 
-            // TODO: better palette choice here :)
             self.framebuffer[self.fb_pos] = match pix {
                 0 => { 255 },
                 1 => { 100 },
@@ -367,6 +384,7 @@ impl PPU {
                 _ => unreachable!("Pixels are 2bpp")
             };
             self.fb_pos += 1;
+            fifo_x += 1;
         }
     }
 
@@ -379,8 +397,12 @@ impl PPU {
             } else {
                 let obj = self.read_oam_entry(self.pt_state.fetch_obj);
                 let palette = if obj.palette == 1 { &self.obp1 } else { &self.obp0 };
-                // TODO: vert flip.
-                let (obj_pixels, obj_mask) = self.get_tile_row((obj.code) as usize, (self.ly + 16 - obj.y) as usize, false, obj.horz_flip, palette);
+                let obj_y = if obj.vert_flip {
+                    (if self.obj_tall { 16 } else { 8 }) - (self.ly + 16 - obj.y) as usize
+                } else {
+                    (self.ly + 16 - obj.y) as usize
+                };
+                let (obj_pixels, obj_mask) = self.get_tile_row((obj.code) as usize, obj_y, false, obj.horz_flip, palette);
                 self.pt_state.fifo.blend_obj(obj_pixels, obj_mask, !obj.priority);
                 self.pt_state.obj_flush = true;
             }
@@ -399,27 +421,42 @@ impl PPU {
             self.pt_state.scratch = (0, 0);
             self.pt_state.flush = true;
 
-            if !self.bg_enabled {
-                return;
+            if self.bg_enabled {
+                let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
+
+                let scanline_x = self.pt_state.x as u16;
+                let scx = self.scx as u16;
+
+                let i = 0;
+                // TODO: handle SCX offsets properly again.
+                let _tile_x = (i + scx + scanline_x) % 8;
+
+                // Figure out which BG tile we're rendering.
+                let bg_x = ((scanline_x + scx + i) / 8) % 32;
+                let tile_num = (self.pt_state.bg_y * 32 + bg_x) as usize;
+                let tile = self.vram[(code_base_addr + tile_num) as usize] as usize;
+
+                // Now figure out which pixels in this particular tile we need.
+
+                self.pt_state.scratch = self.get_tile_row(tile, self.pt_state.tile_y, !self.bg_data_lo, false, &self.bgp);
+            } else if self.win_enabled && self.pt_state.in_win {
+                let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
+                let scanline_x = self.pt_state.x as u16;
+                let wx = self.wx as u16;
+
+                let i = 0;
+                // TODO: handle SCX offsets properly again.
+                let _tile_x = (i + wx + scanline_x) % 8;
+
+                // Figure out which BG tile we're rendering.
+                let bg_x = ((scanline_x + wx + i) / 8) % 32;
+                let tile_num = (self.pt_state.win_y * 32 + bg_x) as usize;
+                let tile = self.vram[(code_base_addr + tile_num) as usize] as usize;
+
+                // Now figure out which pixels in this particular tile we need.
+
+                self.pt_state.scratch = self.get_tile_row(tile, self.pt_state.win_tile_y, !self.bg_data_lo, false, &self.bgp);
             }
-
-            let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
-
-            let scanline_x = self.pt_state.x as u16;
-            let scx = self.scx as u16;
-
-            let i = 0;
-            // TODO: handle SCX offsets properly again.
-            let _tile_x = (i + scx + scanline_x) % 8;
-
-            // Figure out which BG tile we're rendering.
-            let bg_x = ((scanline_x + scx + i) / 8) % 32;
-            let tile_num = (self.pt_state.bg_y * 32 + bg_x) as usize;
-            let tile = self.vram[(code_base_addr + tile_num) as usize] as usize;
-
-            // Now figure out which pixels in this particular tile we need.
-
-            self.pt_state.scratch = self.get_tile_row(tile, self.pt_state.tile_y, !self.bg_data_lo, false, &self.bgp);
         }
     }
 
