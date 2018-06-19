@@ -1,3 +1,6 @@
+#![allow(unreachable_code)]
+#![allow(dead_code)]
+
 const SAMPLE_RATE: f64 = 44100.0;  // TODO: configurable?
 
 #[derive(Default)]

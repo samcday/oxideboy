@@ -3,7 +3,7 @@ extern crate lr35902;
 pub mod cartridges;
 
 pub struct Gameboy {
-    cpu: lr35902::CPU,
+    pub cpu: lr35902::CPU,
 
     pub breakpoint_hit: bool,
 }

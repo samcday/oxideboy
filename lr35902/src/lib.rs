@@ -549,26 +549,6 @@ impl CPU {
         // Service interrupts.
         if self.ime && (self.if_ & self.ie) > 0 {
             let addr = match self.if_ & self.ie {
-                // P10-P13 input signal goes low
-                0x10 => {
-                    self.if_ ^= 0x10;
-                    0x60
-                },
-                // Serial transfer completion
-                0x8 => {
-                    self.if_ ^= 0x8;
-                    0x58
-                },
-                // Timer overflow
-                0x4 => {
-                    self.if_ ^= 0x4;
-                    0x50
-                },
-                // LCDC status interrupt
-                0x2 => {
-                    self.if_ ^= 0x2;
-                    0x48
-                },
                 // Vertical blanking
                 0x1 => {
                     self.if_ ^= 0x1;
@@ -578,6 +558,26 @@ impl CPU {
                     }
 
                     0x40
+                },
+                // LCDC status interrupt
+                0x2 => {
+                    self.if_ ^= 0x2;
+                    0x48
+                },
+                // Timer overflow
+                0x4 => {
+                    self.if_ ^= 0x4;
+                    0x50
+                },
+                // Serial transfer completion
+                0x8 => {
+                    self.if_ ^= 0x8;
+                    0x58
+                },
+                // P10-P13 input signal goes low
+                0x10 => {
+                    self.if_ ^= 0x10;
+                    0x60
                 },
                 _ => unreachable!("Non-existent interrupt ${:X} encountered", 123)
             };

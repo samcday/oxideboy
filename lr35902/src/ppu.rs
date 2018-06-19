@@ -1,26 +1,88 @@
 // Models the 4 states the PPU can be in when it is active.
-#[derive(Debug, PartialEq)]
 pub enum PPUState {
     OAMSearch,
     PixelTransfer,
-    HBlank,
+    HBlank(u16),     // Number of cycles to remain in HBlank for.
     VBlank,
 }
 use self::PPUState::{*};
 
-#[derive(Debug, PartialEq)]
 struct PixelTransferState {
     fifo_stalled: bool,     // If true, we're stalled on flushing out pixels until a sprite has been drawn.
     fetch_obj: u8,    // If fifo_stalled is true, this will be set to the sprite index (in OAM table).
-    fifo: u64,
-    fifo_size: u8,
-    scratch: u16,
+    fifo: PixelFifo,
+    scratch: (u16, u16),
     x: u8,              // Tracks which pixel in the scanline we're up to fetching.
     flush: bool,        // When true, the next 8 pixels are written into FIFO.
     obj_flush: bool,
-
     tile_y: usize,
     bg_y: u16,
+}
+
+// While drawing a scanline, we keep a small number of pixels in a FIFO queue before writing them to framebuffer.
+// We operate on this FIFO a lot, so we want it to be as efficient as possible. Furthermore, we also need it
+// to track a bit of extra information about which pixels are "writable".
+struct PixelFifo {
+    fifo: u32,
+    obj_mask: u32,
+    bg_mask: u32,
+    size: u8,
+}
+
+impl PixelFifo {
+    fn new() -> PixelFifo {
+        PixelFifo { fifo: 0, obj_mask: 0, bg_mask: 0, size: 0 }
+    }
+
+    fn len(&self) -> u8 {
+        self.size / 2
+    }
+
+    // Pushes a BG tile row into the FIFO.
+    fn push_bg(&mut self, row: u16, mask: u16) {
+        self.obj_mask = 0;  // TODO:
+
+        // Shift the bits in the FIFO left by 16. 8 pixels, each pixel has 2 bits.
+        self.fifo <<= 16;
+        self.fifo |= row as u32;
+        self.bg_mask |= mask as u32;
+        self.size += 16;
+    }
+
+    // Blends OBJ data with the front 8 pixels of the FIFO.
+    fn blend_obj(&mut self, row: u16, mask: u16, priority: bool) {
+        // Shift the incoming row and mask data across to line up with the 16 bits (8 pixels) we're operating on
+        // in the FIFO.
+        let mut row: u32 = (row as u32) << (self.size - 16);
+        let mut mask: u32 = (mask as u32) << (self.size - 16);
+
+        if !priority {
+            // If the OBJ does *not* have priority over the BG, then we can immediately apply the BG
+            // mask to the OBJ pixels.
+            row &= !(self.bg_mask);
+            mask &= !(self.bg_mask);
+        }
+
+        // Next, we mask out the new mask based on previous OBJ data in this FIFO.
+        // This is so that we correctly handle multiple OBJs overlapping each other. However here we are assuming
+        // that the higher priority OBJ was blended first (which is true due to how we priority-sort OAM entries).
+        mask &= !(self.obj_mask);
+
+        // Now, we're ready to mask out any pixels in the FIFO based on our processed OBJ mask.
+        self.fifo &= !mask;
+
+        row &= mask;
+
+        // And now all that's left to do is merge the final pixel data + mask data into the FIFO.
+        self.fifo |= row;
+        self.obj_mask |= mask;
+    }
+
+    // Pops a single pixel from the FIFO.
+    fn pop(&mut self) -> u8 {
+        self.size -= 2;
+        (((self.fifo & (0b11 << self.size)) >> self.size) & 0b11) as u8
+    }
 }
 
 #[derive(Debug)]
@@ -38,8 +100,7 @@ struct OAMEntry {
 pub struct PPU {
     pub enabled: bool,      // Master switch to turn LCD on/off.
     pub state: PPUState,
-    cycles: u8,         // Counts how many CPU cycles have elapsed in the current PPU stage.
-    sleep_cycles: u8,   // If >0, the current cycle will be swallowed and sleep_cycles will be decremented.
+    cycles: u16,         // Counts how many CPU cycles have elapsed in the current PPU stage.
 
     pub scy: u8,
     pub scx: u8,
@@ -47,7 +108,6 @@ pub struct PPU {
     pub lyc: u8,
     pub wx: u8,
     pub wy: u8,
-
     pub bgp: u8,
     pub obp0: u8,
     pub obp1: u8,
@@ -68,7 +128,7 @@ pub struct PPU {
     obj_tall: bool,     // If true, we're rendering 8x16 sprites.
 
     pub vram: [u8; 0x2000], // 0x8000 - 0x9FFF
-    pub oam: [u8; 0xA0],// 0xFE00 - 0xFDFF
+    pub oam: [u8; 0xA0],    // 0xFE00 - 0xFDFF
 
     scanline_objs: Vec<(u8, u8)>,
 
@@ -81,7 +141,7 @@ pub struct PPU {
 impl PPU {
     pub fn new() -> PPU {
         PPU {
-            enabled: false, state: OAMSearch, cycles: 0, sleep_cycles: 0,
+            enabled: false, state: OAMSearch, cycles: 0,
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
             wx: 0, wy: 0,
@@ -92,7 +152,7 @@ impl PPU {
             interrupt_oam: false, interrupt_hblank: false, interrupt_vblank: false, interrupt_lyc: false,
             vram: [0; 0x2000], oam: [0; 0xA0],
             pt_state: PixelTransferState{
-                scratch: 0, fifo_stalled: false, fetch_obj: 0, fifo: 0, fifo_size: 0, flush: false,
+                scratch: (0, 0), fifo_stalled: false, fetch_obj: 0, fifo: PixelFifo::new(), flush: false,
                 obj_flush: false, x: 0, tile_y: 0, bg_y: 0},
             scanline_objs: Vec::new(),
             framebuffer: [0; 160*144], fb_pos: 0,
@@ -100,13 +160,11 @@ impl PPU {
     }
 
     pub fn is_vblank(&self) -> bool {
-        if self.ly == 144 {
-            if self.cycles == 0 && self.state == VBlank {
-                return true;
-            }
+        if let VBlank = self.state {
+            self.ly == 144 && self.cycles == 0
+        } else {
+            false
         }
-
-        false
     }
 
     fn next_state(&mut self, new: PPUState) {
@@ -115,64 +173,85 @@ impl PPU {
     }
 
     // Advances PPU display by a single clock cycle. Basically, all the video magic happens in here.
-    // PPU can cause two different interrupts: STAT and VBLANK. What we return here is ORd with the main IF register.
+    // Before you read this code, go and watch this video: https://www.youtube.com/watch?v=HyzD8pNlpwI&t=29m12s
+    // Any interrupt codes we return here (STAT / VBlank) are ORd with the main CPU IF register.
     pub fn advance(&mut self) -> u8 {
         if !self.enabled {
             return 0;
         }
 
-        let mut if_ = 0;
-
         self.cycles += 1;
 
-        if self.sleep_cycles > 0 {
-            self.sleep_cycles -= 1;
-        }
-        if self.sleep_cycles > 0 {
-            return 0;
-        }
-
+        let mut if_ = 0;
         match self.state {
+            // The first stage of a scanline.
+            // In this stage, we search the OAM table for OBJs that overlap the current scanline (LY).
+            // The actual hardware performs this process over 20 clock cycles. However, since OAM memory
+            // is inaccessible during this stage, there's no need to emulate it in a cycle accurate manner.
+            // Instead we just perform all the work on the first cycle and spin for the remaining 19.
             OAMSearch => {
-                if self.interrupt_oam && self.cycles == 1 {
-                    if_ |= 0x2;
-                }
-                self.oam_search();
-            },
-            PixelTransfer => {
-                self.pixel_transfer();
-            },
-            HBlank => {
-                if self.interrupt_hblank && self.cycles == 1 {
-                    if_ |= 0x2;
-                }
-                self.ly += 1;
-
-                if self.interrupt_lyc && self.ly == self.lyc {
-                    if_ |= 0x2;
-                }
-
-                if self.ly == 144 {
-                    if_ |= 0x1;
-                    if self.interrupt_vblank {
+                if self.cycles == 1 {
+                    if self.interrupt_oam {
+                        if_ |= 0x2;
+                    }
+                    if self.interrupt_lyc && self.ly == self.lyc {
                         if_ |= 0x2;
                     }
 
-                    self.next_state(VBlank);
-                } else {
-                    self.next_state(OAMSearch);
+                    self.oam_search();
                 }
+
+                if self.cycles == 20 {
+                    self.next_state(PixelTransfer);
+                    return 0;
+                }
+            }
+            // The second stage of a scanline, and the most important one. This is where we rasterize
+            // the background map, window map, and OBJs into actual pixels that go into the framebuffer.
+            PixelTransfer => {
+                self.pixel_transfer();
             },
-            VBlank => {
-                if self.cycles == 114 {
-                    if self.ly < 153 {
-                        self.ly += 1;
+            // HBlank stage is a variable number of cycles pause between drawing a line and moving on
+            // to the next line. The amount of cycles varies depending on the amount of work that was
+            // done in Pixel Transfer. The more OBJs in the scanline, the less time we pause here.
+            HBlank(n) => {
+                // On the first cycle we check if STAT register has enabled HBlank interrupts.
+                if self.cycles == 1 && self.interrupt_hblank {
+                    if_ |= 0x2;
+                }
+
+                // Otherwise, we wait until we've counted the required number of cycles.
+                if self.cycles == n {
+                    // Alright, time to move on to the next line.
+                    self.ly += 1;
+
+                    // Is the next line off screen? If so, we've reached VBlank.
+                    if self.ly == 144 {
+                        // Set the VBlank interrupt request.
+                        if_ |= 0x1;
+                        // And also set the STAT interrupt request if VBlank interrupts are enabled in there.
+                        if self.interrupt_vblank {
+                            if_ |= 0x2;
+                        }
                         self.next_state(VBlank);
                     } else {
-                        self.ly = 0;
-                        self.fb_pos = 0;
                         self.next_state(OAMSearch);
                     }
+                }
+            },
+            // The VBlank stage is when we've finished rendering all lines for the current frame.
+            // In this stage we snooze for 10 invisible scanlines.
+            // A whole scanline is ordinarily 114 cycles, so this is essentially 1140 cycles of quiet
+            // time in which the game can update OAM, prepare for the next frame, etc.
+            VBlank => {
+                // Every 114 cycles we advance LY.
+                if self.cycles % 114 == 0 {
+                    self.ly += 1;
+                }
+                if self.cycles == 1140 {
+                    self.ly = 0;
+                    self.fb_pos = 0;
+                    self.next_state(OAMSearch);
                 }
             }
         }
@@ -180,41 +259,33 @@ impl PPU {
         if_
     }
 
-    // The first stage of a scanline. Takes 20 cycles.
-    // In this stage, we search the OAM table for OBJs that overlap the current line (LY).
-    // The actual hardware performs this process over 20 clock cycles. However, since OAM memory
-    // is inaccessible during this stage, there's no need to emulate it in a cycle accurate manner.
-    // Instead we just perform all the work on the first cycle and spin for the remaining 19.
+    // Searches through the OAM table to find any OBJs that overlap the line we're currently drawing.
     fn oam_search(&mut self) {
-        if self.cycles == 1 {
-            self.scanline_objs.clear();
+        self.scanline_objs.clear();
 
-            let mut idx = 0;
-            let h = if self.obj_tall { 16 } else { 8 };
-            let ly_bound = self.ly + 16;
+        let mut idx = 0;
+        let h = if self.obj_tall { 16 } else { 8 };
+        let ly_bound = self.ly + 16;
 
-            while self.scanline_objs.len() < 10 && idx < 40 {
+        while self.scanline_objs.len() < 10 && idx < 40 {
+            let y = self.read_obj_y(idx);
+            if ly_bound >= y && ly_bound < y + h {
                 let x = self.read_obj_x(idx);
-                let y = self.read_obj_y(idx);
-
-                if x > 0 && ly_bound >= y && ly_bound < y + h {
+                if x > 0 {
                     self.scanline_objs.push((idx, x));
                 }
-                idx += 1;
             }
-
-            // Once the list is built, we ensure the elements are ordered by the OBJ x coord.
-            // If two OBJs have the same x coord, then we prioritise the OBJ by its position in OAM table.
-            // This ordering is important, we build the list here once, but then access it many times during
-            // pixel transfer, so this makes things more efficient.
-            // Also, in the name of effiency, the list is ordered with the lowest x co-ord coming last.
-            // This way, as we encounter OBJs, we just pop them off the list.
-            self.scanline_objs.sort_unstable_by(|(a_idx, a_x), (b_idx, b_x)| a_x.cmp(b_x).then(a_idx.cmp(b_idx)));
-            self.scanline_objs.reverse();
-            self.sleep_cycles = 19;
-        } else if self.cycles == 20 {
-            self.next_state(PixelTransfer);
+            idx += 1;
         }
+
+        // Once the list is built, we ensure the elements are ordered by the OBJ x coord.
+        // If two OBJs have the same x coord, then we prioritise the OBJ by its position in OAM table.
+        // This ordering is important, we build the list here once, but then access it many times during
+        // pixel transfer, so this makes things more efficient.
+        // Also, in the name of effiency, the list is ordered with the lowest x co-ord coming last.
+        // This way, once we've drawn an OBJ, we just pop it off the Vec (which simply decrements len).
+        self.scanline_objs.sort_unstable_by(|(a_idx, a_x), (b_idx, b_x)| a_x.cmp(b_x).then(a_idx.cmp(b_idx)));
+        self.scanline_objs.reverse();
     }
 
     // The second stage of the scanline. Takes 43+ cycles.
@@ -248,40 +319,45 @@ impl PPU {
         self.pixel_transfer_flush_pixels();
         self.pixel_transfer_fetch_pixels();
 
-        if self.pt_state.x == 160 && self.pt_state.fifo_size == 0 {
+        // Once we've rasterized and flushed all pixels for this scanline, we can move on to the HBlank stage.
+        if self.pt_state.x == 160 && self.pt_state.fifo.len() == 0 {
+            // HBlank runs for a variable number of cycles, depending on how long this pixel transfer took.
+            // If there was no OBJs or window on the current line, then pixel transfer takes 43 cycles and HBlank
+            // takes 51 cycles.
             let hblank_cycles = 51+43 - self.cycles;
-            self.next_state(HBlank);
-            self.sleep_cycles = hblank_cycles;
+            self.next_state(HBlank(hblank_cycles));
         }
     }
 
+    // Implementation of the "Pixel FIFO". Maintains a minimum of 8 pending pixels in the FIFO
+    // at all times to ensure that sprites can be mixed in correctly. The real PPU appears to run
+    // at 4mhz and flush out exactly one pixel per cycle. Since we're emulating in CPU time (1mhz)
+    // we instead flush out 4 pixels per cycle.
     fn pixel_transfer_flush_pixels(&mut self) {
         // The FIFO must always have at least 8 pixels in it.
-        if self.pt_state.fifo_stalled || (self.pt_state.fifo_size < 12 && self.pt_state.x < 160) {
+        if self.pt_state.fifo_stalled || (self.pt_state.fifo.len() < 12 && self.pt_state.x < 160) {
             return;
         }
 
         // Send out 4 pixels.
-        let fifo_x = self.pt_state.x - self.pt_state.fifo_size;
+        let fifo_x = self.pt_state.x - self.pt_state.fifo.len();
 
         // First, we need to make sure there isn't a sprite starting somewhere in the next 4 pixels.
         // If there is, we note where it is, and mark ourselves as stalled, then flush the pixels up to the
-        // beginning of the sprite.
-        // TODO: need to resolve x conflicts here.
+        // beginning of the sprite. Of course, we only do any of this if OBJ rendering is enabled.
         let mut max = 4;
-
-        if self.scanline_objs.len() > 0 {
-            let (obj_idx, obj_x) = self.scanline_objs.last().unwrap();
+        if self.obj_enabled && !self.scanline_objs.is_empty() {
+            let (obj_idx, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
             if fifo_x + 4 > obj_x - 8 {
                 max = obj_x - 8 - fifo_x;
                 self.pt_state.fifo_stalled = true;
-                self.pt_state.fetch_obj = *obj_idx;
+                self.pt_state.fetch_obj = obj_idx;
             }
         }
 
         for _ in 0..max {
-            let pix = (self.pt_state.fifo & (0b11 << (self.pt_state.fifo_size * 2))) >> (self.pt_state.fifo_size * 2);
-            self.pt_state.fifo_size -= 1;
+            let pix = self.pt_state.fifo.pop();
+
             // TODO: better palette choice here :)
             self.framebuffer[self.fb_pos] = match pix {
                 0 => { 255 },
@@ -303,27 +379,23 @@ impl PPU {
             } else {
                 let obj = self.read_oam_entry(self.pt_state.fetch_obj);
                 // TODO: vert flip.
-                let obj_pixels = self.get_tile_row((obj.code) as usize, (self.ly + 16 - obj.y) as usize, false, obj.horz_flip);
-                // TODO: need to be tracking where pixel came from (BG/sprite num) to resolve conflicts.
-                // and ensure empty pixels are preserved on target.
-                // self.pt_state.fifo &= !(0b11 << i*2);
-                self.pt_state.fifo |= (obj_pixels as u64) << 16;
+                let (obj_pixels, obj_mask) = self.get_tile_row((obj.code) as usize, (self.ly + 16 - obj.y) as usize, false, obj.horz_flip);
+                self.pt_state.fifo.blend_obj(obj_pixels, obj_mask, !obj.priority);
                 self.pt_state.obj_flush = true;
             }
+
             return;
         }
 
         if self.pt_state.x < 160 && self.pt_state.flush {
-            self.pt_state.fifo <<= 16;
-            self.pt_state.fifo |= self.pt_state.scratch as u64;
-            self.pt_state.fifo_size += 8;
+            self.pt_state.fifo.push_bg(self.pt_state.scratch.0, self.pt_state.scratch.1);
             self.pt_state.x += 8;
             self.pt_state.flush = false;
             return;
         }
 
         if self.pt_state.x < 160 {
-            self.pt_state.scratch = 0;
+            self.pt_state.scratch = (0, 0);
             self.pt_state.flush = true;
 
             if !self.bg_enabled {
@@ -346,41 +418,54 @@ impl PPU {
 
             // Now figure out which pixels in this particular tile we need.
 
-            let tile_data = self.get_tile_row(tile, self.pt_state.tile_y, !self.bg_data_lo, false);
-
-            self.pt_state.scratch = tile_data;
+            self.pt_state.scratch = self.get_tile_row(tile, self.pt_state.tile_y, !self.bg_data_lo, false);
         }
     }
 
     // Decodes a row of pixels for a tile.
     // Can fetch tiles from either the low range (0x8000-0x8FFF in VRAM)
     // Or from the high range (0x8800) in which case the tile num is interpreted as a signed offset.
-    fn get_tile_row(&self, tile_num: usize, y: usize, hi: bool, flip: bool) -> u16 {
+    fn get_tile_row(&self, tile_num: usize, y: usize, hi: bool, horiz_flip: bool) -> (u16, u16) {
         let tile_addr: usize = if hi {
             0x800 + (((tile_num as u8 as i8) as usize) * 16)
         } else {
             tile_num * 16
         } + y * 2;
 
-        let mut lo = self.vram[tile_addr] as u16;
-        let mut hi = self.vram[tile_addr + 1] as u16;
+        let mut lo = self.vram[tile_addr];
+        let mut hi = self.vram[tile_addr + 1];
 
-        if flip {
+        if horiz_flip {
             // This insanity flips the order of the bits in each byte using dark sorcery.
             // http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
-            lo = (((lo as u64) * 0x0202020202 & 0x010884422010) % 1023) as u16;
-            hi = (((hi as u64) * 0x0202020202 & 0x010884422010) % 1023) as u16;
+            lo = (((lo as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
+            hi = (((hi as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
         }
 
-        let mut mask = 0b1111111100000000;
+        PPU::interleave_bits(lo, hi)
+    }
 
-        for _ in 0..8 {
-            lo = ((lo & mask) << 1) | (lo & !mask);
-            hi = ((hi & mask) << 1) | (hi & !mask);
-            mask |= mask >> 1;
+    // Tile pixels are stored as 2 bytes which must be interleaved. Each pixel is 2 bit. The first byte
+    // contains the high bit for each pixel, and the second byte contains the low bits.
+    // Both the pixels and a mask are returned. The mask specifies which bits contain active pixels.
+    // The mask information is used by PixelFifo when blending OBJs.
+    fn interleave_bits(lo: u8, hi: u8) -> (u16, u16) {
+        let lo = lo as u16;
+        let hi = hi as u16;
+        let mut mask: u16 = 0;
+        let mut row: u16 = 0;
+
+        // Loop through each bit pair in lo+hi and interleave them. If the result is anything but zero
+        // we also set the mask.
+        for i in 0..8 {
+            let pix = (lo & 1 << i) << i | (hi & 1 << i) << i + 1;
+            row |= pix;
+            if pix > 0 {
+                mask |= 0b11 << (i*2);
+            }
         }
 
-        lo | (hi << 1)
+        (row, mask)
     }
 
     fn read_oam_entry(&self, n: u8) -> OAMEntry {
@@ -408,28 +493,28 @@ impl PPU {
 
     pub fn read_oam(&self, addr: u16) -> u8 {
         match self.state {
-            HBlank | VBlank => self.oam[addr as usize],
+            HBlank(_) | VBlank => self.oam[addr as usize],
             OAMSearch | PixelTransfer => 0xFF,
         }
     }
 
     pub fn write_oam(&mut self, addr: u16, v: u8) {
         match self.state {
-            HBlank | VBlank => { self.oam[addr as usize] = v },
+            HBlank(_) | VBlank => { self.oam[addr as usize] = v },
             OAMSearch | PixelTransfer => { },
         }
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
         match self.state {
-            OAMSearch | HBlank | VBlank => self.vram[addr as usize],
+            OAMSearch | HBlank(_) | VBlank => self.vram[addr as usize],
             PixelTransfer => 0xFF,
         }
     }
 
     pub fn write_vram(&mut self, addr: u16, v: u8) {
         match self.state {
-            OAMSearch | HBlank | VBlank => { self.vram[addr as usize] = v },
+            OAMSearch | HBlank(_) | VBlank => { self.vram[addr as usize] = v },
             PixelTransfer => { },
         }
     }
@@ -459,13 +544,13 @@ impl PPU {
             self.next_state(OAMSearch);
             self.fb_pos = 0;
             self.ly = 0;
-            self.sleep_cycles = 0;
         } else if !enabled && self.enabled {
             // TODO: check current state here, can't switch LCD off in the middle of pixel transfer.
-            if self.state != VBlank {
-                panic!("Tried to disable LCD in incorrect state: {:?}", self.state);
+            if let VBlank = self.state {
+                self.enabled = false;
+            } else {
+                panic!("Tried to disable LCD outside of VBlank");
             }
-            self.enabled = false;
         }
 
         self.win_enabled = v & 0b0100_0000 > 0;
@@ -481,7 +566,7 @@ impl PPU {
     pub fn read_stat(&self) -> u8 {
         0
             | match self.state {
-                HBlank        => 0b00,
+                HBlank(_)     => 0b00,
                 VBlank        => 0b01,
                 OAMSearch     => 0b10,
                 PixelTransfer => 0b11}
@@ -502,8 +587,61 @@ impl PPU {
 
     pub fn dma_ok(&self) -> bool {
         match self.state {
-            HBlank | VBlank => true,
+            HBlank(_) | VBlank => true,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interleave_bits() {
+        let (row, mask) = PPU::interleave_bits(0b10101010, 0b10000001);
+        assert_eq!(row,  0b1100010001000110);
+        assert_eq!(mask, 0b1100110011001111);
+    }
+
+    // Test that basic push / pop is working correctly.
+    #[test]
+    fn fifo_push_pop() {
+        let mut fifo: PixelFifo = PixelFifo::new();
+
+        fifo.push_bg(0b00110100_00000000, 0);
+        assert_eq!(fifo.pop(), 0b00);
+        assert_eq!(fifo.pop(), 0b11);
+        assert_eq!(fifo.pop(), 0b01);
+        assert_eq!(fifo.pop(), 0b00);
+        // Actual fifo u32 shouldn't be needlessly shifted around when popping.
+        assert_eq!(fifo.fifo, 0b0011010000000000);
+        assert_eq!(fifo.size, 8);
+    }
+
+    // Test the behaviour when overlaying an OBJ onto some BG data.
+    #[test]
+    fn fifo_obj_blend() {
+        let mut fifo: PixelFifo = PixelFifo::new();
+
+        // Test how we blend an OBJ that has priority OVER the background.
+        //                      vv    vv these BG pixels should be overridden by OBJ.
+        fifo.push_bg         (0b00_11_01_00_00000000, 0b00111100_00000000);
+        fifo.blend_obj       (0b10_00_11_00_00000000, 0b11001100_00000000, true);
+        assert_eq!(fifo.fifo, 0b10_11_11_00_00000000);
+
+        // Confirm that a subsequent OBJ with lower priority does not overwrite existing OBJ pixels.
+        //                      vv this pixel *should not* be overridden since a OBJ already drew there.
+        //                               vv this pixel *should* be overridden since an OBJ did not yet draw there.
+        fifo.blend_obj       (0b01_00_00_11_00000000, 0b11000011_00000000, true);
+        assert_eq!(fifo.fifo, 0b10_11_11_11_00000000);
+
+        // And now test blending an OBJ that does *not* have priority over the background.
+        let mut fifo: PixelFifo = PixelFifo::new();
+
+        //                            vv these BG pixels should be preserved.
+        fifo.push_bg         (0b00_11_01_00_00000000, 0b00111100_00000000);
+        fifo.blend_obj       (0b10_00_11_00_00000000, 0b11001100_00000000, false);
+        assert_eq!(fifo.fifo, 0b10_11_01_00_00000000);
     }
 }
