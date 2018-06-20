@@ -682,7 +682,7 @@ mod tests {
 
         // Check that palette transformation is done with correct mask.
         let (row, mask) = PPU::build_tile(0b10101010, 0b10000001, &[0b11, 0b10, 0b01, 0b00]);
-        assert_eq!(row,  0b0011101110111001);
+        assert_eq!(row,  0b0000000010001001);
         assert_eq!(mask, 0b1100110011001111);
     }
 

@@ -8,43 +8,8 @@ use std::fmt;
 use std::fmt::Display;
 
 static BOOT_ROM: &[u8; 256] = include_bytes!("boot.rom");
+
 pub const SCREEN_SIZE: usize = 160 * 144;
-pub const RAM_SIZE: usize = 0x4000;
-pub const VRAM_SIZE: usize = 0x4000;
-pub const SRAM_SIZE: usize = 0x4000;
-
-/// The ExternalInterface struct houses everything that lies outside of the LR35902 chip.
-/// This includes the P10-P15 pins (Joypad), LCD screen, speakers, and serial port.
-/// Technically, the RAM and VRAM lay outside the chip and are accessed via a bus, but modelling that in emulation
-/// is not useful, so the CPU and PPU simply "own" their relevant RAM segments.
-pub struct ExternalInterface<'a> {
-    pub raw_rom: &'a [u8],
-    pub cart_mem: CartridgeMemory<'a>,
-    pub mbc: Box<MBC>,                    // The memory bank controller that handles writes to ROM/SRAM sections.
-
-    //audio_callback: Fn(),
-    pub video_callback: &'a FnMut(&[u8]),
-}
-
-pub struct CartridgeMemory<'a> {
-    pub rom_lo: &'a [u8],               // The ROM data in range 0x0000-0x3FFF
-    pub rom_hi: &'a [u8],               // The ROM data in range 0x4000-0x7FFF
-    // pub sram: &'a mut [u8; SRAM_SIZE],  // The RAM provided by cartridge at 0xA000-0xBFFF
-}
-
-/// The MBC trait externalises the logic performed in cartridge circuitry when the CPU writes to the external
-/// cartridge ROM/RAM locations. As such, the implementations for the various MBC families (MBC1/2/3/5/6, etc) lie
-/// outside this crate.
-pub trait MBC {
-    fn write(&mut self, addr: u16, v: u8, rom: &[u8], mem: &mut CartridgeMemory);
-}
-
-/// The default MBC implementation is one that does nothing at all. This is used for "ROM ONLY" cartridges, such
-/// as the original Tetris, and most of the test ROMS we use to validate this LR35902 implementation.
-pub struct NoopMBC {}
-impl MBC for NoopMBC {
-    fn write(&mut self, _: u16, _: u8, _: &[u8], _: &mut CartridgeMemory) { }
-}
 
 bitflags! {
     struct Flags: u8 {
@@ -319,7 +284,7 @@ pub struct Joypad {
     pub start: bool,
 }
 
-pub struct CPU<'a> {
+pub struct CPU {
     // Registers.
     a: u8,
     b: u8,
@@ -345,9 +310,10 @@ pub struct CPU<'a> {
     ime: bool,
     ime_defer: Option<bool>,
 
-    ext: ExternalInterface<'a>,
-
+    // PPU
     ppu: ppu::PPU,
+
+    // Sound
     pub sound: sound::SoundController,
 
     // Timer.
@@ -368,14 +334,16 @@ pub struct CPU<'a> {
     sb: u8,
     sc: u8,
 
+    cart: Box<Cartridge>,
+
     pub cycle_count: u64,
 
     // Debugging stuff.
     instr_addr: u16,            // Address of the current instruction
 }
 
-impl <'a> CPU<'a> {
-    pub fn new(ext: ExternalInterface<'a>) -> CPU<'a> {
+impl CPU {
+    pub fn new(cart: Box<Cartridge>) -> CPU {
         CPU{
             a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Flags::empty(), sp: 0, pc: 0,
             bootrom_enabled: true,
@@ -386,9 +354,9 @@ impl <'a> CPU<'a> {
             div: 0, div_counter: 0, clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
             sb: 0, sc: 0,
+            cart,
             cycle_count: 0,
             instr_addr: 0,
-            ext,
         }
     }
 
@@ -624,10 +592,10 @@ impl <'a> CPU<'a> {
         match addr {
             0x0000 ... 0x100 if self.bootrom_enabled => BOOT_ROM[addr as usize],
 
-            0x0000 ... 0x3FFF => self.ext.cart_mem.rom_lo[addr as usize],
-            0x4000 ... 0x7FFF => self.ext.cart_mem.rom_hi[(addr - 0x4000) as usize],
+            0x0000 ... 0x3FFF => self.cart.lo_rom()[addr as usize],
+            0x4000 ... 0x7FFF => self.cart.hi_rom()[(addr - 0x4000) as usize],
             0x8000 ... 0x9FFF => self.ppu.read_vram(addr - 0x8000),
-            // 0xA000 ... 0xBFFF => self.ext.cart_mem.sram[(addr - 0xA000) as usize],
+            0xA000 ... 0xBFFF => self.cart.ram()[(addr - 0xA000) as usize],
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
             0xFE00 ... 0xFE9F => self.ppu.read_oam(addr - 0xFE00),
@@ -688,9 +656,9 @@ impl <'a> CPU<'a> {
         match addr {
             0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; },
 
-            0x0000 ... 0x7FFF => { self.ext.mbc.write(addr, v, self.ext.raw_rom, &mut self.ext.cart_mem) }
+            0x0000 ... 0x7FFF => { self.cart.write(addr, v); }
             0x8000 ... 0x9FFF => { self.ppu.write_vram(addr - 0x8000, v) }
-            // 0xA000 ... 0xBFFF => { self.ext.cart_mem.sram[(addr - 0xA000) as usize] = v }
+            0xA000 ... 0xBFFF => { self.cart.write(addr, v); }
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v }
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v }
             0xFE00 ... 0xFE9F => { self.ppu.write_oam(addr - 0xFE00, v) }
@@ -784,7 +752,7 @@ impl <'a> CPU<'a> {
         let addr = (((v & 0xF1) as u16) << 8) as usize;
         let source = match addr {
             0x8000 ... 0x9FFF => { &self.ppu.vram[(addr - 0x8000) .. (addr - 0x8000+0xA0)] }
-            0xA000 ... 0xBFFF => { &self.ram[(addr - 0xA000) .. (addr - 0xA000+0xA0)] }
+            0xA000 ... 0xBFFF => { &self.cart.ram()[(addr - 0xA000) .. (addr - 0xA000+0xA0)] }
             0xC000 ... 0xDFFF => { &self.ram[(addr - 0xC000) .. (addr - 0xC000+0xA0)] }
             _ => self.core_panic(format!("Unhandled DMA from {}", addr))
         };
@@ -1818,110 +1786,4 @@ impl <'a> CPU<'a> {
     fn core_panic(&self, msg: String) -> ! {
         panic!("{}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}", msg, self.a, self.b, self.c, self.d, self.e, self.f, self.h, self.l, self.sp, self.pc);
     }
-}
-
-// A basic ROM ONLY Cartridge implementation.
-pub struct BasicCart {
-    rom: Vec<u8>,
-}
-impl BasicCart {
-    pub fn new(raw: &[u8]) -> BasicCart {
-        let mut rom = Vec::new();
-        rom.extend_from_slice(raw);
-        BasicCart{rom: rom}
-    }
-}
-
-impl Cartridge for BasicCart {
-    fn lo_rom(&self) -> &[u8] {
-        &self.rom[0x0000 .. 0x4000]
-    }
-    fn hi_rom(&self) -> &[u8] {
-        &self.rom[0x4000 .. 0x8000]
-    }
-    fn ram(&self) -> &[u8] {
-        panic!("BasicCart has no RAM");
-    }
-
-    fn write(&mut self, _: u16, _: u8) {
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn run_blargg_cpu_test(rom: &[u8], success_str: &str) {
-        let ext = ExternalInterface{
-            raw_rom: &rom,
-            cart_mem: CartridgeMemory {
-                rom_lo: &rom[0x0000 .. 0x4000],
-                rom_hi: &rom[0x4000 .. 0x8000],
-                // sram: &mut [0; SRAM_SIZE],
-            },
-            mbc: Box::new(NoopMBC{}),
-            video_callback: &|_| {},
-        };
-        let mut cpu = CPU::new(ext);
-
-        let mut output = String::new();
-        while cpu.pc() != 0xC7D2 {
-            cpu.run();
-            let ser = cpu.serial_get();
-            if ser.is_some() {
-                output.push(ser.unwrap() as char);
-            }
-        }
-
-        assert_eq!(output, success_str);
-    }
-
-    #[test]
-    fn blargg_cpu_instr_01() {
-        run_blargg_cpu_test(include_bytes!("../test/blargg_cpu_instrs/01-special.gb"), "01-special\n\n\nPassed\n");
-    }
-
-    #[test]
-    fn blargg_cpu_instr_02() {
-        run_blargg_cpu_test(include_bytes!("../test/blargg_cpu_instrs/02-interrupts.gb"), "01-special\n\n\nPassed\n");
-    }
-
-    // #[test]
-    // fn cpu_instructions() {
-    //     let rom = ;    
-    // }
-
-    // #[test]
-    // fn instruction_timing() {
-    //     let rom = include_bytes!("../test/instr_timing.gb");
-    //     let mut cpu = CPU::new(BasicCart::new(rom));
-
-    //     let mut output = String::new();
-    //     while cpu.pc() != 0xC8A6 {
-    //         cpu.run();
-    //         let ser = cpu.serial_get();
-    //         if ser.is_some() {
-    //             output.push(ser.unwrap() as char);
-    //         }
-    //     }
-
-    //     assert_eq!(output, "instr_timing\n\n\nPassed\n");
-    // }
-
-    // #[test]
-    // fn mem_timing() {
-    //     let rom = include_bytes!("../test/mem_timing.gb");
-    //     let mut cpu = CPU::new(BasicCart::new(rom));
-
-    //     let mut output = String::new();
-    //     while cpu.pc() != 0x06A1 {
-    //         cpu.run();
-    //         let ser = cpu.serial_get();
-    //         if ser.is_some() {
-    //             output.push(ser.unwrap() as char);
-    //         }
-    //     }
-
-    //     assert_eq!(output, "mem_timing\n\n01:ok  02:ok  03:ok  \n\nPassed all tests");
-    // }
 }

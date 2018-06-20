@@ -1,38 +1,19 @@
-
-use lr35902::CartridgeMemory;
-
-use lr35902::SRAM_SIZE;
-
-
-use lr35902::NoopMBC;
-
 extern crate lr35902;
 
-pub struct Gameboy<'a> {
-    pub cpu: lr35902::CPU<'a>,
+pub mod cartridges;
+
+pub struct Gameboy {
+    pub cpu: lr35902::CPU,
+
     pub breakpoint_hit: bool,
 }
 
-impl <'a> Gameboy<'a> {
+impl Gameboy {
     /// Creates a new Gameboy instance with the given ROM data.
     pub fn new(rom: &[u8]) -> Result<Gameboy, String> {
-
-        // let cart: Cart = cartridges::MBC1Cart::new(rom);
-
-        let ext = lr35902::ExternalInterface{
-            raw_rom: &rom,
-            cart_mem: CartridgeMemory {
-                rom_lo: &rom[0x0000 .. 0x4000],
-                rom_hi: &rom[0x4000 .. 0x8000],
-            },
-            mbc: Box::new(NoopMBC{}),
-            video_callback: &|_| {},
-        };
-
-        let cpu = lr35902::CPU::new(ext);
-
+        let cart = cartridges::create(rom)?;
         Ok(Gameboy{
-            cpu: cpu,
+            cpu: lr35902::CPU::new(cart),
             breakpoint_hit: false,
         })
     }
@@ -59,140 +40,59 @@ impl <'a> Gameboy<'a> {
     }
 }
 
-pub struct MBC1 {
-    rom_bank_cnt: u8,
-    rom_bank_cur: u8,
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cpu_instructions() {
+        let rom = include_bytes!("../test/cpu_instrs.gb");
+        let cart = ::cartridges::MBC1Cart::new(rom);
+        let mut cpu = ::lr35902::CPU::new(Box::new(cart));
 
-    ram: Vec<u8>,
-    ram_enabled: bool,
-    ram_bank_cur: u8,
-    _ram_bank_cnt: u8,
-}
-
-impl lr35902::MBC for MBC1 {
-    fn write<'a>(&mut self, addr: u16, v: u8, raw_rom: &'a[u8], mem: &'a mut CartridgeMemory) {
-        let addr = addr as usize;
-
-        match addr {
-            0x0000 ... 0x1FFF => {
-                self.ram_enabled = v == 0xA;
-            },
-            0x2000 ... 0x3FFF => {
-                match v {
-                    0 ... 0x1F => {
-                        self.rom_bank_cur = v.max(1);
-                        if self.rom_bank_cur >= self.rom_bank_cnt {
-                            panic!("ROM bank {} requested, maximum is {}", self.rom_bank_cur, self.rom_bank_cnt);
-                        }
-                        let base = (self.rom_bank_cur as usize) * 0x4000;
-                        mem.rom_hi = &raw_rom[base .. base + 0x4000];
-                    },
-                    _ => panic!("Unexpected ROM bank {} selected", v)
-                }
-            },
-            0xA000 ... 0xBFFF => {
-                if !self.ram_enabled {
-                    panic!("Attempt to write to disabled RAM addr {}", addr);
-                }
-                let addr = (self.ram_bank_cur as usize) * 0x2000 + addr - 0xA000;
-                if addr < self.ram.len() {
-                    self.ram[addr] = v;
-                }
+        let mut output = String::new();
+        while cpu.pc() != 0x681 {
+            cpu.run();
+            let ser = cpu.serial_get();
+            if ser.is_some() {
+                output.push(ser.unwrap() as char);
             }
-            _ => panic!("Unexpected cartridge write value {:X} to address: {:X}", v, addr)
         }
+
+        assert_eq!(output, "cpu_instrs\n\n01:ok  02:ok  03:ok  04:ok  05:ok  06:ok  07:ok  08:ok  09:ok  10:ok  11:ok  ");
     }
-}
 
-pub struct MBC1Cart {
-    rom: Vec<u8>,
-    rom_bank_cnt: u8,
-    rom_bank_cur: u8,
+    #[test]
+    fn instruction_timing() {
+        let rom = include_bytes!("../test/instr_timing.gb");
+        let cart = ::cartridges::MBC1Cart::new(rom);
+        let mut cpu = ::lr35902::CPU::new(Box::new(cart));
 
-    ram: Vec<u8>,
-    ram_enabled: bool,
-    ram_bank_cur: u8,
-    _ram_bank_cnt: u8,
-}
-
-impl MBC1Cart {
-  pub fn new(raw: &[u8]) -> MBC1Cart {
-    let mut rom = Vec::new();
-    rom.extend_from_slice(raw);
-
-    MBC1Cart{
-      rom_bank_cur: 1,
-      rom_bank_cnt: match rom[0x148] {
-        num @ 0 ... 6  => (2 as u8).pow((num as u32) + 1),
-        0x52 => 72,
-        0x53 => 80,
-        0x54 => 96,
-        v => panic!("Unexpected ROM size: {}", v),
-      },
-      ram: vec![0; match rom[0x149] {
-        0 => 0,
-        1 => 2048,
-        2 => 8192,
-        3 => 32768,
-        4 => 131072,
-        v => panic!("Unexpected RAM size {} encountered", v),
-      }],
-      ram_enabled: false,
-      ram_bank_cur: 0,
-      _ram_bank_cnt: match rom[0x149] {
-        0 => 0,
-        1 => 1,
-        2 => 1,
-        3 => 4,
-        4 => 16,
-        v => panic!("Unexpected RAM size: {}", v),
-      },
-      rom: rom
-    }
-  }
-}
-
-impl lr35902::Cartridge for MBC1Cart {
-  fn lo_rom(&self) -> &[u8] {
-    &self.rom[0x0000 .. 0x4000]
-  }
-  fn hi_rom(&self) -> &[u8] {
-    let base = (self.rom_bank_cur as usize) * 0x4000;
-    &self.rom[base .. base + 0x4000]
-  }
-  fn ram(&self) -> &[u8] {
-    let base = (self.ram_bank_cur as usize) * 0x2000;
-    &self.ram[base .. base + 0x2000]
-  }
-
-  fn write(&mut self, addr: u16, v: u8) {
-    let addr = addr as usize;
-
-    match addr {
-      0x0000 ... 0x1FFF => {
-        self.ram_enabled = v == 0xA;
-      },
-      0x2000 ... 0x3FFF => {
-        match v {
-          0 ... 0x1F => {
-            self.rom_bank_cur = v.max(1);
-            if self.rom_bank_cur >= self.rom_bank_cnt {
-              panic!("ROM bank {} requested, maximum is {}", self.rom_bank_cur, self.rom_bank_cnt);
+        let mut output = String::new();
+        while cpu.pc() != 0xC8A6 {
+            cpu.run();
+            let ser = cpu.serial_get();
+            if ser.is_some() {
+                output.push(ser.unwrap() as char);
             }
-          },
-          _ => panic!("Unexpected ROM bank {} selected", v)
         }
-      },
-      0xA000 ... 0xBFFF => {
-        if !self.ram_enabled {
-          panic!("Attempt to write to disabled RAM addr {}", addr);
-        }
-        let addr = (self.ram_bank_cur as usize) * 0x2000 + addr - 0xA000;
-        if addr < self.ram.len() {
-          self.ram[addr] = v;
-        }
-      }
-      _ => panic!("Unexpected cartridge write value {:X} to address: {:X}", v, addr)
+
+        assert_eq!(output, "instr_timing\n\n\nPassed\n");
     }
-  }
+
+    #[test]
+    fn mem_timing() {
+        let rom = include_bytes!("../test/mem_timing.gb");
+        let cart = ::cartridges::MBC1Cart::new(rom);
+        let mut cpu = ::lr35902::CPU::new(Box::new(cart));
+
+        let mut output = String::new();
+        while cpu.pc() != 0x06A1 {
+            cpu.run();
+            let ser = cpu.serial_get();
+            if ser.is_some() {
+                output.push(ser.unwrap() as char);
+            }
+        }
+
+        assert_eq!(output, "mem_timing\n\n01:ok  02:ok  03:ok  \n\nPassed all tests");
+    }
 }
