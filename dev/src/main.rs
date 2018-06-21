@@ -8,10 +8,10 @@ extern crate sdl2;
 use std::io;
 use std::io::prelude::*;
 use std::fs::File;
-use std::time::Duration;
 use std::thread;
 use std::sync::{Mutex, Arc, mpsc};
 use std::env;
+use std::time::{Duration, Instant};
 
 use sdl2::audio::{AudioSpecDesired, AudioQueue};
 use sdl2::pixels::PixelFormatEnum;
@@ -62,9 +62,10 @@ fn main() -> Result<()> {
 
     let mut delta = 0;
 
+    let mut now = Instant::now();
     'running: loop {
         if limit {
-            // ratelimit.wait();
+            ratelimit.wait();
         }
 
         for event in event_pump.poll_iter() {
@@ -98,23 +99,26 @@ fn main() -> Result<()> {
         {
             let (newdelt, frame) = gameboy.run_frame(delta);
 
-            texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                for y in 0..144 {
-                    for x in 0..160 {
-                        let offset = y*pitch + (x*3);
-                        buffer[offset] = frame[y*160+x] as u8;
-                        buffer[offset + 1] = frame[y*160+x] as u8;
-                        buffer[offset + 2] = frame[y*160+x] as u8;
+            if now.elapsed().subsec_nanos() > 16666666 {
+                now = Instant::now();
+                texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
+                    for y in 0..144 {
+                        for x in 0..160 {
+                            let offset = y*pitch + (x*3);
+                            buffer[offset] = frame[y*160+x] as u8;
+                            buffer[offset + 1] = frame[y*160+x] as u8;
+                            buffer[offset + 2] = frame[y*160+x] as u8;
+                        }
                     }
-                }
-            }).unwrap();
+                }).unwrap();
 
-            // audio_device.clear();
-            // audio_device.queue(audio_samples);
+                // audio_device.clear();
+                // audio_device.queue(audio_samples);
 
-            canvas.clear();
-            canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
-            canvas.present();
+                canvas.clear();
+                canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
+                canvas.present();
+            }
         }
 
         if gameboy.breakpoint_hit {
