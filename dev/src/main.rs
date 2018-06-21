@@ -12,6 +12,8 @@ use std::thread;
 use std::sync::{Mutex, Arc, mpsc};
 use std::env;
 use std::time::{Duration, Instant};
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use sdl2::audio::{AudioSpecDesired, AudioQueue};
 use sdl2::pixels::PixelFormatEnum;
@@ -42,8 +44,8 @@ fn main() -> Result<()> {
         .unwrap();
     let mut canvas = window.into_canvas().build().unwrap();
     let texture_creator = canvas.texture_creator();
-    let mut texture = texture_creator.create_texture_streaming(
-        PixelFormatEnum::RGB24, 160, 144).unwrap();
+    let mut texture = Rc::new(RefCell::new(texture_creator.create_texture_streaming(
+        PixelFormatEnum::RGB24, 160, 144).unwrap()));
     let mut event_pump = sdl_context.event_pump().unwrap();
 
     let mut limit = false;
@@ -54,7 +56,21 @@ fn main() -> Result<()> {
 
     let print_serial = env::var_os("PRINT_SERIAL").map(|s| &s == "1").unwrap_or(false);
 
-    let mut gameboy = gameboy::CPU::new(rom);
+    let video_cb_texture = Rc::clone(&texture);
+    let mut video_cb = move |buf: &[u32]| {
+        video_cb_texture.borrow_mut().with_lock(None, |buffer: &mut [u8], pitch: usize| {
+            for y in 0..144 {
+                for x in 0..160 {
+                    let offset = y*pitch + (x*3);
+                    buffer[offset] = buf[y*160+x] as u8;
+                    buffer[offset + 1] = buf[y*160+x] as u8;
+                    buffer[offset + 2] = buf[y*160+x] as u8;
+                }
+            }
+        }).unwrap();
+    };
+
+    let mut gameboy = gameboy::CPU::new(rom, &mut video_cb);
 
     audio_device.resume();
 
@@ -97,26 +113,16 @@ fn main() -> Result<()> {
         }
 
         {
-            let (newdelt, frame) = gameboy.run_frame(delta);
+            let newdelt = gameboy.run_frame(delta);
 
             if now.elapsed().subsec_nanos() > 16666666 {
                 now = Instant::now();
-                texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                    for y in 0..144 {
-                        for x in 0..160 {
-                            let offset = y*pitch + (x*3);
-                            buffer[offset] = frame[y*160+x] as u8;
-                            buffer[offset + 1] = frame[y*160+x] as u8;
-                            buffer[offset + 2] = frame[y*160+x] as u8;
-                        }
-                    }
-                }).unwrap();
 
                 // audio_device.clear();
                 // audio_device.queue(audio_samples);
 
                 canvas.clear();
-                canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
+                canvas.copy(&texture.borrow(), None, Some(Rect::new(0, 0, 320, 288))).unwrap();
                 canvas.present();
             }
         }

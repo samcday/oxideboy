@@ -104,7 +104,7 @@ struct OAMEntry {
     priority: bool,
 }
 
-pub struct PPU {
+pub struct PPU<'cb> {
     pub enabled: bool,      // Master switch to turn LCD on/off.
     pub state: PPUState,
     cycles: u16,         // Counts how many CPU cycles have elapsed in the current PPU stage.
@@ -143,10 +143,12 @@ pub struct PPU {
 
     pub framebuffer: [u32; ::SCREEN_SIZE],
     fb_pos: usize,
+
+    cb: &'cb mut FnMut(&[u32])
 }
 
-impl PPU {
-    pub fn new() -> PPU {
+impl <'cb> PPU<'cb> {
+    pub fn new(cb: &'cb mut FnMut(&[u32])) -> PPU<'cb> {
         PPU {
             enabled: false, state: OAMSearch, cycles: 0,
             scy: 0, scx: 0,
@@ -163,6 +165,7 @@ impl PPU {
                 obj_flush: false, x: 0, tile_y: 0, bg_y: 0, in_win: false, win_tile_y: 0, win_y: 0, },
             scanline_objs: Vec::new(),
             framebuffer: [0; 160*144], fb_pos: 0,
+            cb
         }
     }
 
@@ -257,6 +260,7 @@ impl PPU {
                     self.ly += 1;
                 }
                 if self.cycles == 1140 {
+                    (self.cb)(&self.framebuffer);
                     self.ly = 0;
                     self.fb_pos = 0;
                     self.next_state(OAMSearch);

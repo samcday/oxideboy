@@ -373,7 +373,7 @@ pub struct Joypad {
     pub start: bool,
 }
 
-pub struct CPU {
+pub struct CPU<'cb> {
     // Registers.
     a: u8,
     b: u8,
@@ -400,7 +400,7 @@ pub struct CPU {
     ime_defer: Option<bool>,
 
     // PPU
-    ppu: ppu::PPU,
+    ppu: ppu::PPU<'cb>,
 
     // Sound
     pub sound: sound::SoundController,
@@ -433,14 +433,14 @@ pub struct CPU {
     pub breakpoint_hit: bool,
 }
 
-impl CPU {
-    pub fn new(rom: Vec<u8>) -> Self {
+impl <'cb> CPU<'cb> {
+    pub fn new(rom: Vec<u8>, frame_cb: &'cb mut FnMut(&[u32])) -> Self {
         Self{
             a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Flags::empty(), sp: 0, pc: 0,
             bootrom_enabled: true,
             ram: [0; 0x2000], wram: [0; 0x7F],
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
-            ppu: ppu::PPU::new(),
+            ppu: ppu::PPU::new(frame_cb),
             sound: Default::default(),
             div: 0, div_counter: 0, clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
@@ -477,7 +477,7 @@ impl CPU {
     /// Because we emulate at the instruction level, sometimes the last instruction we execute in this loop
     /// may take us over the 17556 cycle threshold. We return a delta number of cycles that should be fed in to the
     /// next call to ensure we don't run too fast.
-    pub fn run_frame(&mut self, delta: u16) -> (u16, &[u32]) {
+    pub fn run_frame(&mut self, delta: u16) -> u16 {
         let mut counter = 0;
         while counter < 17556 - delta {
             counter += self.run();
@@ -487,7 +487,7 @@ impl CPU {
                 break;
             }
         }
-        (counter - 17556 - delta, &self.ppu.framebuffer)
+        counter - 17556 - delta
     }
 
     // Runs the CPU for a single instruction.
@@ -1906,7 +1906,8 @@ mod tests {
     #[test]
     fn cpu_instructions() {
         let rom = include_bytes!("../test/cpu_instrs.gb");
-        let mut cpu = CPU::new(rom.to_vec());
+        let mut video_cb = |_: &[u32]| {};
+        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb);
 
         let mut output = String::new();
         while cpu.pc() != 0x681 {
@@ -1923,7 +1924,8 @@ mod tests {
     #[test]
     fn instruction_timing() {
         let rom = include_bytes!("../test/instr_timing.gb");
-        let mut cpu = CPU::new(rom.to_vec());
+        let mut video_cb = |_: &[u32]| {};
+        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb);
 
         let mut output = String::new();
         while cpu.pc() != 0xC8A6 {
@@ -1940,7 +1942,8 @@ mod tests {
     #[test]
     fn mem_timing() {
         let rom = include_bytes!("../test/mem_timing.gb");
-        let mut cpu = CPU::new(rom.to_vec());
+        let mut video_cb = |_: &[u32]| {};
+        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb);
 
         let mut output = String::new();
         while cpu.pc() != 0x06A1 {
