@@ -44,8 +44,8 @@ fn main() -> Result<()> {
         .unwrap();
     let mut canvas = window.into_canvas().build().unwrap();
     let texture_creator = canvas.texture_creator();
-    let mut texture = Rc::new(RefCell::new(texture_creator.create_texture_streaming(
-        PixelFormatEnum::RGB24, 160, 144).unwrap()));
+    let mut texture = texture_creator.create_texture_streaming(
+        PixelFormatEnum::RGB24, 160, 144).unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
     let mut limit = false;
@@ -56,18 +56,11 @@ fn main() -> Result<()> {
 
     let print_serial = env::var_os("PRINT_SERIAL").map(|s| &s == "1").unwrap_or(false);
 
-    let video_cb_texture = Rc::clone(&texture);
+    let gb_buffer = Rc::new(RefCell::new([0; gameboy::SCREEN_SIZE]));
+
+    let cb_gb_buffer = Rc::clone(&gb_buffer);
     let mut video_cb = move |buf: &[u32]| {
-        video_cb_texture.borrow_mut().with_lock(None, |buffer: &mut [u8], pitch: usize| {
-            for y in 0..144 {
-                for x in 0..160 {
-                    let offset = y*pitch + (x*3);
-                    buffer[offset] = buf[y*160+x] as u8;
-                    buffer[offset + 1] = buf[y*160+x] as u8;
-                    buffer[offset + 2] = buf[y*160+x] as u8;
-                }
-            }
-        }).unwrap();
+        cb_gb_buffer.borrow_mut().copy_from_slice(buf);
     };
 
     let mut gameboy = gameboy::CPU::new(rom, &mut video_cb);
@@ -118,11 +111,22 @@ fn main() -> Result<()> {
             if now.elapsed().subsec_nanos() > 16666666 {
                 now = Instant::now();
 
+                texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
+                    let gb_buffer = gb_buffer.borrow();
+                    for y in 0..144 {
+                        for x in 0..160 {
+                            let offset = y*pitch + (x*3);
+                            buffer[offset] = gb_buffer[y*160+x] as u8;
+                            buffer[offset + 1] = gb_buffer[y*160+x] as u8;
+                            buffer[offset + 2] = gb_buffer[y*160+x] as u8;
+                        }
+                    }
+                }).unwrap();
                 // audio_device.clear();
                 // audio_device.queue(audio_samples);
 
                 canvas.clear();
-                canvas.copy(&texture.borrow(), None, Some(Rect::new(0, 0, 320, 288))).unwrap();
+                canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
                 canvas.present();
             }
         }
