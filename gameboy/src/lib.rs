@@ -403,7 +403,7 @@ pub struct CPU<'cb> {
     ppu: ppu::PPU<'cb>,
 
     // Sound
-    pub sound: sound::SoundController,
+    sound: sound::SoundController<'cb>,
 
     // Timer.
     div: u8,
@@ -434,14 +434,14 @@ pub struct CPU<'cb> {
 }
 
 impl <'cb> CPU<'cb> {
-    pub fn new(rom: Vec<u8>, frame_cb: &'cb mut FnMut(&[u32])) -> Self {
+    pub fn new(rom: Vec<u8>, frame_cb: &'cb mut FnMut(&[u32]), sound_cb: &'cb mut FnMut((f32, f32))) -> Self {
         Self{
             a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Flags::empty(), sp: 0, pc: 0,
             bootrom_enabled: true,
             ram: [0; 0x2000], wram: [0; 0x7F],
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
             ppu: ppu::PPU::new(frame_cb),
-            sound: Default::default(),
+            sound: sound::SoundController::new(sound_cb),
             div: 0, div_counter: 0, clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
             sb: 0, sc: 0,
@@ -731,6 +731,9 @@ impl <'cb> CPU<'cb> {
             // Sound
             0xFF10            => self.sound.read_nr10(),
             0xFF11            => self.sound.read_nr11(),
+            0xFF12            => self.sound.read_nr12(),
+            0xFF13            => self.sound.read_nr13(),
+            0xFF14            => self.sound.read_nr14(),
             0xFF1A            => self.sound.read_nr30(),
             0xFF1B            => self.sound.read_nr31(),
             0xFF1C            => self.sound.read_nr32(),
@@ -788,6 +791,9 @@ impl <'cb> CPU<'cb> {
             // Sound
             0xFF10            => { self.sound.write_nr10(v) }
             0xFF11            => { self.sound.write_nr11(v) }
+            0xFF12            => { self.sound.write_nr12(v) }
+            0xFF13            => { self.sound.write_nr13(v) }
+            0xFF14            => { self.sound.write_nr14(v) }
             0xFF1A            => { self.sound.write_nr30(v) }
             0xFF1B            => { self.sound.write_nr31(v) }
             0xFF1C            => { self.sound.write_nr32(v) }
@@ -1907,7 +1913,8 @@ mod tests {
     fn cpu_instructions() {
         let rom = include_bytes!("../test/cpu_instrs.gb");
         let mut video_cb = |_: &[u32]| {};
-        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb);
+        let mut sound_cb = |_: (f32, f32)| {};
+        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb);
 
         let mut output = String::new();
         while cpu.pc() != 0x681 {
@@ -1925,7 +1932,8 @@ mod tests {
     fn instruction_timing() {
         let rom = include_bytes!("../test/instr_timing.gb");
         let mut video_cb = |_: &[u32]| {};
-        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb);
+        let mut sound_cb = |_: (f32, f32)| {};
+        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb);
 
         let mut output = String::new();
         while cpu.pc() != 0xC8A6 {
@@ -1943,7 +1951,8 @@ mod tests {
     fn mem_timing() {
         let rom = include_bytes!("../test/mem_timing.gb");
         let mut video_cb = |_: &[u32]| {};
-        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb);
+        let mut sound_cb = |_: (f32, f32)| {};
+        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb);
 
         let mut output = String::new();
         while cpu.pc() != 0x06A1 {

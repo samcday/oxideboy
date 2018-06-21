@@ -325,7 +325,6 @@ impl <'cb> PPU<'cb> {
     fn pixel_transfer(&mut self) {
         // On the first cycle of this stage we ensure our state info is clean.
         if self.cycles == 1 {
-            // self.scx = 1;
             let scy = self.scy as u16;
             let scx = self.scx as u16;
             let ly = self.ly as u16;
@@ -465,12 +464,11 @@ impl <'cb> PPU<'cb> {
             self.pt_state.bg_x = (self.pt_state.bg_x + 1) % 32;
         } else if self.win_enabled && self.pt_state.in_win {
             // TODO:
+
             let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
             let wx = self.wx as u16;
 
             let i = 0;
-            // TODO: handle SCX offsets properly again.
-
             // Figure out which BG tile we're rendering.
             let bg_x = ((123 + wx + i) / 8) % 32;
             let tile_num = (self.pt_state.win_y * 32 + bg_x) as usize;

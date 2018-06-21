@@ -32,11 +32,11 @@ fn main() -> Result<()> {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
-    let audio_device: AudioQueue<f32> = audio_subsystem.open_queue(None, &AudioSpecDesired{
+    let audio_device = Rc::new(RefCell::new(audio_subsystem.open_queue(None, &AudioSpecDesired{
         freq: Some(44100),
         channels: Some(2),
         samples: None,
-    }).unwrap();
+    }).unwrap()));
     let window = video_subsystem.window("oxideboy", 320, 288)
         .position_centered()
         .opengl()
@@ -63,9 +63,15 @@ fn main() -> Result<()> {
         cb_gb_buffer.borrow_mut().copy_from_slice(buf);
     };
 
-    let mut gameboy = gameboy::CPU::new(rom, &mut video_cb);
+    let cb_audio_device = Rc::clone(&audio_device);
+    let mut sound_cb = move |(l, r)| {
+        cb_audio_device.borrow_mut().clear();
+        cb_audio_device.borrow_mut().queue(&[l, r]);
+    };
 
-    audio_device.resume();
+    let mut gameboy = gameboy::CPU::new(rom, &mut video_cb, &mut sound_cb);
+
+    audio_device.borrow_mut().resume();
 
     gameboy.breakpoint = 0x681;
 
@@ -122,8 +128,6 @@ fn main() -> Result<()> {
                         }
                     }
                 }).unwrap();
-                // audio_device.clear();
-                // audio_device.queue(audio_samples);
 
                 canvas.clear();
                 canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();

@@ -1,9 +1,5 @@
-#![allow(unreachable_code)]
-#![allow(dead_code)]
-
 const SAMPLE_RATE: f64 = 44100.0;  // TODO: configurable?
 
-#[derive(Default)]
 pub struct WaveRam {
     pub data: [u8; 16],
 }
@@ -14,8 +10,7 @@ impl WaveRam {
     }
 }
 
-#[derive(Default)]
-pub struct SoundController {
+pub struct SoundController<'cb> {
     sample_cycles: f64,
 
     timer: u16,
@@ -34,9 +29,11 @@ pub struct SoundController {
     sound1_sweep_time: u8,
     sound1_length: u8,
     sound1_duty: u8,
-    sound1_env_init: u8,
+    sound1_env_val: u8,
     sound1_env_inc: bool,
-    sound1_env_num: u8,
+    sound1_env_steps: u8,
+    sound1_freq: u16,
+    sound1_counter: bool,
 
     // Tone voice
     sound2_on: bool,
@@ -60,23 +57,51 @@ pub struct SoundController {
     sound4_left: bool,
     sound4_right: bool,
 
-    samples: Vec<f32>,
+    cb: &'cb mut FnMut((f32, f32)),
 }
 
-impl SoundController {
-    pub fn get_samples(&self) -> &[f32] {
-        &self.samples
-    }
+impl <'cb> SoundController<'cb> {
+    pub fn new(cb: &'cb mut FnMut((f32, f32))) -> SoundController {
+        SoundController{
+            sample_cycles: 0.0,
+            timer: 0, frame_seq_timer: 0,
 
-    pub fn clear_samples(&mut self) {
-        self.samples.clear();
+            enabled: true,
+            left_vol: 0, right_vol: 0,
+
+            // Tone & Sweep voice
+            sound1_on: false, sound1_left: false, sound1_right: false,
+            sound1_sweep_num: 0, sound1_sweep_sub: false, sound1_sweep_time: 0,
+            sound1_length: 0,
+            sound1_duty: 0,
+            sound1_env_val: 0, sound1_env_inc: false, sound1_env_steps: 0,
+            sound1_freq: 0,
+            sound1_counter: false,
+
+            // Tone voice
+            sound2_on: false, sound2_left: false, sound2_right: false,
+
+            // Wave voice
+            sound3_on: false, sound3_left: false, sound3_right: false,
+            sound3_length: 0,
+            sound3_level: 0,
+            sound3_freq: 0,
+            sound3_counter: false,
+            sound3_wave_ram: WaveRam{data: [0; 16]},
+            sound3_pos: 0,
+            sound3_timer: 0,
+
+            // Noise voice
+            sound4_on: false, sound4_left: false, sound4_right: false,
+            cb,
+        }
     }
 
     pub fn advance(&mut self) {
         if !self.enabled {
             return;
         }
-        return;
+        // return;
 
         self.timer += 1;
         if self.timer == 2048 {
@@ -113,13 +138,19 @@ impl SoundController {
         let mut l = 0.0;
         let mut r = 0.0;
 
-        if self.sound3_on {
-            l = self.sound3_wave_ram.get_step(self.sound3_pos) / 15.0 * 0.5;
-            r = self.sound3_wave_ram.get_step(self.sound3_pos) / 15.0 * 0.5;
+        if self.sound1_on {
+            l = 1.0;
+            r = 1.0;
         }
 
-        self.samples.push(l);
-        self.samples.push(r);
+        // if self.sound3_on {
+        //     l = self.sound3_wave_ram.get_step(self.sound3_pos) / 15.0 * 0.5;
+        //     r = self.sound3_wave_ram.get_step(self.sound3_pos) / 15.0 * 0.5;
+        // }
+
+        (self.cb)((l, r));
+        // self.samples.push(l);
+        // self.samples.push(r);
     }
 
     fn length_clock(&mut self) {
@@ -170,8 +201,48 @@ impl SoundController {
         self.sound1_duty   = v & 0b1100_0000 >> 6;
     }
 
+    pub fn read_nr12(&self) -> u8 {
+        if !self.enabled {
+            return 0;
+        }
+        0
+            | self.sound1_env_steps
+            | if self.sound1_env_inc { 0b0000_1000 } else { 0 }
+            | self.sound1_env_val << 4
+    }
+
+    pub fn write_nr12(&mut self, v: u8) {
+        if !self.enabled {
+            return;
+        }
+        self.sound1_env_steps = v & 0b0000_0111;
+        self.sound1_env_inc   = v & 0b0000_1000 > 0;
+        self.sound1_env_steps = v & 0b1111_0000 >> 4;
+    }
+
+    pub fn read_nr13(&self) -> u8 {
+        if self.enabled { self.sound1_freq as u8 } else { 0 }
+    }
+
+    pub fn write_nr13(&mut self, v: u8) {
+        self.sound1_freq = (self.sound1_freq & 0x700) | (v as u16);
+    }
+
+    pub fn read_nr14(&self) -> u8 {
+        if self.enabled & self.sound1_counter { 0b0100_0000 } else { 0 }
+    }
+
+    pub fn write_nr14(&mut self, v: u8) {
+        if !self.enabled {
+            return;
+        }
+        self.sound1_freq = (self.sound1_freq & 0xFF) | (((v & 0b111) as u16) << 8);
+        self.sound1_counter = v & 0b0100_0000 > 0;
+        self.sound1_on      = v & 0b1000_0000 > 0;
+    }
+
     pub fn read_nr30(&self) -> u8 {
-        return if self.enabled && self.sound3_on { 0b1000_0000 } else { 0 };
+        if self.enabled && self.sound3_on { 0b1000_0000 } else { 0 }
     }
 
     pub fn write_nr30(&mut self, v: u8) {
@@ -215,6 +286,9 @@ impl SoundController {
     }
 
     pub fn write_nr33(&mut self, v: u8) {
+        if !self.enabled {
+            return;
+        }
         self.sound3_freq = (self.sound3_freq & 0x700) | (v as u16);
     }
 
