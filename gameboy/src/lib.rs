@@ -422,6 +422,7 @@ pub struct CPU<'cb> {
     // Serial I/O
     sb: u8,
     sc: u8,
+    serial_cb: &'cb mut FnMut(u8),
 
     cart: Cartridge,
 
@@ -434,7 +435,7 @@ pub struct CPU<'cb> {
 }
 
 impl <'cb> CPU<'cb> {
-    pub fn new(rom: Vec<u8>, frame_cb: &'cb mut FnMut(&[u32]), sound_cb: &'cb mut FnMut((f32, f32))) -> Self {
+    pub fn new(rom: Vec<u8>, frame_cb: &'cb mut FnMut(&[u32]), sound_cb: &'cb mut FnMut((f32, f32)), serial_cb: &'cb mut FnMut(u8)) -> Self {
         Self{
             a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Flags::empty(), sp: 0, pc: 0,
             bootrom_enabled: true,
@@ -444,7 +445,7 @@ impl <'cb> CPU<'cb> {
             sound: sound::SoundController::new(sound_cb),
             div: 0, div_counter: 0, clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
-            sb: 0, sc: 0,
+            sb: 0, sc: 0, serial_cb,
             cart: Cartridge::from_rom(rom),
             cycle_count: 0,
             instr_addr: 0,
@@ -455,16 +456,6 @@ impl <'cb> CPU<'cb> {
 
     pub fn pc(&self) -> u16 {
         return self.pc;
-    }
-
-    pub fn serial_get(&mut self) -> Option<u8> {
-        if self.sb > 0 {
-            let v = Some(self.sb);
-            self.sb = 0;
-            v
-        } else {
-            None
-        }
     }
 
     pub fn is_vblank(&self) -> bool {
@@ -778,7 +769,7 @@ impl <'cb> CPU<'cb> {
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v }
             0xFE00 ... 0xFE9F => { self.ppu.write_oam(addr - 0xFE00, v) }
             0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
-            0xFF01            => { self.sb = v }
+            0xFF01            => { self.sb = v; (self.serial_cb)(v); }
             0xFF02            => { self.sc = v }
             0xFF04            => { self.div = 0 }
             0xFF05            => { self.tima = v }
@@ -1908,62 +1899,64 @@ impl <'cb> CPU<'cb> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::rc::Rc;
+    use std::cell::RefCell;
 
     #[test]
     fn cpu_instructions() {
         let rom = include_bytes!("../test/cpu_instrs.gb");
+        let serial_output = Rc::new(RefCell::new(String::new()));
         let mut video_cb = |_: &[u32]| {};
         let mut sound_cb = |_: (f32, f32)| {};
-        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb);
+        let cb_serial_out = Rc::clone(&serial_output);
+        let mut serial_cb = move |v: u8| {
+            cb_serial_out.borrow_mut().push(v as char);
+        };
+        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb, &mut serial_cb);
 
-        let mut output = String::new();
         while cpu.pc() != 0x681 {
             cpu.run();
-            let ser = cpu.serial_get();
-            if ser.is_some() {
-                output.push(ser.unwrap() as char);
-            }
         }
 
-        assert_eq!(output, "cpu_instrs\n\n01:ok  02:ok  03:ok  04:ok  05:ok  06:ok  07:ok  08:ok  09:ok  10:ok  11:ok  ");
+        assert_eq!(*serial_output.borrow(), "cpu_instrs\n\n01:ok  02:ok  03:ok  04:ok  05:ok  06:ok  07:ok  08:ok  09:ok  10:ok  11:ok  ");
     }
 
     #[test]
     fn instruction_timing() {
         let rom = include_bytes!("../test/instr_timing.gb");
+        let serial_output = Rc::new(RefCell::new(String::new()));
         let mut video_cb = |_: &[u32]| {};
         let mut sound_cb = |_: (f32, f32)| {};
-        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb);
+        let cb_serial_out = Rc::clone(&serial_output);
+        let mut serial_cb = move |v: u8| {
+            cb_serial_out.borrow_mut().push(v as char);
+        };
+        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb, &mut serial_cb);
 
-        let mut output = String::new();
         while cpu.pc() != 0xC8A6 {
             cpu.run();
-            let ser = cpu.serial_get();
-            if ser.is_some() {
-                output.push(ser.unwrap() as char);
-            }
         }
 
-        assert_eq!(output, "instr_timing\n\n\nPassed\n");
+        assert_eq!(*serial_output.borrow(), "instr_timing\n\n\nPassed\n");
     }
 
     #[test]
     fn mem_timing() {
         let rom = include_bytes!("../test/mem_timing.gb");
+        let serial_output = Rc::new(RefCell::new(String::new()));
         let mut video_cb = |_: &[u32]| {};
         let mut sound_cb = |_: (f32, f32)| {};
-        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb);
+        let cb_serial_out = Rc::clone(&serial_output);
+        let mut serial_cb = move |v: u8| {
+            cb_serial_out.borrow_mut().push(v as char);
+        };
+        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb, &mut serial_cb);
 
-        let mut output = String::new();
         while cpu.pc() != 0x06A1 {
             cpu.run();
-            let ser = cpu.serial_get();
-            if ser.is_some() {
-                output.push(ser.unwrap() as char);
-            }
         }
 
-        assert_eq!(output, "mem_timing\n\n01:ok  02:ok  03:ok  \n\nPassed all tests");
+        assert_eq!(*serial_output.borrow(), "mem_timing\n\n01:ok  02:ok  03:ok  \n\nPassed all tests");
     }
 }
 

@@ -1,21 +1,15 @@
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_mut)]
 extern crate gameboy;
 extern crate ratelimit;
 extern crate sdl2;
 
-use std::io;
 use std::io::prelude::*;
 use std::fs::File;
-use std::thread;
-use std::sync::{Mutex, Arc, mpsc};
 use std::env;
 use std::time::{Duration, Instant};
 use std::rc::Rc;
 use std::cell::RefCell;
 
-use sdl2::audio::{AudioSpecDesired, AudioQueue};
+use sdl2::audio::{AudioSpecDesired};
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use sdl2::event::Event;
@@ -69,7 +63,14 @@ fn main() -> Result<()> {
         cb_audio_device.borrow_mut().queue(&[l, r]);
     };
 
-    let mut gameboy = gameboy::CPU::new(rom, &mut video_cb, &mut sound_cb);
+    let mut serial_cb = |sb| {
+        if print_serial {
+            std::io::stdout().write(&[sb]).unwrap();
+            std::io::stdout().flush().unwrap();
+        }
+    };
+
+    let mut gameboy = gameboy::CPU::new(rom, &mut video_cb, &mut sound_cb, &mut serial_cb);
 
     audio_device.borrow_mut().resume();
 
@@ -112,7 +113,7 @@ fn main() -> Result<()> {
         }
 
         {
-            let newdelt = gameboy.run_frame(delta);
+            delta = gameboy.run_frame(delta);
 
             if now.elapsed().subsec_nanos() > 16666666 {
                 now = Instant::now();
@@ -138,18 +139,6 @@ fn main() -> Result<()> {
         if gameboy.breakpoint_hit {
             break 'running;
         }
-
-        // if print_serial {
-        //     let ser = gameboy.cpu.serial_get();
-        //     if ser.is_some() {
-        //       io::stdout().write(&[ser.unwrap()]).unwrap();
-        //       io::stdout().flush().unwrap();
-        //     }
-        // }
-
-        // if gameboy.breakpoint_hit {
-        //     break 'running;
-        // }
     }
 
     println!();
