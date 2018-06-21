@@ -392,14 +392,14 @@ impl <'cb> PPU<'cb> {
                 continue;
             }
 
-            // if self.obj_enabled && !self.scanline_objs.is_empty() {
-            //     let (obj_idx, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
-            //     if fifo_x + 4 > obj_x - 8 {
-            //         max = obj_x - 8 - fifo_x;
-            //         self.pt_state.fifo_stalled = true;
-            //         self.pt_state.fetch_obj = obj_idx;
-            //     }
-            // }
+            if self.obj_enabled && !self.scanline_objs.is_empty() {
+                let (obj_idx, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
+                if self.pt_state.flush_x == obj_x - 8 {
+                    self.pt_state.fifo_stalled = true;
+                    self.pt_state.fetch_obj = obj_idx;
+                    return;
+                }
+            }
 
             if self.win_enabled && self.ly >= self.wx {
                 if self.pt_state.flush_x == (self.wx - 7) {
