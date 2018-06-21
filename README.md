@@ -6,7 +6,6 @@ Nothing to really see here yet, unless you're really into terrible codez.
 
 # Current TODO list:
 
- * Finish sprite implementation.
  * Implement window
  * Implement sound
  * Pass all gb-test-roms dmg_sound tests

@@ -12,14 +12,19 @@ struct PixelTransferState {
     fetch_obj: u8,    // If fifo_stalled is true, this will be set to the sprite index (in OAM table).
     fifo: PixelFifo,
     scratch: (u16, u16),
-    x: u8,              // Tracks which pixel in the scanline we're up to fetching.
+    flush_x: u8,              // Tracks which pixel in the scanline we're up to flushing.
     flush: bool,        // When true, the next 8 pixels are written into FIFO.
     obj_flush: bool,
     tile_y: usize,
     win_tile_y: usize,
-    bg_y: u16,
     win_y: u16,
     in_win: bool,
+
+    // bg_x and bg_y keep track of which BG tile (in the 32x32 tile grid) we're currently drawing.
+    // bg_y won't change during a scanline, but bg_x increments (and wraps around) every second clock cycle.
+    bg_x: u16,
+    bg_y: u16,
+    skip: u8,       // The number of pixels to throw away at the start of the scanline (scx % 8)
 }
 
 // While drawing a scanline, we keep a small number of pixels in a FIFO queue before writing them to framebuffer.
@@ -162,7 +167,8 @@ impl <'cb> PPU<'cb> {
             vram: [0; 0x2000], oam: [0; 0xA0],
             pt_state: PixelTransferState{
                 scratch: (0, 0), fifo_stalled: false, fetch_obj: 0, fifo: PixelFifo::new(), flush: false,
-                obj_flush: false, x: 0, tile_y: 0, bg_y: 0, in_win: false, win_tile_y: 0, win_y: 0, },
+                obj_flush: false, flush_x: 0, tile_y: 0, bg_y: 0, bg_x: 0, skip: 0,
+                in_win: false, win_tile_y: 0, win_y: 0, },
             scanline_objs: Vec::new(),
             framebuffer: [0; 160*144], fb_pos: 0,
             cb
@@ -319,23 +325,30 @@ impl <'cb> PPU<'cb> {
     fn pixel_transfer(&mut self) {
         // On the first cycle of this stage we ensure our state info is clean.
         if self.cycles == 1 {
+            // self.scx = 1;
             let scy = self.scy as u16;
+            let scx = self.scx as u16;
             let ly = self.ly as u16;
             let wy = self.wy as u16;
             self.pt_state.tile_y = ((scy + ly) % 8) as usize;
-            self.pt_state.bg_y = ((ly + scy) / 8) % 32;
             self.pt_state.win_y = ((ly + wy) / 8) % 32;
             self.pt_state.win_tile_y = ((wy + ly) % 8) as usize;
-            self.pt_state.x = 0;
+            self.pt_state.flush_x = 0;
             self.pt_state.flush = false;
             self.pt_state.in_win = false;
+
+            self.pt_state.bg_y = ((ly + scy) / 8) % 32;
+            self.pt_state.bg_x = (scx / 8) % 32;
+            self.pt_state.skip = (scx % 8) as u8;
+
+            self.pt_state.fifo.clear();
         }
 
         self.pixel_transfer_flush_pixels();
         self.pixel_transfer_fetch_pixels();
 
         // Once we've rasterized and flushed all pixels for this scanline, we can move on to the HBlank stage.
-        if self.pt_state.x == 160 && self.pt_state.fifo.len() == 0 {
+        if self.pt_state.flush_x == 160 { //  && self.pt_state.fifo.len() == 0 {
             // HBlank runs for a variable number of cycles, depending on how long this pixel transfer took.
             // If there was no OBJs or window on the current line, then pixel transfer takes 43 cycles and HBlank
             // takes 51 cycles.
@@ -350,29 +363,47 @@ impl <'cb> PPU<'cb> {
     // we instead flush out 4 pixels per cycle.
     fn pixel_transfer_flush_pixels(&mut self) {
         // The FIFO must always have at least 8 pixels in it.
-        if self.pt_state.fifo_stalled || (self.pt_state.fifo.len() < 12 && self.pt_state.x < 160) {
+        if self.pt_state.fifo_stalled {
+            return;
+        }
+
+        // The FIFO must always have 8 pixels in it, so that we can blend OBJs onto BG/window pixels.
+        // However, if we're near the end of the scanline, then our minimum size is 0 (we want to flush
+        // remaining pixels).
+        let min_fifo_size = if self.pt_state.flush_x >= 152 { 8 } else { 0 };
+
+        if min_fifo_size >= self.pt_state.fifo.len() {
             return;
         }
 
         // Send out 4 pixels.
-        let mut fifo_x = self.pt_state.x - self.pt_state.fifo.len();
-
         // First, we need to make sure there isn't a sprite starting somewhere in the next 4 pixels.
         // If there is, we note where it is, and mark ourselves as stalled, then flush the pixels up to the
         // beginning of the sprite. Of course, we only do any of this if OBJ rendering is enabled.
-        let mut max = 4;
-        if self.obj_enabled && !self.scanline_objs.is_empty() {
-            let (obj_idx, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
-            if fifo_x + 4 > obj_x - 8 {
-                max = obj_x - 8 - fifo_x;
-                self.pt_state.fifo_stalled = true;
-                self.pt_state.fetch_obj = obj_idx;
-            }
-        }
+        
 
-        for _ in 0..max {
+        for _ in 0..(self.pt_state.fifo.len()).min(4) {
+            if self.pt_state.flush_x == 160 {
+                return;
+            }
+
+            if self.pt_state.skip > 0 {
+                self.pt_state.fifo.pop();
+                self.pt_state.skip -= 1;
+                continue;
+            }
+
+            // if self.obj_enabled && !self.scanline_objs.is_empty() {
+            //     let (obj_idx, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
+            //     if fifo_x + 4 > obj_x - 8 {
+            //         max = obj_x - 8 - fifo_x;
+            //         self.pt_state.fifo_stalled = true;
+            //         self.pt_state.fetch_obj = obj_idx;
+            //     }
+            // }
+
             if self.win_enabled && self.ly >= self.wx {
-                if fifo_x == (self.wx - 7) {
+                if self.pt_state.flush_x == (self.wx - 7) {
                     self.pt_state.in_win = true;
                     self.pt_state.fifo_stalled = false;
                     self.pt_state.fifo.clear();
@@ -389,7 +420,7 @@ impl <'cb> PPU<'cb> {
                 _ => unreachable!("Pixels are 2bpp")
             };
             self.fb_pos += 1;
-            fifo_x += 1;
+            self.pt_state.flush_x += 1;
         }
     }
 
@@ -415,53 +446,37 @@ impl <'cb> PPU<'cb> {
             return;
         }
 
-        if self.pt_state.x < 160 && self.pt_state.flush {
+        if self.pt_state.flush {
             self.pt_state.fifo.push_bg(self.pt_state.scratch.0, self.pt_state.scratch.1);
-            self.pt_state.x += 8;
             self.pt_state.flush = false;
             return;
         }
 
-        if self.pt_state.x < 160 {
-            self.pt_state.scratch = (0, 0);
-            self.pt_state.flush = true;
+        self.pt_state.scratch = (0, 0);
+        self.pt_state.flush = true;
 
-            if self.bg_enabled {
-                let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
+        if self.bg_enabled {
+            let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
 
-                let scanline_x = self.pt_state.x as u16;
-                let scx = self.scx as u16;
+            let tile_num = (self.pt_state.bg_y * 32 + self.pt_state.bg_x) as usize;
+            let tile = self.vram[(code_base_addr + tile_num) as usize] as usize;
 
-                let i = 0;
-                // TODO: handle SCX offsets properly again.
-                let _tile_x = (i + scx + scanline_x) % 8;
+            self.pt_state.scratch = self.get_tile_row(tile, self.pt_state.tile_y, !self.bg_data_lo, false, &self.bgp);
+            self.pt_state.bg_x = (self.pt_state.bg_x + 1) % 32;
+        } else if self.win_enabled && self.pt_state.in_win {
+            // TODO:
+            let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
+            let wx = self.wx as u16;
 
-                // Figure out which BG tile we're rendering.
-                let bg_x = ((scanline_x + scx + i) / 8) % 32;
-                let tile_num = (self.pt_state.bg_y * 32 + bg_x) as usize;
-                let tile = self.vram[(code_base_addr + tile_num) as usize] as usize;
+            let i = 0;
+            // TODO: handle SCX offsets properly again.
 
-                // Now figure out which pixels in this particular tile we need.
+            // Figure out which BG tile we're rendering.
+            let bg_x = ((123 + wx + i) / 8) % 32;
+            let tile_num = (self.pt_state.win_y * 32 + bg_x) as usize;
+            let tile = self.vram[(code_base_addr + tile_num) as usize] as usize;
 
-                self.pt_state.scratch = self.get_tile_row(tile, self.pt_state.tile_y, !self.bg_data_lo, false, &self.bgp);
-            } else if self.win_enabled && self.pt_state.in_win {
-                let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
-                let scanline_x = self.pt_state.x as u16;
-                let wx = self.wx as u16;
-
-                let i = 0;
-                // TODO: handle SCX offsets properly again.
-                let _tile_x = (i + wx + scanline_x) % 8;
-
-                // Figure out which BG tile we're rendering.
-                let bg_x = ((scanline_x + wx + i) / 8) % 32;
-                let tile_num = (self.pt_state.win_y * 32 + bg_x) as usize;
-                let tile = self.vram[(code_base_addr + tile_num) as usize] as usize;
-
-                // Now figure out which pixels in this particular tile we need.
-
-                self.pt_state.scratch = self.get_tile_row(tile, self.pt_state.win_tile_y, !self.bg_data_lo, false, &self.bgp);
-            }
+            self.pt_state.scratch = self.get_tile_row(tile, self.pt_state.win_tile_y, !self.bg_data_lo, false, &self.bgp);
         }
     }
 
@@ -712,21 +727,21 @@ mod tests {
         let mut fifo: PixelFifo = PixelFifo::new();
 
         // Test how we blend an OBJ that has priority OVER the background.
-        //                      vv    vv these BG pixels should be overridden by OBJ.
+        //                      ↓↓    ↓↓ these BG pixels should be overridden by OBJ.
         fifo.push_bg         (0b00_11_01_00_00000000, 0b00111100_00000000);
         fifo.blend_obj       (0b10_00_11_00_00000000, 0b11001100_00000000, true);
         assert_eq!(fifo.fifo, 0b10_11_11_00_00000000);
 
         // Confirm that a subsequent OBJ with lower priority does not overwrite existing OBJ pixels.
-        //                      vv this pixel *should not* be overridden since a OBJ already drew there.
-        //                               vv this pixel *should* be overridden since an OBJ did not yet draw there.
+        //                      ↓↓ this pixel *should not* be overridden since a OBJ already drew there.
+        //                               ↓↓ this pixel *should* be overridden since an OBJ did not yet draw there.
         fifo.blend_obj       (0b01_00_00_11_00000000, 0b11000011_00000000, true);
         assert_eq!(fifo.fifo, 0b10_11_11_11_00000000);
 
         // And now test blending an OBJ that does *not* have priority over the background.
         let mut fifo: PixelFifo = PixelFifo::new();
 
-        //                            vv these BG pixels should be preserved.
+        //                            ↓↓ these BG pixels should be preserved.
         fifo.push_bg         (0b00_11_01_00_00000000, 0b00111100_00000000);
         fifo.blend_obj       (0b10_00_11_00_00000000, 0b11001100_00000000, false);
         assert_eq!(fifo.fifo, 0b10_11_01_00_00000000);
