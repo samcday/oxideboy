@@ -7,13 +7,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "gameboy"
 version = "0.1.0"
 dependencies = [
- "lr35902 0.1.0",
-]
-
-[[package]]
-name = "lr35902"
-version = "0.1.0"
-dependencies = [
  "bitflags 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

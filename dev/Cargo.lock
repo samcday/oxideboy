@@ -18,7 +18,6 @@ name = "dev"
 version = "0.1.0"
 dependencies = [
  "gameboy 0.1.0",
- "lr35902 0.1.0",
  "ratelimit 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "sdl2 0.31.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -41,7 +40,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "gameboy"
 version = "0.1.0"
 dependencies = [
- "lr35902 0.1.0",
+ "bitflags 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -53,13 +52,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "libc"
 version = "0.2.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-
-[[package]]
-name = "lr35902"
-version = "0.1.0"
-dependencies = [
- "bitflags 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
-]
 
 [[package]]
 name = "num"

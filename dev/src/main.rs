@@ -1,7 +1,6 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 #![allow(unused_mut)]
-extern crate lr35902;
 extern crate gameboy;
 extern crate ratelimit;
 extern crate sdl2;
@@ -49,21 +48,23 @@ fn main() -> Result<()> {
 
     let mut limit = false;
     let mut ratelimit = ratelimit::Builder::new()
-        .capacity(1) //number of tokens the bucket will hold
-        .quantum(1) //add one token per interval
-        .interval(Duration::new(0, 16660000)) //add quantum tokens every 1 second
+        .capacity(1).quantum(1)
+        .interval(Duration::new(0, 16660000))
         .build();
 
-    let framebuffer = [0 as u32; 160*144];
     let print_serial = env::var_os("PRINT_SERIAL").map(|s| &s == "1").unwrap_or(false);
 
-    let mut gameboy = gameboy::Gameboy::new(&rom)?;
+    let mut gameboy = gameboy::CPU::new(rom);
 
     audio_device.resume();
 
+    gameboy.breakpoint = 0x681;
+
+    let mut delta = 0;
+
     'running: loop {
         if limit {
-            ratelimit.wait();
+            // ratelimit.wait();
         }
 
         for event in event_pump.poll_iter() {
@@ -95,42 +96,47 @@ fn main() -> Result<()> {
         }
 
         {
-            let (framebuffer, audio_samples) = gameboy.run_frame();
-
-            // audio_device.clear();
-            // audio_device.queue(audio_samples);
+            let (newdelt, frame) = gameboy.run_frame(delta);
 
             texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
                 for y in 0..144 {
                     for x in 0..160 {
                         let offset = y*pitch + (x*3);
-                        buffer[offset] = framebuffer[y*160+x] as u8;
-                        buffer[offset + 1] = framebuffer[y*160+x] as u8;
-                        buffer[offset + 2] = framebuffer[y*160+x] as u8;
+                        buffer[offset] = frame[y*160+x] as u8;
+                        buffer[offset + 1] = frame[y*160+x] as u8;
+                        buffer[offset + 2] = frame[y*160+x] as u8;
                     }
                 }
             }).unwrap();
+
+            // audio_device.clear();
+            // audio_device.queue(audio_samples);
 
             canvas.clear();
             canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
             canvas.present();
         }
 
-        if print_serial {
-            let ser = gameboy.cpu.serial_get();
-            if ser.is_some() {
-              io::stdout().write(&[ser.unwrap()]).unwrap();
-              io::stdout().flush().unwrap();
-            }
-        }
-
         if gameboy.breakpoint_hit {
             break 'running;
         }
+
+        // if print_serial {
+        //     let ser = gameboy.cpu.serial_get();
+        //     if ser.is_some() {
+        //       io::stdout().write(&[ser.unwrap()]).unwrap();
+        //       io::stdout().flush().unwrap();
+        //     }
+        // }
+
+        // if gameboy.breakpoint_hit {
+        //     break 'running;
+        // }
     }
 
     println!();
-    println!("Executed a total of {} clock cycles", gameboy.cpu.cycle_count);
+    println!("Sigh: {}", gameboy.pc());
+    println!("Executed a total of {} clock cycles", gameboy.cycle_count);
     println!();
 
     Ok(())

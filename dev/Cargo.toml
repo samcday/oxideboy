@@ -7,9 +7,6 @@ authors = ["Sam Day <me@samcday.com>"]
 ratelimit = "0.4.3"
 sdl2 = "0.31"
 
-[dependencies.lr35902]
-path = "../lr35902"
-
 [dependencies.gameboy]
 path = "../gameboy"
 
