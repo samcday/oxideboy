@@ -1,9 +1,6 @@
 // TODO: how efficient is match expr in decode methods? Should we be using rust-phf instead?
 // TODO: how efficient is the mem addr matching in mem_read/mem_write functions?
 
-#[macro_use]
-extern crate bitflags;
-
 mod ppu;
 mod sound;
 
@@ -14,12 +11,36 @@ static BOOT_ROM: &[u8; 256] = include_bytes!("boot.rom");
 
 pub const SCREEN_SIZE: usize = 160 * 144;
 
-bitflags! {
-    struct Flags: u8 {
-        const Z = 0b10000000;
-        const N = 0b01000000;
-        const H = 0b00100000;
-        const C = 0b00010000;
+#[derive(Default)]
+struct CpuFlags {
+    z: bool,
+    n: bool,
+    h: bool,
+    c: bool,
+}
+
+impl CpuFlags {
+    fn reset(&mut self) -> &mut Self {
+        self.z = false;
+        self.n = false;
+        self.h = false;
+        self.c = false;
+        self
+    }
+
+    fn to_u8(&self) -> u8 {
+        0
+            | if self.z { 0b1000_0000 } else { 0 }
+            | if self.n { 0b0100_0000 } else { 0 }
+            | if self.h { 0b0010_0000 } else { 0 }
+            | if self.c { 0b0001_0000 } else { 0 }
+    }
+
+    fn from_u8(&mut self, v: u8) {
+        self.z = v & 0b1000_0000 > 0;
+        self.n = v & 0b0100_0000 > 0;
+        self.h = v & 0b0010_0000 > 0;
+        self.c = v & 0b0001_0000 > 0;
     }
 }
 
@@ -382,7 +403,7 @@ pub struct CPU<'cb> {
     e: u8,
     h: u8,
     l: u8,
-    f: Flags,
+    f: CpuFlags,
     sp: u16,
     pc: u16,
 
@@ -437,7 +458,7 @@ pub struct CPU<'cb> {
 impl <'cb> CPU<'cb> {
     pub fn new(rom: Vec<u8>, frame_cb: &'cb mut FnMut(&[u32]), sound_cb: &'cb mut FnMut((f32, f32)), serial_cb: &'cb mut FnMut(u8)) -> Self {
         Self{
-            a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Flags::empty(), sp: 0, pc: 0,
+            a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Default::default(), sp: 0, pc: 0,
             bootrom_enabled: true,
             ram: [0; 0x2000], wram: [0; 0x7F],
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
@@ -1435,7 +1456,7 @@ impl <'cb> CPU<'cb> {
 
     fn get_reg16(&self, reg: Reg16) -> u16 {
         let (hi, lo) = match reg {
-            AF => { (self.a, self.f.bits()) },
+            AF => { (self.a, self.f.to_u8()) },
             BC => { (self.b, self.c) },
             DE => { (self.d, self.e) },
             HL => { (self.h, self.l) },
@@ -1449,7 +1470,7 @@ impl <'cb> CPU<'cb> {
         let (hi, lo) = match reg {
             AF => {
                 self.a = ((v & 0xFF00) >> 8) as u8;
-                self.f = Flags::from_bits_truncate(v as u8);
+                self.f.from_u8(v as u8);
                 return;
             },
             BC => { (&mut self.b, &mut self.c) },
@@ -1505,9 +1526,9 @@ impl <'cb> CPU<'cb> {
     // Flags = Z:* N:0 H:* C:-
     fn inc8(&mut self, o: Operand8) {
         let v = o.get(self).wrapping_add(1);
-        self.f.set(Flags::Z, v == 0);
-        self.f.remove(Flags::N);
-        self.f.set(Flags::H, v & 0x0F == 0);
+        self.f.z = v == 0;
+        self.f.n = false;
+        self.f.h = v & 0x0F == 0;
         o.set(self, v);
     }
 
@@ -1515,9 +1536,9 @@ impl <'cb> CPU<'cb> {
     // Flags = Z:* N:1 H:* C:-
     fn dec8(&mut self, o: Operand8) {
         let v = o.get(self).wrapping_sub(1);
-        self.f.set(Flags::Z, v == 0);
-        self.f.insert(Flags::N);
-        self.f.set(Flags::H, v & 0x0F == 0x0F);
+        self.f.z = v == 0;
+        self.f.n = true;
+        self.f.h = v & 0x0F == 0x0F;
         o.set(self, v);
     }
 
@@ -1543,66 +1564,71 @@ impl <'cb> CPU<'cb> {
     fn daa(&mut self) {
         let mut carry = false;
 
-        if !self.f.contains(Flags::N) {
-            if self.f.contains(Flags::C) || self.a > 0x99 {
+        if !self.f.n {
+            if self.f.c || self.a > 0x99 {
                 self.a = self.a.wrapping_add(0x60);
                 carry = true;
             }
-            if self.f.contains(Flags::H) || (self.a & 0xF) > 9 {
+            if self.f.h || (self.a & 0xF) > 9 {
                 self.a = self.a.wrapping_add(0x06);
             }
-        } else if self.f.contains(Flags::C) {
+        } else if self.f.c {
             carry = true;
-            self.a = self.a.wrapping_add(if self.f.contains(Flags::H) { 0x9A } else { 0xA0 });
-        } else if self.f.contains(Flags::H) {
+            self.a = self.a.wrapping_add(if self.f.h { 0x9A } else { 0xA0 });
+        } else if self.f.h {
             self.a = self.a.wrapping_add(0xFA);
         }
 
-        self.f.set(Flags::Z, self.a == 0);
-        self.f.remove(Flags::H);
-        self.f.set(Flags::C, carry);
+        self.f.z = self.a == 0;
+        self.f.h = false;
+        self.f.c = carry;
     }
 
     // CPL
     // Flags = Z:- N:1 H:1 C:-
     fn cpl(&mut self) {
         self.a = !self.a;
-        self.f |= Flags::N|Flags::H;
+        self.f.n = true;
+        self.f.h = true;
     }
 
     // CCF
     // Flags = Z:- N:0 H:0 C:*
     fn ccf(&mut self) {
-        self.f = (self.f&Flags::Z) | ((self.f&Flags::C)^Flags::C);
+        self.f.n = false;
+        self.f.h = false;
+        self.f.c = !self.f.c;
     }
 
     // SCF
     // Flags = Z:- N:0 H:0 C:1
     fn scf(&mut self) {
-        self.f = (self.f & Flags::Z) | Flags::C;
+        self.f.n = false;
+        self.f.h = false;
+        self.f.c = true;
     }
 
     // ADD A, %r8 | ADD A, (HL) | ADD A, $d8
     // ADC A, %r8 | ADC A, (HL) | ADC A, $d8
     // Flags = Z:* N:0 H:* C:*
     fn add8(&mut self, o: Operand8, carry: bool) {
-        let carry = if carry && self.f.contains(Flags::C) { 1 } else { 0 };
+        let carry = if carry && self.f.c { 1 } else { 0 };
 
         let old = self.a;
         let v = o.get(self);
         let new = old.wrapping_add(v).wrapping_add(carry);
         self.a = new;
-        self.f.set(Flags::Z, new == 0);
-        self.f.remove(Flags::N);
-        self.f.set(Flags::H, (((old & 0xF) + (v & 0xF)) + carry) & 0x10 == 0x10);
-        self.f.set(Flags::C, (old as u16) + (v as u16) + (carry as u16) > 0xFF);
+        self.f.z = new == 0;
+        self.f.n = false;
+        self.f.h = (((old & 0xF) + (v & 0xF)) + carry) & 0x10 == 0x10;
+        self.f.c = (old as u16) + (v as u16) + (carry as u16) > 0xFF;
     }
 
     // SUB    %r8 | SUB    (HL) | SUB    $d8
     // SBC A, %r8 | SBC A, (HL) | SBC A, $d8
     // Flags = Z:* N:1 H:* C:*
     fn sub8(&mut self, o: Operand8, carry: bool, store: bool) {
-        let carry = if carry && self.f.contains(Flags::C) { 1 } else { 0 };
+        let carry = if carry && self.f.c { 1 } else { 0 };
 
         let a = self.a;
         let v = o.get(self);
@@ -1611,10 +1637,10 @@ impl <'cb> CPU<'cb> {
             self.a = new_a;
         }
 
-        self.f.set(Flags::Z, new_a == 0);
-        self.f.set(Flags::N, true);
-        self.f.set(Flags::H, ((a & 0xF) as u16) < ((v & 0xF) as u16) + (carry as u16));
-        self.f.set(Flags::C, (a as u16) < (v as u16) + (carry as u16));
+        self.f.z = new_a == 0;
+        self.f.n = true;
+        self.f.h = ((a & 0xF) as u16) < ((v & 0xF) as u16) + (carry as u16);
+        self.f.c = (a as u16) < (v as u16) + (carry as u16);
     }
 
     // ADD SP, r8
@@ -1628,10 +1654,10 @@ impl <'cb> CPU<'cb> {
         self.advance_clock();
         self.advance_clock();
 
-        self.f.remove(Flags::Z);
-        self.f.remove(Flags::N);
-        self.f.set(Flags::H, ((sp & 0xF) + (d & 0xF)) & 0x10 > 0);
-        self.f.set(Flags::C, ((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0);
+        self.f.z = false;
+        self.f.n = false;
+        self.f.h = ((sp & 0xF) + (d & 0xF)) & 0x10 > 0;
+        self.f.c = ((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0;
     }
 
     // ADD HL, rr
@@ -1644,9 +1670,9 @@ impl <'cb> CPU<'cb> {
 
         self.advance_clock();
 
-        self.f.remove(Flags::N);
-        self.f.set(Flags::H, ((hl & 0xFFF) + (v & 0xFFF)) & 0x1000 > 0);
-        self.f.set(Flags::C, overflow);
+        self.f.n = false;
+        self.f.h = ((hl & 0xFFF) + (v & 0xFFF)) & 0x1000 > 0;
+        self.f.c = overflow;
     }
 
     // LD %r8, %r8
@@ -1684,9 +1710,9 @@ impl <'cb> CPU<'cb> {
         let d = d as i16 as u16;
         let v = sp.wrapping_add(d);
         self.set_reg16(HL, v);
-        self.f = Flags::empty();
-        self.f.set(Flags::H, (sp & 0xF) + (d & 0xF) & 0x10 > 0);
-        self.f.set(Flags::C, (sp & 0xFF) + (d & 0xFF) & 0x100 > 0);
+        self.f.reset();
+        self.f.h = (sp & 0xF) + (d & 0xF) & 0x10 > 0;
+        self.f.c = (sp & 0xFF) + (d & 0xFF) & 0x100 > 0;
         self.advance_clock();
     }
 
@@ -1704,18 +1730,18 @@ impl <'cb> CPU<'cb> {
             BitwiseOp::XOR => a ^ v,
         };
 
-        self.f = Flags::empty();
-        self.f.set(Flags::Z, self.a == 0);
-        self.f.set(Flags::H, hc);
+        self.f.reset();
+        self.f.z = self.a == 0;
+        self.f.h = hc;
     }
 
     // BIT b, r
     // Flags = Z:* N:0 H:1 C:-
     fn bit(&mut self, b: u8, o: Operand8) {
         let v = o.get(self) & (1 << b);
-        self.f.set(Flags::Z, v == 0);
-        self.f.remove(Flags::N);
-        self.f.insert(Flags::H);
+        self.f.z = v == 0;
+        self.f.n = false;
+        self.f.h = true;
     }
 
     // RES b, r
@@ -1731,12 +1757,12 @@ impl <'cb> CPU<'cb> {
     // Flags = Z:* N:0 H:0 C:*
     fn rr(&mut self, o: Operand8, extended: bool) {
         let v = o.get(self);
-        let msb = if self.f.contains(Flags::C) { 0x80 } else { 0 };
+        let msb = if self.f.c { 0x80 } else { 0 };
         let carry = v & 0x1 > 0;
         let v = o.set(self, v >> 1 | msb);
-        self.f = Flags::empty();
-        self.f.set(Flags::Z, extended && v == 0);
-        self.f.set(Flags::C, carry);
+        self.f.reset();
+        self.f.z = extended && v == 0;
+        self.f.c = carry;
     }
 
     // RL %r8
@@ -1745,12 +1771,12 @@ impl <'cb> CPU<'cb> {
     // Flags = Z:* N:0 H:0 C:*
     fn rl(&mut self, o: Operand8, set_zero: bool, preserve_lsb: bool) {
         let v = o.get(self);
-        let lsb = if preserve_lsb && self.f.contains(Flags::C) { 1 } else { 0 };
+        let lsb = if preserve_lsb && self.f.c { 1 } else { 0 };
         let carry = v & 0x80 > 0;
         let v = o.set(self, v << 1 | lsb);
-        self.f = Flags::empty();
-        self.f.set(Flags::Z, set_zero && v == 0);
-        self.f.set(Flags::C, carry);
+        self.f.reset();
+        self.f.z = set_zero && v == 0;
+        self.f.c = carry;
     }
 
     // RLC %r8
@@ -1761,9 +1787,9 @@ impl <'cb> CPU<'cb> {
         let carry = v & 0x80 > 0;
         let lsb = if carry { 1 } else { 0 };
         let v = o.set(self, v << 1 | lsb);
-        self.f = Flags::empty();
-        self.f.set(Flags::Z, extended && v == 0);
-        self.f.set(Flags::C, carry);
+        self.f.reset();
+        self.f.z = extended && v == 0;
+        self.f.c = carry;
     }
 
     // SRA r
@@ -1773,9 +1799,9 @@ impl <'cb> CPU<'cb> {
         let carry = v & 0x01 > 0;
         let preserve = if preserve_msb { v & 0x80 } else { 0 };
         let v = o.set(self, v >> 1 | preserve);
-        self.f = Flags::empty();
-        self.f.set(Flags::Z, v == 0);
-        self.f.set(Flags::C, carry);
+        self.f.reset();
+        self.f.z = v == 0;
+        self.f.c = carry;
     }
 
     // RRC r
@@ -1785,9 +1811,9 @@ impl <'cb> CPU<'cb> {
         let carry = v & 0x1 > 0;
         let msb = if carry { 0x80 } else { 0 };
         let v = o.set(self, v >> 1 | msb);
-        self.f = Flags::empty();
-        self.f.set(Flags::Z, extended && v == 0);
-        self.f.set(Flags::C, carry);
+        self.f.reset();
+        self.f.z = extended && v == 0;
+        self.f.c = carry;
     }
 
     // SWAP r
@@ -1796,17 +1822,17 @@ impl <'cb> CPU<'cb> {
         let v = o.get(self);
         let v = ((v & 0xF) << 4) | ((v & 0xF0) >> 4);
         o.set(self, v);
-        self.f = Flags::empty();
-        self.f.set(Flags::Z, v == 0);
+        self.f.reset();
+        self.f.z = v == 0;
     }
 
     fn check_jmp_condition(&mut self, cc: Option<FlagCondition>) -> bool {
         match cc {
             None => true,
-            Some(FlagCondition::NZ) => !self.f.contains(Flags::Z),
-            Some(FlagCondition::Z)  => self.f.contains(Flags::Z),
-            Some(FlagCondition::NC) => !self.f.contains(Flags::C),
-            Some(FlagCondition::C)  => self.f.contains(Flags::C),
+            Some(FlagCondition::NZ) => !self.f.z,
+            Some(FlagCondition::Z)  => self.f.z,
+            Some(FlagCondition::NC) => !self.f.c,
+            Some(FlagCondition::C)  => self.f.c,
         }
     }
 
@@ -1892,7 +1918,7 @@ impl <'cb> CPU<'cb> {
     }
 
     fn core_panic(&self, msg: String) -> ! {
-        panic!("{}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}", msg, self.a, self.b, self.c, self.d, self.e, self.f, self.h, self.l, self.sp, self.pc);
+        panic!("{}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}", msg, self.a, self.b, self.c, self.d, self.e, self.f.to_u8(), self.h, self.l, self.sp, self.pc);
     }
 }
 
