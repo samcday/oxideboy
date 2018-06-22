@@ -411,7 +411,7 @@ pub struct CPU<'cb> {
 
     // RAM segments.
     ram:  [u8; 0x2000], // 0xC000 - 0xDFFF (and echoed in 0xE000 - 0xFDFF)
-    wram: [u8; 0x7F],   // 0xFF80 - 0xFFFE
+    hram: [u8; 0x7F],   // 0xFF80 - 0xFFFE
 
     // Interrupts.
     halted: bool,
@@ -446,6 +446,11 @@ pub struct CPU<'cb> {
     serial_internal_clock: bool,
     serial_cb: &'cb mut FnMut(u8),
 
+    dma_request: bool,
+    dma_active: bool,
+    dma_from: u16,
+    dma_idx: u8,
+
     cart: Cartridge,
 
     pub cycle_count: u64,
@@ -461,13 +466,14 @@ impl <'cb> CPU<'cb> {
         Self{
             a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Default::default(), sp: 0, pc: 0,
             bootrom_enabled: true,
-            ram: [0; 0x2000], wram: [0; 0x7F],
+            ram: [0; 0x2000], hram: [0; 0x7F],
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
             ppu: ppu::PPU::new(frame_cb),
             sound: sound::SoundController::new(sound_cb),
             div: 0, div_counter: 0, clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
             sb: 0, serial_transfer: false, serial_internal_clock: false, serial_cb,
+            dma_request: false, dma_active: false, dma_from: 0, dma_idx: 0,
             cart: Cartridge::from_rom(rom),
             cycle_count: 0,
             instr_addr: 0,
@@ -549,8 +555,33 @@ impl <'cb> CPU<'cb> {
     fn advance_clock(&mut self) {
         self.cycle_count += 1;
         self.advance_timer();
+        self.advance_dma();
         self.sound.advance();
         self.if_ |= self.ppu.advance();
+    }
+
+    /// Runs the DMA procedure when it's active. DMA transfers copy 160 bytes, one per cycle, from a configurable
+    /// source address into OAM memory. DMA transfers begin one extra cycle after being requested. They cannot be
+    /// stopped, but they can be restarted from a new location by writing to the DMA register again.
+    fn advance_dma(&mut self) {
+        // When a DMA is initiated, it doesn't begin on the next cycle, but the one after.
+        if self.dma_request {
+            self.dma_request = false;
+            self.dma_active = true;
+            return;
+        }
+
+        if !self.dma_active {
+            return;
+        }
+
+        let addr = self.dma_from + (self.dma_idx as u16);
+        let v = self.mem_get8(addr);
+        self.ppu.oam[self.dma_idx as usize] = v;
+        self.dma_idx += 1;
+        if self.dma_idx == 160 {
+            self.dma_active = false;
+        }
     }
 
     // Advances the TIMA register depending on how many CPU clock cycles have passed, and the
@@ -712,8 +743,17 @@ impl <'cb> CPU<'cb> {
     }
 
     fn mem_read8(&mut self, addr: u16) -> u8 {
-        self.advance_clock();
+        // While DMA is active, the CPU is not permitted to read outside of HRAM.
+        // Any attempt to do so will simply see values of 0xFF.
+        if self.dma_active && (addr < 0xFF80 || addr >= 0xFFFE) {
+            return 0xFF;
+        }
 
+        self.advance_clock();
+        self.mem_get8(addr)
+    }
+
+    fn mem_get8(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000 ... 0x100 if self.bootrom_enabled => BOOT_ROM[addr as usize],
 
@@ -772,7 +812,7 @@ impl <'cb> CPU<'cb> {
 
             0xFF4D            => 0x00,      // KEY1 for CGB.
             0xFF50            => if self.bootrom_enabled { 0 } else { 1 },
-            0xFF80 ... 0xFFFE => self.wram[(addr - 0xFF80) as usize],
+            0xFF80 ... 0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF            => self.ie,
 
             _                 => 0xFF,
@@ -793,7 +833,7 @@ impl <'cb> CPU<'cb> {
             0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
             0xFF01            => { self.sb = v; (self.serial_cb)(v); }
             0xFF02            => { self.write_sc(v) }
-            0xFF04            => { self.div = 0 }
+            0xFF04            => { self.div = 0; self.div_counter = 0; }
             0xFF05            => { self.tima = v }
             0xFF06            => { self.tma = v }
             0xFF07            => { self.set_tac(v & 0x7) }
@@ -835,7 +875,7 @@ impl <'cb> CPU<'cb> {
 
             0xFF4D            => { }      // KEY1 for CGB.
             0xFF7F            => { }      // No idea what this is.
-            0xFF80 ... 0xFFFE => { self.wram[(addr - 0xFF80) as usize] = v }
+            0xFF80 ... 0xFFFE => { self.hram[(addr - 0xFF80) as usize] = v }
             0xFFFF            => { self.ie = v & 0x1F }
 
             _ => {},
@@ -891,20 +931,14 @@ impl <'cb> CPU<'cb> {
     }
 
     fn dma(&mut self, v: u8) {
-        let addr = (((v & 0xF1) as u16) << 8) as usize;
-        let source = match addr {
-            0x8000 ... 0x9FFF => { &self.ppu.vram[(addr - 0x8000) .. (addr - 0x8000+0xA0)] }
-            0xA000 ... 0xBFFF => { &self.cart.ram()[(addr - 0xA000) .. (addr - 0xA000+0xA0)] }
-            0xC000 ... 0xDFFF => { &self.ram[(addr - 0xC000) .. (addr - 0xC000+0xA0)] }
-            _ => self.core_panic(format!("Unhandled DMA from {}", addr))
-        };
-
-        // We'll only DMA if we're in HBlank / VBlank.
-        // The very first game I tested with this emulator, Tetris, has a nasty habit of kicking off
-        // DMAs at invalid times.
-        if self.ppu.dma_ok() {
-            self.ppu.oam.copy_from_slice(source);
+        if !self.ppu.dma_ok() {
+            return;
         }
+
+        self.dma_request = true;
+        self.dma_active = false;
+        self.dma_idx = 0;
+        self.dma_from = ((v & 0xF1) as u16) << 8;
     }
 
     // Fetches next byte from PC and increments PC.
