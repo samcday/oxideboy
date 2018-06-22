@@ -858,7 +858,7 @@ impl <'cb> CPU<'cb> {
             0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
             0xFF01            => { self.sb = v; (self.serial_cb)(v); }
             0xFF02            => { self.write_sc(v) }
-            0xFF04            => { self.div = 0 } // All writes to DIV are ignored and DIV is reset to 0
+            0xFF04            => { self.write_div() }
             0xFF05            => {
                 // If TIMA is written to during the same cycle it overflowed, then the interrupt and reloading of TIMA
                 // with TMA is cancelled.
@@ -871,7 +871,15 @@ impl <'cb> CPU<'cb> {
                     self.tima = v;
                 }
             }
-            0xFF06            => { self.tma = v }
+            0xFF06            => {
+                self.tma = v;
+
+                // Another timer quirk. If TMA is written to in the same cycle that we refreshed TIMA, then
+                // we actually write this new value into TIMA immediately.
+                if self.tima_new {
+                    self.tima = self.tma;
+                }
+            }
             0xFF07            => { self.set_tac(v & 0x7) }
             0xFF0F            => { self.if_ = v & 0x1F }
 
@@ -948,6 +956,33 @@ impl <'cb> CPU<'cb> {
         }
 
         v
+    }
+
+    fn write_div(&mut self) {
+        // Writes to DIV are sort-of ignored. They just reset DIV to 0.
+        // HOWEVER, there's also a side effect to note ...
+        let old_div = self.div;
+        self.div = 0;
+
+        // ... If the timer is currently running, then depending on the frequency and which bits in DIV just went
+        // from 1 to 0, we may trigger another timer increment. This is because of how the actual timer
+        // circuitry works.
+        // See http://gbdev.gg8.se/wiki/articles/Timer_Obscure_Behaviour
+        if self.timer_enabled {
+            let should_inc = old_div & match self.timer_freq {
+                1024 => 0b0000_0010_0000_0000,
+                16   => 0b0000_0000_0000_1000,
+                64   => 0b0000_0000_0010_0000,
+                256  => 0b0000_0000_1000_0000,
+                _ => unreachable!("All timer frequencies covered")
+            } > 0;
+            if should_inc {
+                self.tima = self.tima.wrapping_add(1);
+                if self.tima == 0 {
+                    self.tima_overflow = true;
+                }
+            }
+        }
     }
 
     fn write_joypad(&mut self, v: u8) {
@@ -2047,14 +2082,20 @@ mod tests {
     // #[test] fn mooneye_acceptance_interrupts_ie_push() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/interrupts/ie_push.gb")); }
     #[test] fn mooneye_acceptance_oam_dma_basic() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/basic.gb")); }
     #[test] fn mooneye_acceptance_oam_dma_reg_read() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/reg_read.gb")); }
+
     #[test] fn mooneye_acceptance_timer_div_write() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/div_write.gb")); }
     #[test] fn mooneye_acceptance_timer_rapid_toggle() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/rapid_toggle.gb")); }
     #[test] fn mooneye_acceptance_timer_tim00() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim00.gb")); }
+    #[test] fn mooneye_acceptance_timer_tim00_div_trigger() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim00_div_trigger.gb")); }
     #[test] fn mooneye_acceptance_timer_tim01() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim01.gb")); }
+    #[test] fn mooneye_acceptance_timer_tim01_div_trigger() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim01_div_trigger.gb")); }
     #[test] fn mooneye_acceptance_timer_tim10() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim10.gb")); }
+    #[test] fn mooneye_acceptance_timer_tim10_div_trigger() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim10_div_trigger.gb")); }
     #[test] fn mooneye_acceptance_timer_tim11() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim11.gb")); }
+    #[test] fn mooneye_acceptance_timer_tim11_div_trigger() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim11_div_trigger.gb")); }
     #[test] fn mooneye_acceptance_timer_tima_reload() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_reload.gb")); }
     #[test] fn mooneye_acceptance_timer_tima_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_write_reloading.gb")); }
+    #[test] fn mooneye_acceptance_timer_tma_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tma_write_reloading.gb")); }
 
     #[test]
     fn cpu_instructions() {
