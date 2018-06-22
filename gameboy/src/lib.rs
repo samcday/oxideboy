@@ -432,6 +432,8 @@ pub struct CPU<'cb> {
     timer_freq: u16,        // Expressed as a divisor of the DIV register.
     tima: u8,               // Every time DIV register ticks timer_freq times, TIMA is incremented.
     tma: u8,                // When TIMA overflows, the timer interrupt is set and TIMA is reset to this value
+    tima_overflow: bool,    // The reloading of TIMA with TMA is delayed by 1 instruction cycle.
+    tima_new: bool,         // If we just reloaded TIMA, this flag will be set for that cycle.
 
     // Joypad.
     joypad_btn: bool,
@@ -470,7 +472,7 @@ impl <'cb> CPU<'cb> {
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
             ppu: ppu::PPU::new(frame_cb),
             sound: sound::SoundController::new(sound_cb),
-            div: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
+            div: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0, tima_overflow: false, tima_new: false,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
             sb: 0, serial_transfer: false, serial_internal_clock: false, serial_cb,
             dma_reg: 0, dma_request: false, dma_active: false, dma_from: 0, dma_idx: 0,
@@ -535,10 +537,6 @@ impl <'cb> CPU<'cb> {
         return (self.cycle_count - start_count) as u16;
     }
 
-    pub fn framebuffer(&self) -> &[u32; SCREEN_SIZE] {
-        &self.ppu.framebuffer
-    }
-
     pub fn joypad(&mut self) -> &mut Joypad {
         &mut self.joypad
     }
@@ -591,20 +589,24 @@ impl <'cb> CPU<'cb> {
         // DIV is a 16 bit register (of which only the upper 8 bits are addressable) that increments
         // at the same speed as the CPU clock, 4.194304Mhz.
         self.div = self.div.wrapping_add(4);
+        self.tima_new = false;
 
-        if self.timer_enabled {
-            if self.div % self.timer_freq == 0 {
-                self.inc_tima();
-            }
-        }
-    }
-
-    fn inc_tima(&mut self) {
-        if self.tima == 255 {
+        // If TIMA overflowed on the previous cycle, this is where we reload it to TMA and request timer interrupt.
+        // See the code below here for when we set tima_overflow.
+        if self.tima_overflow {
             self.tima = self.tma;
             self.if_ |= 0x4;
-        } else {
-            self.tima += 1;
+            self.tima_overflow = false;
+            self.tima_new = true;
+        }
+
+        if self.timer_enabled && self.div % self.timer_freq == 0 {
+            self.tima = self.tima.wrapping_add(1);
+            if self.tima == 0 {
+                // When TIMA overflows, we don't actually reload it with TMA and request timer interrupt immediately.
+                // That happens on the next cycle.
+                self.tima_overflow = true;
+            }
         }
     }
 
@@ -643,9 +645,15 @@ impl <'cb> CPU<'cb> {
                 (self.div & (orig_freq / 2) != 0) && (self.div & (self.timer_freq/2) == 0)
             }
         } else { false };
-
         if glitch {
-            self.inc_tima();
+            // A cut down version of what we do in advance_timer.
+            // Note how here we're not delaying the TIMA reset or interrupt request to the next cycle.
+            // We do it immediately in the glitch case. Hardware is weird.
+            self.tima = self.tima.wrapping_add(1);
+            if self.tima == 0 {
+                self.tima = self.tma;
+                self.if_ |= 0x4;
+            }
         }
     }
 
@@ -851,7 +859,18 @@ impl <'cb> CPU<'cb> {
             0xFF01            => { self.sb = v; (self.serial_cb)(v); }
             0xFF02            => { self.write_sc(v) }
             0xFF04            => { self.div = 0 } // All writes to DIV are ignored and DIV is reset to 0
-            0xFF05            => { self.tima = v }
+            0xFF05            => {
+                // If TIMA is written to during the same cycle it overflowed, then the interrupt and reloading of TIMA
+                // with TMA is cancelled.
+                // See tima_write_reloading mooneye test.
+                self.tima_overflow = false;
+
+                // Converse to above, if we're in the next cycle where TIMA was reloaded with TMA, we actually swallow
+                // this write to TIMA.
+                if !self.tima_new {
+                    self.tima = v;
+                }
+            }
             0xFF06            => { self.tma = v }
             0xFF07            => { self.set_tac(v & 0x7) }
             0xFF0F            => { self.if_ = v & 0x1F }
@@ -2030,6 +2049,12 @@ mod tests {
     #[test] fn mooneye_acceptance_oam_dma_reg_read() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/reg_read.gb")); }
     #[test] fn mooneye_acceptance_timer_div_write() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/div_write.gb")); }
     #[test] fn mooneye_acceptance_timer_rapid_toggle() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/rapid_toggle.gb")); }
+    #[test] fn mooneye_acceptance_timer_tim00() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim00.gb")); }
+    #[test] fn mooneye_acceptance_timer_tim01() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim01.gb")); }
+    #[test] fn mooneye_acceptance_timer_tim10() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim10.gb")); }
+    #[test] fn mooneye_acceptance_timer_tim11() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim11.gb")); }
+    #[test] fn mooneye_acceptance_timer_tima_reload() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_reload.gb")); }
+    #[test] fn mooneye_acceptance_timer_tima_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_write_reloading.gb")); }
 
     #[test]
     fn cpu_instructions() {
