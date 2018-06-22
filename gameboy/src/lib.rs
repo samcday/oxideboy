@@ -442,7 +442,8 @@ pub struct CPU<'cb> {
 
     // Serial I/O
     sb: u8,
-    sc: u8,
+    serial_transfer: bool,
+    serial_internal_clock: bool,
     serial_cb: &'cb mut FnMut(u8),
 
     cart: Cartridge,
@@ -466,7 +467,7 @@ impl <'cb> CPU<'cb> {
             sound: sound::SoundController::new(sound_cb),
             div: 0, div_counter: 0, clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
-            sb: 0, sc: 0, serial_cb,
+            sb: 0, serial_transfer: false, serial_internal_clock: false, serial_cb,
             cart: Cartridge::from_rom(rom),
             cycle_count: 0,
             instr_addr: 0,
@@ -729,7 +730,7 @@ impl <'cb> CPU<'cb> {
 
             // Serial
             0xFF01            => self.sb,
-            0xFF02            => self.sc,
+            0xFF02            => self.read_sc(),
 
             // Timer
             0xFF04            => self.div,
@@ -774,7 +775,7 @@ impl <'cb> CPU<'cb> {
             0xFF80 ... 0xFFFE => self.wram[(addr - 0xFF80) as usize],
             0xFFFF            => self.ie,
 
-            _                 => panic!("Unhandled read from ${:X}", addr),
+            _                 => 0xFF,
         }
     }
 
@@ -791,7 +792,7 @@ impl <'cb> CPU<'cb> {
             0xFE00 ... 0xFE9F => { self.ppu.write_oam(addr - 0xFE00, v) }
             0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
             0xFF01            => { self.sb = v; (self.serial_cb)(v); }
-            0xFF02            => { self.sc = v }
+            0xFF02            => { self.write_sc(v) }
             0xFF04            => { self.div = 0 }
             0xFF05            => { self.tima = v }
             0xFF06            => { self.tma = v }
@@ -854,7 +855,7 @@ impl <'cb> CPU<'cb> {
     }
 
     fn read_joypad(&self) -> u8 {
-        let mut v = 0x3F;
+        let mut v = 0xCF;
 
         if self.joypad_btn {
             v ^= 0x20;
@@ -876,6 +877,17 @@ impl <'cb> CPU<'cb> {
     fn write_joypad(&mut self, v: u8) {
         self.joypad_btn = v & 0x20 == 0;
         self.joypad_dir = v & 0x10 == 0;
+    }
+
+    fn read_sc(&self) -> u8 {
+        0x7E  // Unused bits are set to 1
+            | if self.serial_transfer       { 0b1000_0000 } else { 0 }
+            | if self.serial_internal_clock { 0b0000_0001 } else { 0 }
+    }
+
+    fn write_sc(&mut self, v: u8) {
+        self.serial_transfer       = v & 0b1000_0000 > 0;
+        self.serial_internal_clock = v & 0b0000_0001 > 0;
     }
 
     fn dma(&mut self, v: u8) {

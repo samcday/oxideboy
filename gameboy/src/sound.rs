@@ -139,8 +139,8 @@ impl <'cb> SoundController<'cb> {
         let mut r = 0.0;
 
         if self.sound1_on {
-            l = 1.0;
-            r = 1.0;
+            l = 0.0;
+            r = 0.0;
         }
 
         // if self.sound3_on {
