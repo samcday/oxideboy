@@ -446,6 +446,7 @@ pub struct CPU<'cb> {
     serial_internal_clock: bool,
     serial_cb: &'cb mut FnMut(u8),
 
+    dma_reg: u8,
     dma_request: bool,
     dma_active: bool,
     dma_from: u16,
@@ -474,7 +475,7 @@ impl <'cb> CPU<'cb> {
             div: 0, div_counter: 0, clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
             sb: 0, serial_transfer: false, serial_internal_clock: false, serial_cb,
-            dma_request: false, dma_active: false, dma_from: 0, dma_idx: 0,
+            dma_reg: 0, dma_request: false, dma_active: false, dma_from: 0, dma_idx: 0,
             cart: Cartridge::from_rom(rom),
             cycle_count: 0,
             instr_addr: 0,
@@ -747,7 +748,7 @@ impl <'cb> CPU<'cb> {
     fn mem_read8(&mut self, addr: u16) -> u8 {
         // While DMA is active, the CPU is not permitted to read outside of HRAM.
         // Any attempt to do so will simply see values of 0xFF.
-        if self.dma_active && (addr < 0xFF80 || addr >= 0xFFFE) {
+        if self.dma_active && (addr < 0xFF80 || addr >= 0xFFFE) && addr != 0xFF46 {
             return 0xFF;
         }
 
@@ -806,6 +807,7 @@ impl <'cb> CPU<'cb> {
             0xFF43            => self.ppu.scx,
             0xFF44            => self.ppu.ly,
             0xFF45            => self.ppu.lyc,
+            0xFF46            => self.dma_reg,
             0xFF47            => self.ppu.read_bgp(),
             0xFF48            => self.ppu.read_obp0(),
             0xFF49            => self.ppu.read_obp1(),
@@ -933,6 +935,8 @@ impl <'cb> CPU<'cb> {
     }
 
     fn dma(&mut self, v: u8) {
+        self.dma_reg = v;
+
         if !self.ppu.dma_ok() {
             return;
         }
@@ -940,7 +944,7 @@ impl <'cb> CPU<'cb> {
         self.dma_request = true;
         self.dma_active = false;
         self.dma_idx = 0;
-        self.dma_from = ((v & 0xF1) as u16) << 8;
+        self.dma_from = ((v & 0xFF) as u16) << 8;
     }
 
     // Fetches next byte from PC and increments PC.
@@ -2008,6 +2012,9 @@ mod tests {
 
     #[test] fn mooneye_acceptance_bits_mem_oam() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/mem_oam.gb")); }
     #[test] fn mooneye_acceptance_bits_reg_f() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/reg_f.gb")); }
+    // #[test] fn mooneye_acceptance_interrupts_ie_push() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/interrupts/ie_push.gb")); }
+    #[test] fn mooneye_acceptance_oam_dma_basic() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/basic.gb")); }
+    #[test] fn mooneye_acceptance_oam_dma_reg_read() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/reg_read.gb")); }
 
     #[test]
     fn cpu_instructions() {
