@@ -459,6 +459,7 @@ pub struct CPU<'cb> {
     instr_addr: u16,            // Address of the current instruction
     pub breakpoint: u16,
     pub breakpoint_hit: bool,
+    mooneye_breakpoint: bool,
 }
 
 impl <'cb> CPU<'cb> {
@@ -479,6 +480,7 @@ impl <'cb> CPU<'cb> {
             instr_addr: 0,
             breakpoint: 0,
             breakpoint_hit: false,
+            mooneye_breakpoint: false,
         }
     }
 
@@ -1022,7 +1024,12 @@ impl <'cb> CPU<'cb> {
             0x3D => Inst::DEC8(Operand8::Reg(A)),
             0x3E => Inst::LD8(Operand8::Reg(A), Operand8::Imm(self.fetch8())),
             0x3F => Inst::CCF,
-            0x40 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(B)),
+            0x40 => {
+                if cfg!(test) {
+                    self.mooneye_breakpoint = true;
+                }
+                Inst::LD8(Operand8::Reg(B), Operand8::Reg(B))
+            },
             0x41 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(C)),
             0x42 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(D)),
             0x43 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(E)),
@@ -1973,6 +1980,34 @@ mod tests {
     use super::*;
     use std::rc::Rc;
     use std::cell::RefCell;
+    use std::time::Instant;
+
+    fn run_mooneye_test(rom: &[u8]) {
+        let mut video_cb = |_: &[u32]| {};
+        let mut sound_cb = |_: (f32, f32)| {};
+        let mut serial_cb = move |_: u8| {};
+        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb, &mut serial_cb);
+
+        let start = Instant::now();
+        while !cpu.mooneye_breakpoint {
+            cpu.run();
+
+            if start.elapsed().as_secs() > 10 {
+                panic!("Test ran for more than 10 seconds");
+            }
+        }
+
+        if cpu.b != 3 || cpu.c != 5 || cpu.d != 8 || cpu.e != 13 || cpu.h != 21 || cpu.l != 34 {
+            cpu.core_panic(String::from("Test completed in invalid state"));
+        }
+
+        if cpu.a != 0 {
+            panic!("Test failed {} assertions", cpu.a);
+        }
+    }
+
+    #[test] fn mooneye_acceptance_bits_mem_oam() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/mem_oam.gb")); }
+    #[test] fn mooneye_acceptance_bits_reg_f() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/reg_f.gb")); }
 
     #[test]
     fn cpu_instructions() {
