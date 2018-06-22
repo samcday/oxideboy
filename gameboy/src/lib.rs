@@ -594,13 +594,17 @@ impl <'cb> CPU<'cb> {
 
         if self.timer_enabled {
             if self.div % self.timer_freq == 0 {
-                if self.tima == 255 {
-                    self.tima = self.tma;
-                    self.if_ |= 0x4;
-                } else {
-                    self.tima += 1;
-                }
+                self.inc_tima();
             }
+        }
+    }
+
+    fn inc_tima(&mut self) {
+        if self.tima == 255 {
+            self.tima = self.tma;
+            self.if_ |= 0x4;
+        } else {
+            self.tima += 1;
         }
     }
 
@@ -615,6 +619,9 @@ impl <'cb> CPU<'cb> {
     }
 
     fn set_tac(&mut self, v: u8) {
+        let was_enabled = self.timer_enabled;
+        let orig_freq = self.timer_freq;
+
         self.timer_enabled = v & 0b100 > 0;
         if self.timer_enabled {
             self.timer_freq = match v & 0b11 {
@@ -624,6 +631,21 @@ impl <'cb> CPU<'cb> {
                 0b11 => 256,
                 _ => unreachable!("Matched all possible 2 bit values"),
             }
+        }
+
+        // The original DMG had a glitch that could cause TIMA to sometimes spuriously increment.
+        // We emulate that quirk here.
+        // More info: http://gbdev.gg8.se/wiki/articles/Timer_Obscure_Behaviour
+        let glitch = if was_enabled {
+            if !self.timer_enabled {
+                self.div & (orig_freq / 2) != 0
+            } else {
+                (self.div & (orig_freq / 2) != 0) && (self.div & (self.timer_freq/2) == 0)
+            }
+        } else { false };
+
+        if glitch {
+            self.inc_tima();
         }
     }
 
@@ -2007,6 +2029,7 @@ mod tests {
     #[test] fn mooneye_acceptance_oam_dma_basic() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/basic.gb")); }
     #[test] fn mooneye_acceptance_oam_dma_reg_read() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/reg_read.gb")); }
     #[test] fn mooneye_acceptance_timer_div_write() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/div_write.gb")); }
+    #[test] fn mooneye_acceptance_timer_rapid_toggle() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/rapid_toggle.gb")); }
 
     #[test]
     fn cpu_instructions() {
