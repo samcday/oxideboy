@@ -427,13 +427,11 @@ pub struct CPU<'cb> {
     sound: sound::SoundController<'cb>,
 
     // Timer.
-    div: u8,
-    div_counter: u8,
-    timer_enabled: bool,
-    timer_freq: u16,
-    clock_count: u16,
-    tima: u8,
-    tma: u8,
+    div: u16,               // Increments every CPU clock cycle (4.194304Mhz). Only top 8 bits are visible to programs.
+    timer_enabled: bool,    // Controls whether the timer unit is running
+    timer_freq: u16,        // Expressed as a divisor of the DIV register.
+    tima: u8,               // Every time DIV register ticks timer_freq times, TIMA is incremented.
+    tma: u8,                // When TIMA overflows, the timer interrupt is set and TIMA is reset to this value
 
     // Joypad.
     joypad_btn: bool,
@@ -472,7 +470,7 @@ impl <'cb> CPU<'cb> {
             halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
             ppu: ppu::PPU::new(frame_cb),
             sound: sound::SoundController::new(sound_cb),
-            div: 0, div_counter: 0, clock_count: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
+            div: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
             sb: 0, serial_transfer: false, serial_internal_clock: false, serial_cb,
             dma_reg: 0, dma_request: false, dma_active: false, dma_from: 0, dma_idx: 0,
@@ -590,18 +588,12 @@ impl <'cb> CPU<'cb> {
     // Advances the TIMA register depending on how many CPU clock cycles have passed, and the
     // state of TMA / TAC.
     fn advance_timer(&mut self) {
-        // DIV register increments at a rate of 16384hz, which is every 64 CPU cycles.
-        self.div_counter = self.div_counter.wrapping_add(1);
-        if self.div_counter == 64 {
-            self.div = self.div.wrapping_add(1);
-            self.div_counter = 0;
-        }
+        // DIV is a 16 bit register (of which only the upper 8 bits are addressable) that increments
+        // at the same speed as the CPU clock, 4.194304Mhz.
+        self.div = self.div.wrapping_add(4);
 
         if self.timer_enabled {
-            self.clock_count += 4;
-
-            while self.clock_count > self.timer_freq {
-                self.clock_count -= self.timer_freq;
+            if self.div % self.timer_freq == 0 {
                 if self.tima == 255 {
                     self.tima = self.tma;
                     self.if_ |= 0x4;
@@ -625,8 +617,7 @@ impl <'cb> CPU<'cb> {
     fn set_tac(&mut self, v: u8) {
         self.timer_enabled = v & 0b100 > 0;
         if self.timer_enabled {
-            self.clock_count = 0;
-            self.timer_freq = match v & 0b11{
+            self.timer_freq = match v & 0b11 {
                 0b00 => 1024,
                 0b01 => 16,
                 0b10 => 64,
@@ -776,7 +767,7 @@ impl <'cb> CPU<'cb> {
             0xFF02            => self.read_sc(),
 
             // Timer
-            0xFF04            => self.div,
+            0xFF04            => (self.div & 0xFFFF >> 8) as u8,
             0xFF05            => self.tima,
             0xFF06            => self.tma,
             0xFF07            => self.get_tac(),
@@ -837,7 +828,7 @@ impl <'cb> CPU<'cb> {
             0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
             0xFF01            => { self.sb = v; (self.serial_cb)(v); }
             0xFF02            => { self.write_sc(v) }
-            0xFF04            => { self.div = 0; self.div_counter = 0; }
+            0xFF04            => { self.div = 0 } // All writes to DIV are ignored and DIV is reset to 0
             0xFF05            => { self.tima = v }
             0xFF06            => { self.tma = v }
             0xFF07            => { self.set_tac(v & 0x7) }
@@ -2015,6 +2006,7 @@ mod tests {
     // #[test] fn mooneye_acceptance_interrupts_ie_push() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/interrupts/ie_push.gb")); }
     #[test] fn mooneye_acceptance_oam_dma_basic() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/basic.gb")); }
     #[test] fn mooneye_acceptance_oam_dma_reg_read() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/reg_read.gb")); }
+    #[test] fn mooneye_acceptance_timer_div_write() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/div_write.gb")); }
 
     #[test]
     fn cpu_instructions() {
