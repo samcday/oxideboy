@@ -808,7 +808,7 @@ impl <'cb> CPU<'cb> {
             0xFF07            => self.get_tac(),
 
             // Pending interrupts
-            0xFF0F            => self.if_,
+            0xFF0F            => 0xE0 | self.if_, // Unused IF bits are always 1
 
             // Sound
             0xFF10            => self.sound.read_nr10(),
@@ -843,7 +843,7 @@ impl <'cb> CPU<'cb> {
             0xFF4D            => 0x00,      // KEY1 for CGB.
             0xFF50            => if self.bootrom_enabled { 0 } else { 1 },
             0xFF80 ... 0xFFFE => self.hram[(addr - 0xFF80) as usize],
-            0xFFFF            => self.ie,
+            0xFFFF            => 0xE0 | self.ie,    // Unused IE bits are always 1
 
             _                 => 0xFF,
         }
@@ -2111,6 +2111,7 @@ mod tests {
 
     #[test] fn mooneye_acceptance_div_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/div_timing.gb")); }
 
+    #[test] fn mooneye_acceptance_if_ie_registers() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/if_ie_registers.gb")); }
     #[test] fn mooneye_acceptance_intr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/intr_timing.gb")); }
 
     #[test] fn mooneye_acceptance_oam_dma_start() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_start.gb")); }
