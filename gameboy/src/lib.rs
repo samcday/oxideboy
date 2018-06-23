@@ -762,6 +762,10 @@ impl <'cb> CPU<'cb> {
                 _ => unreachable!("Non-existent interrupt ${:X} encountered", 123)
             };
 
+            // Interrupt handling needs 3 internal cycles to do interrupt-y stuff.
+            self.advance_clock();
+            self.advance_clock();
+            self.advance_clock();
             self.push_and_jump(addr);
         }
     }
@@ -2106,6 +2110,8 @@ mod tests {
     #[test] fn mooneye_acceptance_timer_tma_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tma_write_reloading.gb")); }
 
     #[test] fn mooneye_acceptance_div_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/div_timing.gb")); }
+
+    #[test] fn mooneye_acceptance_intr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/intr_timing.gb")); }
 
     #[test] fn mooneye_acceptance_oam_dma_start() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_start.gb")); }
     #[test] fn mooneye_acceptance_oam_dma_restart() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_restart.gb")); }
