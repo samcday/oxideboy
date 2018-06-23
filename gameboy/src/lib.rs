@@ -612,6 +612,7 @@ impl <'cb> CPU<'cb> {
 
     fn get_tac(&self) -> u8 {
         (if self.timer_enabled { 0b100 } else { 0 }) | match self.timer_freq {
+            0 => 0,
             1024 => 0,
             16 => 1,
             64 => 2,
@@ -728,42 +729,72 @@ impl <'cb> CPU<'cb> {
 
         // Service interrupts.
         let intr = self.if_ & self.ie;
-        if self.ime && intr > 0 {
-            let addr = if intr & 0x1 > 0 {
-                // Vertical blanking
-                self.if_ ^= 0x1;
-                // TODO: gross hack. If LCD is no longer enabled we clear this interrupt.
-                if !self.ppu.enabled {
-                    return;
-                }
-
-                0x40
-            } else if intr & 0x2 > 0 {
-                // LCDC status interrupt
-                self.if_ ^= 0x2;
-                0x48
-            } else if intr & 0x4 > 0 {
-                // Timer overflow
-                self.if_ ^= 0x4;
-                0x50
-            } else if intr & 0x8 > 0 {
-                // Serial transfer completion
-                self.if_ ^= 0x8;
-                0x58
-            } else if intr & 0x10 > 0 {
-                // P10-P13 input signal goes low
-                self.if_ ^= 0x10;
-                0x60
-            } else {
-                unreachable!("All interrupt flags covered");
-            };
-
-            // Interrupt handling needs 3 internal cycles to do interrupt-y stuff.
-            self.advance_clock();
-            self.advance_clock();
-            self.advance_clock();
-            self.push_and_jump(addr);
+        if !self.ime || intr == 0 {
+            return;
         }
+
+        let (addr, flag) = if intr & 0x1 > 0 {
+            // Vertical blanking
+            (0x40, 0x1)
+        } else if intr & 0x2 > 0 {
+            // LCDC status interrupt
+            (0x48, 0x2)
+        } else if intr & 0x4 > 0 {
+            // Timer overflow
+            (0x50, 0x4)
+        } else if intr & 0x8 > 0 {
+            // Serial transfer completion
+            (0x58, 0x8)
+        } else if intr & 0x10 > 0 {
+            // P10-P13 input signal goes low
+            (0x60, 0x10)
+        } else {
+            unreachable!("All interrupt flags covered");
+        };
+
+        // Interrupt handling needs 3 internal cycles to do interrupt-y stuff.
+        self.advance_clock();
+        self.advance_clock();
+        self.advance_clock();
+
+        // Here's an interesting quirk. If the stack pointer was set to 0000 or 0001, then the push we just did
+        // above would have overwritten IE. If the new IE value no longer matches the interrupt we were processing,
+        // then we cancel that interrupt and set PC to 0. We then try and find another interrupt.
+        // If there isn't one, we end up running code from 0000. Crazy.
+
+        // ... That said, all the checking for that weird edge case is expensive. We don't need to do it if SP isn't
+        // either 0000 or 0001.
+        if self.sp > 1 {
+            self.ime = false;
+            self.if_ ^= flag;
+            self.push_and_jump(addr);
+            return;
+        }
+
+        let pc = self.pc;
+        let mut sp = self.sp;
+        sp = sp.wrapping_sub(1);
+        self.mem_write8(sp, ((pc & 0xFF00) >> 8) as u8);
+        // This is where we capture what IE is after pushing the upper byte. Pushing the lower byte might
+        // also overwrite IE, but in that case we ignore that occurring.
+        let newie = self.ie;
+        sp = sp.wrapping_sub(1);
+        self.mem_write8(sp, pc as u8);
+        self.sp = self.sp.wrapping_sub(2);
+
+        if newie & flag == 0 {
+            self.pc = 0;
+            // Okay so this interrupt didn't go so good. Let's see if there's another one.
+            self.process_interrupts();
+            // Maybe that call found an interrupt and disabled IME, maybe it didn't. Either way this
+            // cancellation needs to result in IME being disabled.
+            self.ime = false;
+            return;
+        }
+
+        self.if_ ^= flag;
+        self.ime = false;
+        self.pc = addr;
     }
 
     fn mem_read8(&mut self, addr: u16) -> u8 {
@@ -1022,14 +1053,14 @@ impl <'cb> CPU<'cb> {
     // Fetches next byte from PC and increments PC.
     fn fetch8(&mut self) -> u8 {
         let addr = self.pc;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         self.mem_read8(addr)
     }
 
     // Fetches next short from PC and increments PC by 2.
     fn fetch16(&mut self) -> u16 {
         let addr = self.pc;
-        self.pc += 2;
+        self.pc = self.pc.wrapping_add(2);
         self.mem_read16(addr)
     }
 
@@ -1613,7 +1644,7 @@ impl <'cb> CPU<'cb> {
     }
 
     fn stack_push(&mut self, v: u16) {
-        self.sp -= 2;
+        self.sp = self.sp.wrapping_sub(2);
         let sp = self.sp;
         self.mem_write16(sp, v);
     }
@@ -1621,7 +1652,7 @@ impl <'cb> CPU<'cb> {
     fn stack_pop(&mut self) -> u16 {
         let addr = self.sp;
         let v = self.mem_read16(addr);
-        self.sp += 2;
+        self.sp  = self.sp.wrapping_add(2);
         v
     }
 
@@ -1641,7 +1672,7 @@ impl <'cb> CPU<'cb> {
     // Flags = Z:- N:- H:- C:-
     fn stop(&mut self) {
         // TODO: this should be more than a noop.
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
     }
 
     // HALT
@@ -1986,7 +2017,8 @@ impl <'cb> CPU<'cb> {
             self.advance_clock();
         }
         if ei {
-            self.ime_defer = Some(true);
+            // RETI immediately enables IME, it's not deferred like eith an EI or DI call.
+            self.ime = true;
         }
         let pc = self.stack_pop();
         self.advance_clock();
@@ -2085,7 +2117,7 @@ mod tests {
     #[test] fn mooneye_acceptance_bits_mem_oam() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/mem_oam.gb")); }
     #[test] fn mooneye_acceptance_bits_reg_f() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/reg_f.gb")); }
 
-    // #[test] fn mooneye_acceptance_interrupts_ie_push() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/interrupts/ie_push.gb")); }
+    #[test] fn mooneye_acceptance_interrupts_ie_push() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/interrupts/ie_push.gb")); }
 
     #[test] fn mooneye_acceptance_oam_dma_basic() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/basic.gb")); }
     #[test] fn mooneye_acceptance_oam_dma_reg_read() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/reg_read.gb")); }
@@ -2113,7 +2145,7 @@ mod tests {
     #[test] fn mooneye_acceptance_ei_sequence() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ei_sequence.gb")); }
     #[test] fn mooneye_acceptance_ei_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ei_timing.gb")); }
     #[test] fn mooneye_acceptance_halt_ime0_ei() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime0_ei.gb")); }
-    // #[test] fn mooneye_acceptance_halt_ime0_nointr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime0_nointr_timing.gb")); }
+    #[test] fn mooneye_acceptance_halt_ime0_nointr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime0_nointr_timing.gb")); }
     #[test] fn mooneye_acceptance_halt_ime1_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime1_timing.gb")); }
     #[test] fn mooneye_acceptance_if_ie_registers() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/if_ie_registers.gb")); }
     #[test] fn mooneye_acceptance_intr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/intr_timing.gb")); }
