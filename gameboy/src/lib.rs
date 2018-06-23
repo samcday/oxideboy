@@ -418,7 +418,7 @@ pub struct CPU<'cb> {
     ie: u8,
     if_: u8,
     ime: bool,
-    ime_defer: Option<bool>,
+    ime_defer: bool,
 
     // PPU
     ppu: ppu::PPU<'cb>,
@@ -469,7 +469,7 @@ impl <'cb> CPU<'cb> {
             a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Default::default(), sp: 0, pc: 0,
             bootrom_enabled: true,
             ram: [0; 0x2000], hram: [0; 0x7F],
-            halted: false, ime: false, ime_defer: None, ie: 0, if_: 0,
+            halted: false, ime: false, ime_defer: false, ie: 0, if_: 0,
             ppu: ppu::PPU::new(frame_cb),
             sound: sound::SoundController::new(sound_cb),
             div: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0, tima_overflow: false, tima_new: false,
@@ -524,10 +524,16 @@ impl <'cb> CPU<'cb> {
 
         self.process_interrupts();
 
+        // Apply deferred change to IME.
+        if self.ime_defer {
+            self.ime = true;
+            self.ime_defer = false;
+        }
+
         if !self.halted {
             self.instr_addr = self.pc;
             let inst = self.decode();
-            self.update_ime();
+
             self.execute(inst);
             if !self.bootrom_enabled {
                 // println!("Instr: {} ;${:04X} ({})", inst, self.instr_addr, self.cycle_count);
@@ -709,14 +715,6 @@ impl <'cb> CPU<'cb> {
             Inst::PUSH(r) => self.push(r),
             Inst::POP(r) => self.pop(r),
             Inst::RST(a) => self.rst(a),
-        }
-    }
-
-    fn update_ime(&mut self) {
-        // Apply deferred change to IME.
-        if self.ime_defer.is_some() {
-           self.ime = self.ime_defer.unwrap();
-           self.ime_defer = None; 
         }
     }
 
@@ -1665,7 +1663,13 @@ impl <'cb> CPU<'cb> {
     // EI | DI
     // Flags = Z:- N:- H:- C:-
     fn set_ime(&mut self, state: bool) {
-        self.ime_defer = Some(state);
+        if state {
+            // Enabling interrupts happens on the next cycle ...
+            self.ime_defer = true;
+        } else {
+            // ... However, disabling interrupts is immediate.
+            self.ime = false;
+        }
     }
 
     // STOP
@@ -2157,7 +2161,7 @@ mod tests {
     #[test] fn mooneye_acceptance_oam_dma_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_timing.gb")); }
     #[test] fn mooneye_acceptance_pop_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/pop_timing.gb")); }
     #[test] fn mooneye_acceptance_push_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/push_timing.gb")); }
-    // #[test] fn mooneye_acceptance_rapid_di_ei() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/rapid_di_ei.gb")); }
+    #[test] fn mooneye_acceptance_rapid_di_ei() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/rapid_di_ei.gb")); }
     #[test] fn mooneye_acceptance_ret_cc_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ret_cc_timing.gb")); }
     #[test] fn mooneye_acceptance_ret_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ret_timing.gb")); }
     #[test] fn mooneye_acceptance_reti_intr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/reti_intr_timing.gb")); }
