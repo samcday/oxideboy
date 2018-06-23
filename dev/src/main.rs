@@ -70,6 +70,7 @@ fn main() -> Result<()> {
         }
     };
 
+    let mut paused = false;
     let mut gameboy = gameboy::CPU::new(rom, &mut video_cb, &mut sound_cb, &mut serial_cb);
 
     audio_device.borrow_mut().resume();
@@ -108,11 +109,12 @@ fn main() -> Result<()> {
                 Event::KeyUp {keycode: Some(Keycode::RShift), ..} => { gameboy.joypad().select = false; }
 
                 Event::KeyUp {keycode: Some(Keycode::L), ..} => { limit = !limit; }
+                Event::KeyUp {keycode: Some(Keycode::P), ..} => { paused = !paused; }
                 _ => {}
             }
         }
 
-        {
+        if !paused {
             delta = gameboy.run_frame(delta);
 
             if now.elapsed().subsec_nanos() > 16666666 {

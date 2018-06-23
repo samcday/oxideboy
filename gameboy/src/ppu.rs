@@ -1,4 +1,7 @@
+const DEFAULT_PALETTE: [u8; 4] = [0, 1, 2, 3];
+
 // Models the 4 states the PPU can be in when it is active.
+#[derive(Debug)]
 pub enum PPUState {
     OAMSearch,
     PixelTransfer,
@@ -7,24 +10,37 @@ pub enum PPUState {
 }
 use self::PPUState::{*};
 
+struct PixelFlusher {
+    fifo: PixelFifo,    // The pixels waiting to go out to the LCD.
+    stalled: bool,      // Set to true if we're waiting on pixel fetcher to fetch OBJ.
+    x: u8,              // The x position on screen we're up to flushing. Offset by 8 pixels.
+    skip: u8,           // Tracks how many pixels to throw away at the beginning of a scanline.
+}
+
+enum PixelFetchState {
+    ReadTile,
+    ReadData0,
+    ReadData1,
+    Stalled((u16, u16)),
+}
+struct PixelFetcher {
+    state: PixelFetchState,
+    obj: bool,                  // Set to true if we're currently fetching OBJ data (instead of BG/window)
+    obj_idx: u8,                // If obj=true, this is the index in the OAM table.
+    data_loc: usize,            // Memory addr in VRAM where the two tile data bytes will be read from.
+    data0: u8,
+    map_base: usize,            // The memory addr in VRAM for the start of the 32 byte map row we're in.
+    map_x: usize,               // The x position (0-32) for the tile offset past map_base.
+}
+
 struct PixelTransferState {
-    fifo_stalled: bool,     // If true, we're stalled on flushing out pixels until a sprite has been drawn.
-    fetch_obj: u8,    // If fifo_stalled is true, this will be set to the sprite index (in OAM table).
-    fifo: PixelFifo,
-    scratch: (u16, u16),
-    flush_x: u8,              // Tracks which pixel in the scanline we're up to flushing.
-    flush: bool,        // When true, the next 8 pixels are written into FIFO.
-    obj_flush: bool,
+    flusher: PixelFlusher,
+    fetcher: PixelFetcher,
+
     tile_y: usize,
     win_tile_y: usize,
     win_y: u16,
     in_win: bool,
-
-    // bg_x and bg_y keep track of which BG tile (in the 32x32 tile grid) we're currently drawing.
-    // bg_y won't change during a scanline, but bg_x increments (and wraps around) every second clock cycle.
-    bg_x: u16,
-    bg_y: u16,
-    skip: u8,       // The number of pixels to throw away at the start of the scanline (scx % 8)
 }
 
 // While drawing a scanline, we keep a small number of pixels in a FIFO queue before writing them to framebuffer.
@@ -136,8 +152,8 @@ pub struct PPU<'cb> {
     bg_code_hi: bool,   // Toggles where we look for BG code data. true: 0x9C00-0x9FFF, false: 0x9800-0x9BFF
     bg_data_lo: bool,   // Toggles where we look for BG tile data. true: 0x8000-0x8FFF, false: 0x8800-0x97FF
 
-    obj_enabled: bool,  // Toggles display of sprites on/off.
-    obj_tall: bool,     // If true, we're rendering 8x16 sprites.
+    obj_enabled: bool,  // Toggles display of OBJs on/off.
+    obj_tall: bool,     // If true, we're rendering 8x16 OBJs.
 
     pub vram: [u8; 0x2000], // 0x8000 - 0x9FFF
     pub oam: [u8; 0xA0],    // 0xFE00 - 0xFDFF
@@ -159,15 +175,29 @@ impl <'cb> PPU<'cb> {
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
             wx: 0, wy: 0,
-            bgp: [0, 1, 2, 3], obp0: [0, 1, 2, 3], obp1: [0, 1, 2, 3],
+            bgp: DEFAULT_PALETTE, obp0: DEFAULT_PALETTE, obp1: DEFAULT_PALETTE,
             win_enabled: false, win_code_hi: false,
             bg_enabled: false, bg_code_hi: false, bg_data_lo: false,
             obj_enabled: false, obj_tall: false,
             interrupt_oam: false, interrupt_hblank: false, interrupt_vblank: false, interrupt_lyc: false,
             vram: [0; 0x2000], oam: [0; 0xA0],
-            pt_state: PixelTransferState{
-                scratch: (0, 0), fifo_stalled: false, fetch_obj: 0, fifo: PixelFifo::new(), flush: false,
-                obj_flush: false, flush_x: 0, tile_y: 0, bg_y: 0, bg_x: 0, skip: 0,
+            pt_state: PixelTransferState {
+                flusher: PixelFlusher {
+                    fifo: PixelFifo::new(),
+                    stalled: false,
+                    x: 0,
+                    skip: 0,
+                },
+                fetcher: PixelFetcher {
+                    state: PixelFetchState::ReadTile,
+                    obj: false,
+                    obj_idx: 0,
+                    data_loc: 0,
+                    data0: 0,
+                    map_x: 0,
+                    map_base: 0,
+                },
+                tile_y: 0,
                 in_win: false, win_tile_y: 0, win_y: 0, },
             scanline_objs: Vec::new(),
             framebuffer: [0; 160*144], fb_pos: 0,
@@ -184,6 +214,7 @@ impl <'cb> PPU<'cb> {
     }
 
     fn next_state(&mut self, new: PPUState) {
+        println!("{:?} took {} cycles", self.state, self.cycles);
         self.cycles = 0;
         self.state = new;
     }
@@ -251,7 +282,6 @@ impl <'cb> PPU<'cb> {
                         }
                         self.next_state(VBlank);
                     } else {
-                        // (self.frame_cb)(&self.framebuffer);
                         self.next_state(OAMSearch);
                     }
                 }
@@ -306,8 +336,210 @@ impl <'cb> PPU<'cb> {
         self.scanline_objs.reverse();
     }
 
-    // The second stage of the scanline. Takes 43+ cycles.
-    // Here, we actually rasterize pixels out to the LCD.
+    /// The second stage of the scanline. Takes 43+ cycles.
+    /// This is where we fetch BG/window/OBJ tiles and flush pixels out to the LCD.
+    /// Our PPU code is run in lockstep with the CPU at 1Mhz. However the real PPU runs at 4Mhz/2Mhz, so we simulate that
+    /// here by running the flusher steps at 4Mhz and the pixel fetching process at 2Mhz.
+    fn pixel_transfer(&mut self) {
+        // On the first cycle of this stage we ensure our state info is clean.
+        if self.cycles == 1 {
+            let scy = self.scy as u16;
+            let scx = self.scx as u16;
+            let ly = self.ly as u16;
+            let wy = self.wy as u16;
+            self.pt_state.tile_y = ((scy + ly) % 8) as usize;
+            self.pt_state.win_y = ((ly + wy) / 8) % 32;
+            self.pt_state.win_tile_y = ((wy + ly) % 8) as usize;
+            self.pt_state.in_win = false;
+
+            self.pt_state.flusher.fifo.clear();
+            self.pt_state.flusher.stalled = false;
+            self.pt_state.flusher.x = 0;
+            self.pt_state.flusher.skip = (scx % 8) as u8;
+
+            let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
+            self.pt_state.fetcher.map_base = (code_base_addr + (((ly + scy) / 8) % 32) * 32) as usize;
+            self.pt_state.fetcher.map_x = ((31 + (scx / 8)) % 32) as usize;
+            self.pt_state.fetcher.state = PixelFetchState::ReadTile;
+            self.pt_state.fetcher.obj = false;
+
+            // A bit of a cheat here. To simplify our code around OBJ blending, we generate 8 pixels off-screen
+            // to the left. We want to be cycle accurate though, doing this extra work consumes more cycles than the
+            // real PPU does, so we just pump the extra fetch cycles we need at the beginning.
+            self.pt_fetch();
+            self.pt_fetch();
+            self.pt_fetch();
+        }
+
+        self.pt_fetch();
+        self.pt_flush();
+        self.pt_flush();
+        self.pt_fetch();
+        self.pt_flush();
+        self.pt_flush();
+
+        // Once we've flushed all pixels for this scanline, we can move on to the HBlank stage.
+        if self.pt_state.flusher.x == 168 {
+            // HBlank runs for a variable number of cycles, depending on how long this pixel transfer took.
+            // If there was no OBJs or window on the current line, then pixel transfer takes 43 cycles and HBlank
+            // takes 51 cycles.
+            let hblank_cycles = 51+43 - self.cycles;
+            self.next_state(HBlank(hblank_cycles));
+            return;
+        }
+    }
+
+    /// The pixel transfer FIFO flush runs at 4Mhz. Every cycle it pushes a single pixel from the FIFO to the LCD.
+    /// If there's 8 or less pixels in the FIFO, we do nothing for the cycle.
+    fn pt_flush(&mut self) {
+        let state = &mut self.pt_state.flusher;
+        if state.stalled || state.fifo.len() <= 8 {
+            // If we're stalled waiting for fetcher to get some OBJ data, or the FIFO doesn't have enough data, then
+            // there's nothing to do here.
+            return;
+        }
+
+        if state.x == 168 {
+            // We've pushed out enough pixels.
+            return;
+        }
+
+        // At the very beginning of the scanline, if SCX modulo 8 is nonzero, we need to throw away that many pixels.
+        if state.skip > 0 {
+            state.skip -= 1;
+            return;
+        }
+
+        // If OBJs are enabled, we need to make sure the next pixel to go out isn't where a sprite starts.
+        if self.obj_enabled && !self.scanline_objs.is_empty() {
+            let (obj_idx, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
+            if state.x == obj_x {
+                self.pt_state.fetcher.obj = true;
+                self.pt_state.fetcher.obj_idx = obj_idx;
+                self.pt_state.fetcher.state = PixelFetchState::ReadTile;
+                state.stalled = true;
+                return;
+            }
+        }
+
+        let pix = state.fifo.pop();
+        let x = state.x;
+        state.x += 1;
+
+        // The first 8 pixels are off-screen, so we throw them away.
+        // We only generate them so we have something to blend with if there's a sprite partially off screen.
+        if x < 8 {
+            return;
+        }
+
+        self.framebuffer[self.fb_pos] = match pix {
+            0 => { 255 },
+            1 => { 100 },
+            2 => { 50 },
+            3 => { 0 },
+            _ => unreachable!("Pixels are 2bpp")
+        };
+        self.fb_pos += 1;
+    }
+
+    fn pt_fetch(&mut self) {
+        if self.pt_state.fetcher.obj {
+            self.pt_fetch_obj();
+            return;
+        }
+
+        self.pt_fetch_bg();
+    }
+
+    fn pt_fetch_obj(&mut self) {
+        match self.pt_state.fetcher.state {
+            PixelFetchState::ReadTile => {
+                let obj = self.read_oam_entry(self.pt_state.fetcher.obj_idx);
+
+                let obj_y = if obj.vert_flip {
+                    (if self.obj_tall { 16 } else { 8 }) - (self.ly + 16 - obj.y) as usize
+                } else {
+                    (self.ly + 16 - obj.y) as usize
+                };
+
+                self.pt_state.fetcher.data_loc = ((obj.code as usize) * 16) + obj_y * 2;
+                self.pt_state.fetcher.state = PixelFetchState::ReadData0;
+            }
+            PixelFetchState::ReadData0 => {
+                self.pt_state.fetcher.data0 = self.vram[self.pt_state.fetcher.data_loc];
+                self.pt_state.fetcher.data_loc += 1;
+                self.pt_state.fetcher.state = PixelFetchState::ReadData1;
+            }
+            PixelFetchState::ReadData1 => {
+                let obj = self.read_oam_entry(self.pt_state.fetcher.obj_idx);
+
+                let mut lo = self.pt_state.fetcher.data0;
+                let mut hi = self.vram[self.pt_state.fetcher.data_loc];
+
+                if obj.horz_flip {
+                    // This insanity flips the order of the bits in each byte using dark sorcery.
+                    // http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
+                    lo = (((lo as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
+                    hi = (((hi as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
+                }
+
+                let palette = if obj.palette == 1 { &self.obp1 } else { &self.obp0 };
+                let (pixels, mask) = PPU::build_tile(lo, hi, palette);
+                self.pt_state.flusher.fifo.blend_obj(pixels, mask, !obj.priority);
+
+                self.scanline_objs.pop();
+                self.pt_state.flusher.stalled = false;
+                self.pt_state.fetcher.obj = false;
+                self.pt_state.fetcher.state = PixelFetchState::ReadTile;
+            }
+            PixelFetchState::Stalled(_) => {
+                panic!("pt_fetch_obj should never stall");
+            }
+        }
+    }
+
+    fn pt_fetch_bg(&mut self) {
+        match self.pt_state.fetcher.state {
+            PixelFetchState::ReadTile => {
+                let tile = self.vram[self.pt_state.fetcher.map_base + self.pt_state.fetcher.map_x] as usize;
+                self.pt_state.fetcher.data_loc = if !self.bg_data_lo {
+                    0x800 + (((tile as u8 as i8) as usize) * 16)
+                } else {
+                    (tile * 16)
+                } + self.pt_state.tile_y * 2;
+
+                self.pt_state.fetcher.map_x = (self.pt_state.fetcher.map_x + 1) % 32;
+                self.pt_state.fetcher.state = PixelFetchState::ReadData0;
+            }
+            PixelFetchState::ReadData0 => {
+                self.pt_state.fetcher.data0 = self.vram[self.pt_state.fetcher.data_loc];
+                self.pt_state.fetcher.data_loc += 1;
+                self.pt_state.fetcher.state = PixelFetchState::ReadData1;
+            }
+            PixelFetchState::ReadData1 => {
+                let lo = self.pt_state.fetcher.data0;
+                let hi = self.vram[self.pt_state.fetcher.data_loc];
+                let (pixels, mask) = PPU::build_tile(lo, hi, &self.bgp);
+                if self.pt_state.flusher.fifo.len() <= 8 {
+                    self.pt_state.flusher.fifo.push_bg(pixels, mask);
+                    self.pt_state.fetcher.state = PixelFetchState::ReadTile;
+                } else {
+                    // We can't push pixels into FIFO just yet, it's too full. We'll try again next cycle.
+                    self.pt_state.fetcher.state = PixelFetchState::Stalled((pixels, mask));
+                }
+            }
+            PixelFetchState::Stalled((pixels, mask)) => {
+                if self.pt_state.flusher.fifo.len() > 8 {
+                    return;
+                }
+                self.pt_state.flusher.fifo.push_bg(pixels, mask);
+                self.pt_state.fetcher.state = PixelFetchState::ReadTile;
+                // The stalled state is a bit of a kludge, it doesn't actually consume a cycle. So, we pump
+                // the fetcher again.
+                return self.pt_fetch_bg();
+            }
+        }
+    }
     // There's two concurrent processes here, the pixel FIFO and the fetcher.
     // The numbers get a little wonky here because the PPU runs at 4mhz, connected to VRAM at 2mhz.
     // But because the CPU runs at 4mhz connected to 1mhz system RAM, we actually model everything
@@ -322,7 +554,7 @@ impl <'cb> PPU<'cb> {
     // emulate ok.
     // Note that the first 4 cycles are spent waiting for the fetcher to fill the FIFO, which is why
     // this stage takes a minimum of 43 cycles.
-    fn pixel_transfer(&mut self) {
+    /*fn pixel_transfer(&mut self) {
         // On the first cycle of this stage we ensure our state info is clean.
         if self.cycles == 1 {
             let scy = self.scy as u16;
@@ -343,24 +575,15 @@ impl <'cb> PPU<'cb> {
             self.pt_state.fifo.clear();
         }
 
-        self.pixel_transfer_flush_pixels();
+        self.pt_flush();
         self.pixel_transfer_fetch_pixels();
-
-        // Once we've rasterized and flushed all pixels for this scanline, we can move on to the HBlank stage.
-        if self.pt_state.flush_x == 160 { //  && self.pt_state.fifo.len() == 0 {
-            // HBlank runs for a variable number of cycles, depending on how long this pixel transfer took.
-            // If there was no OBJs or window on the current line, then pixel transfer takes 43 cycles and HBlank
-            // takes 51 cycles.
-            let hblank_cycles = 51+43 - self.cycles;
-            self.next_state(HBlank(hblank_cycles));
-        }
-    }
+    }*/
 
     // Implementation of the "Pixel FIFO". Maintains a minimum of 8 pending pixels in the FIFO
-    // at all times to ensure that sprites can be mixed in correctly. The real PPU appears to run
+    // at all times to ensure that OBJs can be mixed in correctly. The real PPU appears to run
     // at 4mhz and flush out exactly one pixel per cycle. Since we're emulating in CPU time (1mhz)
     // we instead flush out 4 pixels per cycle.
-    fn pixel_transfer_flush_pixels(&mut self) {
+    /*fn pt_flush(&mut self) {
         // The FIFO must always have at least 8 pixels in it.
         if self.pt_state.fifo_stalled {
             return;
@@ -371,34 +594,9 @@ impl <'cb> PPU<'cb> {
         // remaining pixels).
         let min_fifo_size = if self.pt_state.flush_x >= 152 { 8 } else { 0 };
 
-        if min_fifo_size >= self.pt_state.fifo.len() {
-            return;
-        }
-
-        // Send out 4 pixels.
-        // First, we need to make sure there isn't a sprite starting somewhere in the next 4 pixels.
-        // If there is, we note where it is, and mark ourselves as stalled, then flush the pixels up to the
-        // beginning of the sprite. Of course, we only do any of this if OBJ rendering is enabled.
-        
-
         for _ in 0..(self.pt_state.fifo.len()).min(4) {
             if self.pt_state.flush_x == 160 {
                 return;
-            }
-
-            if self.pt_state.skip > 0 {
-                self.pt_state.fifo.pop();
-                self.pt_state.skip -= 1;
-                continue;
-            }
-
-            if self.obj_enabled && !self.scanline_objs.is_empty() {
-                let (obj_idx, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
-                if self.pt_state.flush_x == obj_x - 8 {
-                    self.pt_state.fifo_stalled = true;
-                    self.pt_state.fetch_obj = obj_idx;
-                    return;
-                }
             }
 
             if self.win_enabled && self.ly >= self.wx {
@@ -409,42 +607,10 @@ impl <'cb> PPU<'cb> {
                     break;
                 }
             }
-            let pix = self.pt_state.fifo.pop();
-
-            self.framebuffer[self.fb_pos] = match pix {
-                0 => { 255 },
-                1 => { 100 },
-                2 => { 50 },
-                3 => { 0 },
-                _ => unreachable!("Pixels are 2bpp")
-            };
-            self.fb_pos += 1;
-            self.pt_state.flush_x += 1;
         }
-    }
+    }*/
 
-    fn pixel_transfer_fetch_pixels(&mut self) {
-        if self.pt_state.fifo_stalled {
-            if self.pt_state.obj_flush {
-                self.scanline_objs.pop();
-                self.pt_state.fifo_stalled = false;
-                self.pt_state.obj_flush = false;
-            } else {
-                let obj = self.read_oam_entry(self.pt_state.fetch_obj);
-                let palette = if obj.palette == 1 { &self.obp1 } else { &self.obp0 };
-                let obj_y = if obj.vert_flip {
-                    (if self.obj_tall { 16 } else { 8 }) - (self.ly + 16 - obj.y) as usize
-                } else {
-                    (self.ly + 16 - obj.y) as usize
-                };
-                let (obj_pixels, obj_mask) = self.get_tile_row((obj.code) as usize, obj_y, false, obj.horz_flip, palette);
-                self.pt_state.fifo.blend_obj(obj_pixels, obj_mask, !obj.priority);
-                self.pt_state.obj_flush = true;
-            }
-
-            return;
-        }
-
+    /*fn pixel_transfer_fetch_pixels(&mut self) {
         if self.pt_state.flush {
             self.pt_state.fifo.push_bg(self.pt_state.scratch.0, self.pt_state.scratch.1);
             self.pt_state.flush = false;
@@ -455,13 +621,6 @@ impl <'cb> PPU<'cb> {
         self.pt_state.flush = true;
 
         if self.bg_enabled {
-            let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
-
-            let tile_num = (self.pt_state.bg_y * 32 + self.pt_state.bg_x) as usize;
-            let tile = self.vram[(code_base_addr + tile_num) as usize] as usize;
-
-            self.pt_state.scratch = self.get_tile_row(tile, self.pt_state.tile_y, !self.bg_data_lo, false, &self.bgp);
-            self.pt_state.bg_x = (self.pt_state.bg_x + 1) % 32;
         } else if self.win_enabled && self.pt_state.in_win {
             // TODO:
 
@@ -476,7 +635,7 @@ impl <'cb> PPU<'cb> {
 
             self.pt_state.scratch = self.get_tile_row(tile, self.pt_state.win_tile_y, !self.bg_data_lo, false, &self.bgp);
         }
-    }
+    }*/
 
     // Decodes a row of pixels for a tile.
     // Can fetch tiles from either the low range (0x8000-0x8FFF in VRAM)
