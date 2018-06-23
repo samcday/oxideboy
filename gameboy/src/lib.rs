@@ -770,6 +770,7 @@ impl <'cb> CPU<'cb> {
         // While DMA is active, the CPU is not permitted to read outside of HRAM.
         // Any attempt to do so will simply see values of 0xFF.
         if self.dma_active && (addr < 0xFF80 || addr >= 0xFFFE) && addr != 0xFF46 {
+            self.advance_clock();
             return 0xFF;
         }
 
@@ -797,7 +798,7 @@ impl <'cb> CPU<'cb> {
             0xFF02            => self.read_sc(),
 
             // Timer
-            0xFF04            => (self.div & 0xFFFF >> 8) as u8,
+            0xFF04            => ((self.div & 0xFFFF) >> 8) as u8,
             0xFF05            => self.tima,
             0xFF06            => self.tma,
             0xFF07            => self.get_tac(),
@@ -845,10 +846,14 @@ impl <'cb> CPU<'cb> {
     }
 
     fn mem_write8(&mut self, addr: u16, v: u8) {
+        // During DMA memory outside of HRAM and the OAM register is unavailable - writes are ignored.
+        if self.dma_active && addr != 0xFF46 && (addr < 0xFF80 || addr > 0xFFFE) {
+            self.advance_clock();
+            return;
+        }
+
         self.advance_clock();
         match addr {
-            0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; },
-
             0x0000 ... 0x7FFF => { self.cart.write(addr, v); }
             0x8000 ... 0x9FFF => { self.ppu.write_vram(addr - 0x8000, v) }
             0xA000 ... 0xBFFF => { self.cart.write(addr, v); }
@@ -913,7 +918,8 @@ impl <'cb> CPU<'cb> {
             0xFF47            => { self.ppu.write_bgp(v) }
             0xFF48            => { self.ppu.write_obp0(v) }
             0xFF49            => { self.ppu.write_obp1(v) }
-            0xFF40 ... 0xFF43 => { }
+            0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; }
+
             0xFF4A            => { self.ppu.wy = v },
             0xFF4B            => { self.ppu.wx = v },
 
@@ -934,8 +940,8 @@ impl <'cb> CPU<'cb> {
     }
 
     fn mem_write16(&mut self, addr: u16, v: u16) {
-        self.mem_write8(addr, (v & 0xFF) as u8);
         self.mem_write8(addr + 1, ((v & 0xFF00) >> 8) as u8);
+        self.mem_write8(addr, (v & 0xFF) as u8);
     }
 
     fn read_joypad(&self) -> u8 {
@@ -2008,16 +2014,16 @@ impl <'cb> CPU<'cb> {
     // RST 00H | RST 08H | RST 10H ... RST 38H
     // Flags = Z:- N:- H:- C:-
     fn rst(&mut self, a: u8) {
-        self.push_and_jump(a as u16);
         self.advance_clock();
+        self.push_and_jump(a as u16);
     }
 
     // PUSH %r16
     // Flags = Z:- N:- H:- C:-
     fn push(&mut self, r: Reg16) {
         let v = self.get_reg16(r);
-        self.stack_push(v);
         self.advance_clock();
+        self.stack_push(v);
     }
 
     // POP %r16
@@ -2099,9 +2105,14 @@ mod tests {
     #[test] fn mooneye_acceptance_timer_tima_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_write_reloading.gb")); }
     #[test] fn mooneye_acceptance_timer_tma_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tma_write_reloading.gb")); }
 
+    #[test] fn mooneye_acceptance_div_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/div_timing.gb")); }
+
     #[test] fn mooneye_acceptance_oam_dma_start() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_start.gb")); }
     #[test] fn mooneye_acceptance_oam_dma_restart() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_restart.gb")); }
     #[test] fn mooneye_acceptance_oam_dma_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_timing.gb")); }
+
+    #[test] fn mooneye_acceptance_pop_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/pop_timing.gb")); }
+    #[test] fn mooneye_acceptance_push_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/push_timing.gb")); }
 
     #[test]
     fn cpu_instructions() {
