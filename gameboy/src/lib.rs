@@ -529,7 +529,7 @@ impl <'cb> CPU<'cb> {
             let inst = self.decode();
             self.update_ime();
             self.execute(inst);
-            if self.pc > 0x100 {
+            if !self.bootrom_enabled {
                 // println!("Instr: {} ;${:04X} ({})", inst, self.instr_addr, self.cycle_count);
             }
         }
@@ -2079,7 +2079,9 @@ mod tests {
 
     #[test] fn mooneye_acceptance_bits_mem_oam() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/mem_oam.gb")); }
     #[test] fn mooneye_acceptance_bits_reg_f() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/reg_f.gb")); }
+
     // #[test] fn mooneye_acceptance_interrupts_ie_push() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/interrupts/ie_push.gb")); }
+
     #[test] fn mooneye_acceptance_oam_dma_basic() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/basic.gb")); }
     #[test] fn mooneye_acceptance_oam_dma_reg_read() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/reg_read.gb")); }
 
@@ -2096,6 +2098,10 @@ mod tests {
     #[test] fn mooneye_acceptance_timer_tima_reload() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_reload.gb")); }
     #[test] fn mooneye_acceptance_timer_tima_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_write_reloading.gb")); }
     #[test] fn mooneye_acceptance_timer_tma_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tma_write_reloading.gb")); }
+
+    #[test] fn mooneye_acceptance_oam_dma_start() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_start.gb")); }
+    #[test] fn mooneye_acceptance_oam_dma_restart() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_restart.gb")); }
+    #[test] fn mooneye_acceptance_oam_dma_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_timing.gb")); }
 
     #[test]
     fn cpu_instructions() {
