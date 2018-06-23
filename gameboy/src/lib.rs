@@ -2109,8 +2109,14 @@ mod tests {
     #[test] fn mooneye_acceptance_timer_tma_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tma_write_reloading.gb")); }
 
     #[test] fn mooneye_acceptance_add_sp_e_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/add_sp_e_timing.gb")); }
-
+    #[test] fn mooneye_acceptance_call_cc_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/call_cc_timing.gb")); }
+    #[test] fn mooneye_acceptance_call_cc_timing2() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/call_cc_timing2.gb")); }
+    #[test] fn mooneye_acceptance_call_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/call_timing.gb")); }
+    #[test] fn mooneye_acceptance_call_timing2() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/call_timing2.gb")); }
     #[test] fn mooneye_acceptance_div_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/div_timing.gb")); }
+    #[test] fn mooneye_acceptance_ei_sequence() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ei_sequence.gb")); }
+    #[test] fn mooneye_acceptance_ei_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ei_timing.gb")); }
+    #[test] fn mooneye_acceptance_halt_ime0_ei() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime0_ei.gb")); }
 
     #[test] fn mooneye_acceptance_if_ie_registers() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/if_ie_registers.gb")); }
     #[test] fn mooneye_acceptance_intr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/intr_timing.gb")); }
