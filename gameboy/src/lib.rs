@@ -771,9 +771,8 @@ impl <'cb> CPU<'cb> {
     }
 
     fn mem_read8(&mut self, addr: u16) -> u8 {
-        // While DMA is active, the CPU is not permitted to read outside of HRAM.
-        // Any attempt to do so will simply see values of 0xFF.
-        if self.dma_active && (addr < 0xFF80 || addr >= 0xFFFE) && addr != 0xFF46 {
+        // While DMA transfer is in progress, reads to the OAM area will see 0xFF.
+        if self.dma_active && (addr >= 0xFE00 && addr <= 0xFE9F) {
             self.advance_clock();
             return 0xFF;
         }
@@ -850,8 +849,8 @@ impl <'cb> CPU<'cb> {
     }
 
     fn mem_write8(&mut self, addr: u16, v: u8) {
-        // During DMA memory outside of HRAM and the OAM register is unavailable - writes are ignored.
-        if self.dma_active && addr != 0xFF46 && (addr < 0xFF80 || addr > 0xFFFE) {
+        // While DMA transfer is in progress, write to the OAM area will be ignored.
+        if self.dma_active && (addr >= 0xFE00 && addr <= 0xFE9F) {
             self.advance_clock();
             return;
         }
@@ -2108,6 +2107,8 @@ mod tests {
     #[test] fn mooneye_acceptance_timer_tima_reload() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_reload.gb")); }
     #[test] fn mooneye_acceptance_timer_tima_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_write_reloading.gb")); }
     #[test] fn mooneye_acceptance_timer_tma_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tma_write_reloading.gb")); }
+
+    #[test] fn mooneye_acceptance_add_sp_e_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/add_sp_e_timing.gb")); }
 
     #[test] fn mooneye_acceptance_div_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/div_timing.gb")); }
 
