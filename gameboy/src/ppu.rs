@@ -214,7 +214,6 @@ impl <'cb> PPU<'cb> {
     }
 
     fn next_state(&mut self, new: PPUState) {
-        println!("{:?} took {} cycles", self.state, self.cycles);
         self.cycles = 0;
         self.state = new;
     }
@@ -406,6 +405,7 @@ impl <'cb> PPU<'cb> {
 
         // At the very beginning of the scanline, if SCX modulo 8 is nonzero, we need to throw away that many pixels.
         if state.skip > 0 {
+            state.fifo.pop();
             state.skip -= 1;
             return;
         }
@@ -503,12 +503,11 @@ impl <'cb> PPU<'cb> {
             PixelFetchState::ReadTile => {
                 let tile = self.vram[self.pt_state.fetcher.map_base + self.pt_state.fetcher.map_x] as usize;
                 self.pt_state.fetcher.data_loc = if !self.bg_data_lo {
-                    0x800 + (((tile as u8 as i8) as usize) * 16)
+                    (0x1000 + ((tile as u8 as i8 as i16) * 16)) as usize
                 } else {
                     (tile * 16)
                 } + self.pt_state.tile_y * 2;
 
-                self.pt_state.fetcher.map_x = (self.pt_state.fetcher.map_x + 1) % 32;
                 self.pt_state.fetcher.state = PixelFetchState::ReadData0;
             }
             PixelFetchState::ReadData0 => {
@@ -522,6 +521,7 @@ impl <'cb> PPU<'cb> {
                 let (pixels, mask) = PPU::build_tile(lo, hi, &self.bgp);
                 if self.pt_state.flusher.fifo.len() <= 8 {
                     self.pt_state.flusher.fifo.push_bg(pixels, mask);
+                    self.pt_state.fetcher.map_x = (self.pt_state.fetcher.map_x + 1) % 32;
                     self.pt_state.fetcher.state = PixelFetchState::ReadTile;
                 } else {
                     // We can't push pixels into FIFO just yet, it's too full. We'll try again next cycle.
@@ -533,6 +533,7 @@ impl <'cb> PPU<'cb> {
                     return;
                 }
                 self.pt_state.flusher.fifo.push_bg(pixels, mask);
+                self.pt_state.fetcher.map_x = (self.pt_state.fetcher.map_x + 1) % 32;
                 self.pt_state.fetcher.state = PixelFetchState::ReadTile;
                 // The stalled state is a bit of a kludge, it doesn't actually consume a cycle. So, we pump
                 // the fetcher again.

@@ -506,10 +506,10 @@ impl <'cb> CPU<'cb> {
 
             if self.pc == self.breakpoint {
                 self.breakpoint_hit = true;
-                break;
+                return 0;
             }
         }
-        counter - 17556 - delta
+        counter - (17556 - delta)
     }
 
     // Runs the CPU for a single instruction.
