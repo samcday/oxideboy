@@ -727,39 +727,35 @@ impl <'cb> CPU<'cb> {
         }
 
         // Service interrupts.
-        if self.ime && (self.if_ & self.ie) > 0 {
-            let addr = match self.if_ & self.ie {
+        let intr = self.if_ & self.ie;
+        if self.ime && intr > 0 {
+            let addr = if intr & 0x1 > 0 {
                 // Vertical blanking
-                0x1 => {
-                    self.if_ ^= 0x1;
-                    // TODO: gross hack. If LCD is no longer enabled we clear this interrupt.
-                    if !self.ppu.enabled {
-                        return;
-                    }
+                self.if_ ^= 0x1;
+                // TODO: gross hack. If LCD is no longer enabled we clear this interrupt.
+                if !self.ppu.enabled {
+                    return;
+                }
 
-                    0x40
-                },
+                0x40
+            } else if intr & 0x2 > 0 {
                 // LCDC status interrupt
-                0x2 => {
-                    self.if_ ^= 0x2;
-                    0x48
-                },
+                self.if_ ^= 0x2;
+                0x48
+            } else if intr & 0x4 > 0 {
                 // Timer overflow
-                0x4 => {
-                    self.if_ ^= 0x4;
-                    0x50
-                },
+                self.if_ ^= 0x4;
+                0x50
+            } else if intr & 0x8 > 0 {
                 // Serial transfer completion
-                0x8 => {
-                    self.if_ ^= 0x8;
-                    0x58
-                },
+                self.if_ ^= 0x8;
+                0x58
+            } else if intr & 0x10 > 0 {
                 // P10-P13 input signal goes low
-                0x10 => {
-                    self.if_ ^= 0x10;
-                    0x60
-                },
-                _ => unreachable!("Non-existent interrupt ${:X} encountered", 123)
+                self.if_ ^= 0x10;
+                0x60
+            } else {
+                unreachable!("All interrupt flags covered");
             };
 
             // Interrupt handling needs 3 internal cycles to do interrupt-y stuff.
@@ -1989,11 +1985,11 @@ impl <'cb> CPU<'cb> {
         if cc.is_some() {
             self.advance_clock();
         }
-        self.advance_clock();
         if ei {
             self.ime_defer = Some(true);
         }
         let pc = self.stack_pop();
+        self.advance_clock();
         self.pc = pc;
     }
 
@@ -2117,16 +2113,24 @@ mod tests {
     #[test] fn mooneye_acceptance_ei_sequence() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ei_sequence.gb")); }
     #[test] fn mooneye_acceptance_ei_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ei_timing.gb")); }
     #[test] fn mooneye_acceptance_halt_ime0_ei() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime0_ei.gb")); }
-
+    // #[test] fn mooneye_acceptance_halt_ime0_nointr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime0_nointr_timing.gb")); }
+    #[test] fn mooneye_acceptance_halt_ime1_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime1_timing.gb")); }
     #[test] fn mooneye_acceptance_if_ie_registers() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/if_ie_registers.gb")); }
     #[test] fn mooneye_acceptance_intr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/intr_timing.gb")); }
-
-    #[test] fn mooneye_acceptance_oam_dma_start() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_start.gb")); }
+    #[test] fn mooneye_acceptance_jp_cc_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/jp_cc_timing.gb")); }
+    #[test] fn mooneye_acceptance_jp_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/jp_timing.gb")); }
+    #[test] fn mooneye_acceptance_ld_hl_sp_e_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ld_hl_sp_e_timing.gb")); }
     #[test] fn mooneye_acceptance_oam_dma_restart() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_restart.gb")); }
+    #[test] fn mooneye_acceptance_oam_dma_start() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_start.gb")); }
     #[test] fn mooneye_acceptance_oam_dma_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_timing.gb")); }
-
     #[test] fn mooneye_acceptance_pop_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/pop_timing.gb")); }
     #[test] fn mooneye_acceptance_push_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/push_timing.gb")); }
+    // #[test] fn mooneye_acceptance_rapid_di_ei() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/rapid_di_ei.gb")); }
+    #[test] fn mooneye_acceptance_ret_cc_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ret_cc_timing.gb")); }
+    #[test] fn mooneye_acceptance_ret_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ret_timing.gb")); }
+    #[test] fn mooneye_acceptance_reti_intr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/reti_intr_timing.gb")); }
+    #[test] fn mooneye_acceptance_reti_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/reti_timing.gb")); }
+    #[test] fn mooneye_acceptance_rst_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/rst_timing.gb")); }
 
     #[test]
     fn cpu_instructions() {
