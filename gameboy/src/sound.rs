@@ -101,7 +101,7 @@ impl <'cb> SoundController<'cb> {
         if !self.enabled {
             return;
         }
-        // return;
+        return;
 
         self.timer += 1;
         if self.timer == 2048 {
