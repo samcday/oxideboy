@@ -2129,6 +2129,8 @@ mod tests {
     #[test] fn mooneye_acceptance_ppu_hblank_ly_scx_timing_gs() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/hblank_ly_scx_timing-GS.gb")); }
     #[test] fn mooneye_acceptance_ppu_intr_1_2_timing_gs() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_1_2_timing-GS.gb")); }
     #[test] fn mooneye_acceptance_ppu_intr_2_0_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_0_timing.gb")); }
+    #[test] fn mooneye_acceptance_ppu_intr_2_mode0_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_mode3_timing.gb")); }
+    #[test] fn mooneye_acceptance_ppu_intr_2_mode3_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_mode3_timing.gb")); }
 
     #[test] fn mooneye_acceptance_timer_div_write() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/div_write.gb")); }
     #[test] fn mooneye_acceptance_timer_rapid_toggle() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/rapid_toggle.gb")); }

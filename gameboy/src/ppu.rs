@@ -1,7 +1,10 @@
+// TODO: restore bg_enabled support
+// TODO: investigate sprite vs BG priority issues
+
 const DEFAULT_PALETTE: [u8; 4] = [0, 1, 2, 3];
 
 // Models the 4 states the PPU can be in when it is active.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum PPUState {
     OAMSearch,
     PixelTransfer,
@@ -125,6 +128,7 @@ struct OAMEntry {
 pub struct PPU<'cb> {
     pub enabled: bool,      // Master switch to turn LCD on/off.
     pub state: PPUState,
+    pub prev_state: PPUState,   // STAT reports the current mode perpetually 1 cycle late
     cycles: u16,         // Counts how many CPU cycles have elapsed in the current PPU stage.
 
     pub scy: u8,
@@ -170,7 +174,7 @@ pub struct PPU<'cb> {
 impl <'cb> PPU<'cb> {
     pub fn new(cb: &'cb mut FnMut(&[u32])) -> PPU<'cb> {
         PPU {
-            enabled: false, state: OAMSearch, cycles: 0,
+            enabled: false, state: OAMSearch, prev_state: OAMSearch, cycles: 0,
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
             wx: 0, wy: 0,
@@ -224,6 +228,7 @@ impl <'cb> PPU<'cb> {
             return 0;
         }
 
+        self.prev_state = self.state.clone();
         self.cycles += 1;
         self.if_ = 0;
 
@@ -686,7 +691,7 @@ impl <'cb> PPU<'cb> {
     // Compute value of the STAT register.
     pub fn read_stat(&self) -> u8 {
         0
-            | match self.state {
+            | match self.prev_state {
                 HBlank(_)             => 0b0000_0000,
                 VBlank                => 0b0000_0001,
                 OAMSearch             => 0b0000_0010,
