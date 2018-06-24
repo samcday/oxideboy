@@ -225,7 +225,6 @@ impl <'cb> PPU<'cb> {
         }
 
         self.cycles += 1;
-
         self.if_ = 0;
 
         match self.state {
@@ -645,18 +644,15 @@ impl <'cb> PPU<'cb> {
 
     // Compute value of the LCDC register.
     pub fn read_lcdc(&self) -> u8 {
-        let mut lcdc = 0;
-
-        lcdc |= if self.enabled     { 0b1000_0000 } else { 0 };
-        lcdc |= if self.win_code_hi { 0b0100_0000 } else { 0 };
-        lcdc |= if self.win_enabled { 0b0010_0000 } else { 0 };
-        lcdc |= if self.bg_data_lo  { 0b0001_0000 } else { 0 };
-        lcdc |= if self.bg_code_hi  { 0b0000_1000 } else { 0 };
-        lcdc |= if self.obj_tall    { 0b0000_0100 } else { 0 };
-        lcdc |= if self.obj_enabled { 0b0000_0010 } else { 0 };
-        lcdc |= if self.bg_enabled  { 0b0000_0001 } else { 0 };
-
-        lcdc
+        0
+            | if self.enabled     { 0b1000_0000 } else { 0 }
+            | if self.win_code_hi { 0b0100_0000 } else { 0 }
+            | if self.win_enabled { 0b0010_0000 } else { 0 }
+            | if self.bg_data_lo  { 0b0001_0000 } else { 0 }
+            | if self.bg_code_hi  { 0b0000_1000 } else { 0 }
+            | if self.obj_tall    { 0b0000_0100 } else { 0 }
+            | if self.obj_enabled { 0b0000_0010 } else { 0 }
+            | if self.bg_enabled  { 0b0000_0001 } else { 0 }
     }
 
     // Update PPU state based on new LCDC value.
@@ -671,6 +667,8 @@ impl <'cb> PPU<'cb> {
         } else if !enabled && self.enabled {
             if let VBlank = self.state {
                 self.enabled = false;
+                // Clear the framebuffer to white.
+                unsafe { ::std::ptr::write_bytes(self.framebuffer.as_mut_ptr(), 255, self.framebuffer.len()); }
             } else {
                 panic!("Tried to disable LCD outside of VBlank");
             }
@@ -689,10 +687,10 @@ impl <'cb> PPU<'cb> {
     pub fn read_stat(&self) -> u8 {
         0
             | match self.state {
-                HBlank(_)     => 0b00,
-                VBlank        => 0b01,
-                OAMSearch     => 0b10,
-                PixelTransfer => 0b11}
+                HBlank(_)             => 0b0000_0000,
+                VBlank                => 0b0000_0001,
+                OAMSearch             => 0b0000_0010,
+                PixelTransfer         => 0b0000_0011}
             | if self.ly == self.lyc   { 0b0000_0100 } else { 0 }
             | if self.interrupt_hblank { 0b0000_1000 } else { 0 }
             | if self.interrupt_vblank { 0b0001_0000 } else { 0 }
