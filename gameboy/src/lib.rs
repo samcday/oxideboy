@@ -853,16 +853,16 @@ impl <'cb> CPU<'cb> {
             // PPU
             0xFF40            => self.ppu.read_lcdc(),
             0xFF41            => self.ppu.read_stat(),
-            0xFF42            => self.ppu.scy,
-            0xFF43            => self.ppu.scx,
-            0xFF44            => self.ppu.ly,
-            0xFF45            => self.ppu.lyc,
+            0xFF42            => self.ppu.scy as u8,
+            0xFF43            => self.ppu.scx as u8,
+            0xFF44            => self.ppu.ly as u8,
+            0xFF45            => self.ppu.lyc as u8,
             0xFF46            => self.dma_reg,
             0xFF47            => self.ppu.read_bgp(),
             0xFF48            => self.ppu.read_obp0(),
             0xFF49            => self.ppu.read_obp1(),
-            0xFF4A            => self.ppu.wy,
-            0xFF4B            => self.ppu.wx,
+            0xFF4A            => self.ppu.wy as u8,
+            0xFF4B            => self.ppu.wx as u8,
 
             0xFF4D            => 0x00,      // KEY1 for CGB.
             0xFF50            => if self.bootrom_enabled { 0 } else { 1 },
@@ -938,18 +938,18 @@ impl <'cb> CPU<'cb> {
             // PPU
             0xFF40            => { self.ppu.write_lcdc(v) }
             0xFF41            => { self.ppu.write_stat(v) }
-            0xFF42            => { self.ppu.scy = v }
-            0xFF43            => { self.ppu.scx = v }
+            0xFF42            => { self.ppu.scy = v.into() }
+            0xFF43            => { self.ppu.scx = v.into() }
             0xFF44            => { }                   // LY is readonly.
-            0xFF45            => { self.ppu.lyc = v }
+            0xFF45            => { self.ppu.lyc = v.into() }
             0xFF46            => { self.dma(v) }
             0xFF47            => { self.ppu.write_bgp(v) }
             0xFF48            => { self.ppu.write_obp0(v) }
             0xFF49            => { self.ppu.write_obp1(v) }
             0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; }
 
-            0xFF4A            => { self.ppu.wy = v },
-            0xFF4B            => { self.ppu.wx = v },
+            0xFF4A            => { self.ppu.wy = v.into() },
+            0xFF4B            => { self.ppu.wx = v.into() },
 
             0xFF4D            => { }      // KEY1 for CGB.
             0xFF7F            => { }      // No idea what this is.
@@ -1143,7 +1143,10 @@ impl <'cb> CPU<'cb> {
             0x46 => Inst::LD8(Operand8::Reg(B), Operand8::Addr(HL)),
             0x47 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(A)),
             0x48 => Inst::LD8(Operand8::Reg(C), Operand8::Reg(B)),
-            0x49 => Inst::LD8(Operand8::Reg(C), Operand8::Reg(C)),
+            0x49 => {
+                self.ppu.debug_thing = !self.ppu.debug_thing;
+                Inst::LD8(Operand8::Reg(C), Operand8::Reg(C))
+            },
             0x4A => Inst::LD8(Operand8::Reg(C), Operand8::Reg(D)),
             0x4B => Inst::LD8(Operand8::Reg(C), Operand8::Reg(E)),
             0x4C => Inst::LD8(Operand8::Reg(C), Operand8::Reg(H)),
