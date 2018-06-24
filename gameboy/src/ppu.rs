@@ -31,15 +31,12 @@ struct PixelFetcher {
     data0: u8,
     map_base: usize,            // The memory addr in VRAM for the start of the 32 byte map row we're in.
     map_x: usize,               // The x position (0-32) for the tile offset past map_base.
+    tile_y: usize,
 }
 
 struct PixelTransferState {
     flusher: PixelFlusher,
     fetcher: PixelFetcher,
-
-    tile_y: usize,
-    win_tile_y: usize,
-    win_y: u16,
     in_win: bool,
 }
 
@@ -190,15 +187,13 @@ impl <'cb> PPU<'cb> {
                 },
                 fetcher: PixelFetcher {
                     state: PixelFetchState::ReadTile,
-                    obj: false,
-                    obj_idx: 0,
+                    obj: false, obj_idx: 0,
                     data_loc: 0,
                     data0: 0,
-                    map_x: 0,
-                    map_base: 0,
+                    map_x: 0, map_base: 0,
+                    tile_y: 0,
                 },
-                tile_y: 0,
-                in_win: false, win_tile_y: 0, win_y: 0, },
+                in_win: false, },
             scanline_objs: Vec::new(),
             framebuffer: [0; 160*144], fb_pos: 0,
             cb
@@ -345,10 +340,6 @@ impl <'cb> PPU<'cb> {
             let scy = self.scy as u16;
             let scx = self.scx as u16;
             let ly = self.ly as u16;
-            let wy = self.wy as u16;
-            self.pt_state.tile_y = ((scy + ly) % 8) as usize;
-            self.pt_state.win_y = ((ly + wy) / 8) % 32;
-            self.pt_state.win_tile_y = ((wy + ly) % 8) as usize;
             self.pt_state.in_win = false;
 
             self.pt_state.flusher.fifo.clear();
@@ -357,6 +348,7 @@ impl <'cb> PPU<'cb> {
             self.pt_state.flusher.skip = (scx % 8) as u8;
 
             let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
+            self.pt_state.fetcher.tile_y = ((scy + ly) % 8) as usize;
             self.pt_state.fetcher.map_base = (code_base_addr + (((ly + scy) / 8) % 32) * 32) as usize;
             self.pt_state.fetcher.map_x = ((31 + (scx / 8)) % 32) as usize;
             self.pt_state.fetcher.state = PixelFetchState::ReadTile;
@@ -417,8 +409,13 @@ impl <'cb> PPU<'cb> {
             self.pt_state.fetcher.state = PixelFetchState::ReadTile;
             state.fifo.clear();
 
+            let ly = self.ly as u16;
+            let wy = self.wy as u16;
             let code_base_addr = if self.win_code_hi { 0x1C00 } else { 0x1800 };
-            self.pt_state.fetcher.map_base = (code_base_addr + self.pt_state.win_y * 32) as usize;
+            let win_y = ((ly - wy) / 8) % 32;
+
+            self.pt_state.fetcher.tile_y = ((ly - wy) % 8) as usize;
+            self.pt_state.fetcher.map_base = (code_base_addr + win_y * 32) as usize;
             self.pt_state.fetcher.map_x = 0 as usize;
 
             return;
@@ -516,12 +513,11 @@ impl <'cb> PPU<'cb> {
         match self.pt_state.fetcher.state {
             PixelFetchState::ReadTile => {
                 let tile = self.vram[self.pt_state.fetcher.map_base + self.pt_state.fetcher.map_x] as usize;
-                let tile_y = if self.pt_state.in_win { self.pt_state.win_tile_y } else { self.pt_state.tile_y };
                 self.pt_state.fetcher.data_loc = if !self.bg_data_lo {
                     (0x1000 + ((tile as u8 as i8 as i16) * 16)) as usize
                 } else {
                     (tile * 16)
-                } + tile_y * 2;
+                } + self.pt_state.fetcher.tile_y * 2;
 
                 self.pt_state.fetcher.state = PixelFetchState::ReadData0;
             }
@@ -642,8 +638,8 @@ impl <'cb> PPU<'cb> {
         let mut lcdc = 0;
 
         lcdc |= if self.enabled     { 0b1000_0000 } else { 0 };
-        lcdc |= if self.win_enabled { 0b0100_0000 } else { 0 };
-        lcdc |= if self.win_code_hi { 0b0010_0000 } else { 0 };
+        lcdc |= if self.win_code_hi { 0b0100_0000 } else { 0 };
+        lcdc |= if self.win_enabled { 0b0010_0000 } else { 0 };
         lcdc |= if self.bg_data_lo  { 0b0001_0000 } else { 0 };
         lcdc |= if self.bg_code_hi  { 0b0000_1000 } else { 0 };
         lcdc |= if self.obj_tall    { 0b0000_0100 } else { 0 };
