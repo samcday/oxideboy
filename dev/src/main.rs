@@ -75,7 +75,7 @@ fn main() -> Result<()> {
 
     audio_device.borrow_mut().resume();
 
-    gameboy.breakpoint = 0x681;
+    // gameboy.breakpoint = 0x681;
 
     let mut delta = 0;
 

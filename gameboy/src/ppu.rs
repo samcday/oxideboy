@@ -162,7 +162,9 @@ pub struct PPU<'cb> {
     pub framebuffer: [u32; ::SCREEN_SIZE],
     fb_pos: usize,
 
-    cb: &'cb mut FnMut(&[u32])
+    if_: u8,
+
+    cb: &'cb mut FnMut(&[u32]),
 }
 
 impl <'cb> PPU<'cb> {
@@ -196,6 +198,7 @@ impl <'cb> PPU<'cb> {
                 in_win: false, },
             scanline_objs: Vec::new(),
             framebuffer: [0; 160*144], fb_pos: 0,
+            if_: 0,
             cb
         }
     }
@@ -223,7 +226,8 @@ impl <'cb> PPU<'cb> {
 
         self.cycles += 1;
 
-        let mut if_ = 0;
+        self.if_ = 0;
+
         match self.state {
             // The first stage of a scanline.
             // In this stage, we search the OAM table for OBJs that overlap the current scanline (LY).
@@ -232,13 +236,6 @@ impl <'cb> PPU<'cb> {
             // Instead we just perform all the work on the first cycle and spin for the remaining 19.
             OAMSearch => {
                 if self.cycles == 1 {
-                    if self.interrupt_oam {
-                        if_ |= 0x2;
-                    }
-                    if self.interrupt_lyc && self.ly == self.lyc {
-                        if_ |= 0x2;
-                    }
-
                     self.oam_search();
                 }
 
@@ -256,11 +253,6 @@ impl <'cb> PPU<'cb> {
             // to the next line. The amount of cycles varies depending on the amount of work that was
             // done in Pixel Transfer. The more OBJs in the scanline, the less time we pause here.
             HBlank(n) => {
-                // On the first cycle we check if STAT register has enabled HBlank interrupts.
-                if self.cycles == 1 && self.interrupt_hblank {
-                    if_ |= 0x2;
-                }
-
                 // Otherwise, we wait until we've counted the required number of cycles.
                 if self.cycles == n {
                     // Alright, time to move on to the next line.
@@ -269,13 +261,19 @@ impl <'cb> PPU<'cb> {
                     // Is the next line off screen? If so, we've reached VBlank.
                     if self.ly == 144 {
                         // Set the VBlank interrupt request.
-                        if_ |= 0x1;
+                        self.if_ |= 0x1;
                         // And also set the STAT interrupt request if VBlank interrupts are enabled in there.
                         if self.interrupt_vblank {
-                            if_ |= 0x2;
+                            self.if_ |= 0x2;
                         }
                         self.next_state(VBlank);
                     } else {
+                        if self.interrupt_oam {
+                            self.if_ |= 0x2;
+                        }
+                        if self.interrupt_lyc && self.ly == self.lyc {
+                            self.if_ |= 0x2;
+                        }
                         self.next_state(OAMSearch);
                     }
                 }
@@ -293,12 +291,19 @@ impl <'cb> PPU<'cb> {
                     (self.cb)(&self.framebuffer);
                     self.ly = 0;
                     self.fb_pos = 0;
+
+                    if self.interrupt_oam {
+                        self.if_ |= 0x2;
+                    }
+                    if self.interrupt_lyc && self.ly == self.lyc {
+                        self.if_ |= 0x2;
+                    }
                     self.next_state(OAMSearch);
                 }
             }
         }
 
-        if_
+        self.if_
     }
 
     // Searches through the OAM table to find any OBJs that overlap the line we're currently drawing.
@@ -376,6 +381,11 @@ impl <'cb> PPU<'cb> {
             // takes 51 cycles.
             let hblank_cycles = 51+43 - self.cycles;
             self.next_state(HBlank(hblank_cycles));
+
+            // If HBlank STAT interrupt is enabled, we send it now.
+            if self.interrupt_hblank {
+                self.if_ |= 0x2;
+            }
             return;
         }
     }
