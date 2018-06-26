@@ -13,7 +13,7 @@ pub enum PPUState {
 use self::PPUState::{*};
 
 #[derive(Debug, PartialEq)]
-enum PixelTransferStep { FetchTile, FetchP0, FetchP1, SpriteRead }
+enum PixelTransferStep { ObjFetchTile, ObjFetch0, ObjBlend, FetchTile, FetchP0, FetchP1, SpriteRead }
 impl Default for PixelTransferStep { fn default() -> Self { PixelTransferStep::FetchTile } }
 
 #[derive(Default)]
@@ -25,7 +25,6 @@ struct PixelTransferState {
     x: u8,
     init_fetch: bool,
     skip: u8,
-    obj_fetch: bool,
     code_addr: usize,
     in_win: bool,
     tile_y: usize,
@@ -344,11 +343,20 @@ impl <'cb> PPU<'cb> {
             self.pt_state.init_fetch = true;
         }
 
+        if self.debug_thing { println!("PT cycle #{}", self.cycles) }
+
         for _ in 0..2 {
+            let mut pending_objs = self.obj_enabled && !self.scanline_objs.is_empty();
+            let mut next_obj_x = if pending_objs {
+                let (_, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
+                obj_x
+            } else { 0 };
+
             if self.pt_state.x == 160 {
                 break;
             }
 
+            if self.debug_thing { println!("PT {:?}", self.pt_state.step) }
             match self.pt_state.step {
                 PixelTransferStep::FetchTile => {
                     let tile = self.vram[self.pt_state.code_addr];
@@ -385,7 +393,64 @@ impl <'cb> PPU<'cb> {
                     self.pt_state.code_addr = (self.pt_state.code_addr&!0x1F)|(((self.pt_state.code_addr+1)&0x1F));
                     let (pixels, mask) = PPU::build_tile(self.pt_state.p0, self.vram[self.pt_state.tile_addr + 1], &self.bgp);
                     self.pt_state.fifo.push_bg(pixels, mask);
-                    self.pt_state.step = PixelTransferStep::FetchTile;
+
+                    if pending_objs && self.pt_state.x + self.pt_state.fifo.len() > next_obj_x {
+                        self.pt_state.step = PixelTransferStep::ObjFetchTile;
+                    } else {
+                        self.pt_state.step = PixelTransferStep::FetchTile;
+                    }
+                }
+
+                PixelTransferStep::ObjFetchTile => {
+                    let (obj_idx, _) = self.scanline_objs[self.scanline_objs.len() - 1];
+                    let obj = self.read_oam_entry(obj_idx);
+                    let obj_y = if obj.vert_flip {
+                        (if self.obj_tall { 16 } else { 8 }) - (self.ly + 16 - (obj. y as u16)) as usize
+                    } else {
+                        (self.ly + 16 - (obj.y as u16)) as usize
+                    };
+                    self.pt_state.tile_addr = ((obj.code as usize) * 16) + obj_y * 2;
+                    self.pt_state.step = PixelTransferStep::ObjFetch0;
+                }
+                PixelTransferStep::ObjFetch0 => {
+                    self.pt_state.p0 = self.vram[self.pt_state.tile_addr];
+                    self.pt_state.step = PixelTransferStep::ObjBlend;
+                }
+                PixelTransferStep::ObjBlend => {
+                    if self.pt_state.fifo.len() != 8 {
+                        // panic!("Odd? {} {} {}", self.pt_state.fifo.len(), next_obj_x, self.pt_state.x);
+                    }
+
+                    let (obj_idx, _) = self.scanline_objs[self.scanline_objs.len() - 1];
+                    let obj = self.read_oam_entry(obj_idx);
+
+                    let mut lo = self.pt_state.p0;
+                    let mut hi = self.vram[self.pt_state.tile_addr + 1];
+
+                    if obj.horz_flip {
+                        // This insanity flips the order of the bits in each byte using dark sorcery.
+                        // http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
+                        lo = (((lo as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
+                        hi = (((hi as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
+                    }
+
+                    let palette = if obj.palette == 1 { &self.obp1 } else { &self.obp0 };
+                    let (pixels, mask) = PPU::build_tile(lo, hi, palette);
+                    self.pt_state.fifo.blend_obj(pixels, mask, !obj.priority);
+
+                    self.scanline_objs.pop();
+
+                    pending_objs = self.obj_enabled && !self.scanline_objs.is_empty();
+                    next_obj_x = if pending_objs {
+                        let (_, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
+                        obj_x
+                    } else { 0 };
+
+                    if pending_objs && self.pt_state.x + self.pt_state.fifo.len() > next_obj_x {
+                        self.pt_state.step = PixelTransferStep::ObjFetchTile;
+                    } else {
+                        self.pt_state.step = PixelTransferStep::FetchTile;
+                    }
                 }
             }
 
@@ -403,14 +468,20 @@ impl <'cb> PPU<'cb> {
                         self.pt_state.init_fetch = true;
                         self.pt_state.in_win = true;
                         self.pt_state.fifo.clear();
-                        continue;
+                        break;
+                    }
+
+                    if pending_objs && self.pt_state.x == next_obj_x.saturating_sub(8) {
+                        break;
                     }
 
                     let pix = self.pt_state.fifo.pop();
                     if self.pt_state.skip > 0 {
+                    if self.debug_thing { println!("Skipping pixel") }
                         self.pt_state.skip -= 1;
                         continue;
                     }
+                    if self.debug_thing { println!("Pushing pixel #{}", self.pt_state.x) }
                     self.framebuffer[((self.ly*160)+(self.pt_state.x as u16)) as usize] = match pix {
                         0 => { 255 }, 1 => { 100 }, 2 => { 50 }, 3 => { 0 },
                         _ => unreachable!("Pixels are 2bpp")
@@ -725,5 +796,34 @@ mod tests {
         assert_eq!(45, test(0, 0));
         assert_eq!(47, test(7, 0));
         assert_eq!(45, test(8, 0));
+    }
+
+    #[test]
+    fn test_scanline_pt_cycles_obj() {
+        let test = |sprites: Vec<u8>| {
+            let cb = &mut |_: &[u32]| {};
+            let mut ppu = PPU::new(cb);
+            ppu.debug_thing = true;
+            ppu.ly = 66;
+            ppu.enabled = true;
+            ppu.obj_enabled = true;
+            for (n, x) in sprites.iter().enumerate() {
+                ppu.oam[(n * 4) as usize + 1] = *x;
+                ppu.oam[(n * 4) as usize] = 66 + 16;
+            }
+            for _ in 0..20 { ppu.advance(); }
+            assert_eq!(ppu.scanline_objs.len(), sprites.len());
+            assert_eq!(ppu.state, PPUState::PixelTransfer);
+ 
+            let mut cycles = 0;
+            while ppu.state == PPUState::PixelTransfer {
+                cycles += 1;
+                ppu.advance();
+            }
+            cycles
+        };
+
+        assert_eq!(45, test(vec![0]));
+        // assert_eq!(44, test(vec![12]));
     }
 }
