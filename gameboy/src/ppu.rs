@@ -1,6 +1,5 @@
 // TODO: restore bg_enabled support
 // TODO: investigate sprite vs BG priority issues
-// TODO: investigate window x positioning. BGB seems to shift right by a pixel
 const DEFAULT_PALETTE: [u8; 4] = [0, 1, 2, 3];
 
 // Models the 4 states the PPU can be in when it is active.
@@ -393,19 +392,20 @@ impl <'cb> PPU<'cb> {
             for _ in 0..2 {
                 self.pt_state.ppu_cycles += 1;
 
-                if self.win_enabled && !self.pt_state.in_win && self.ly >= self.wy && self.pt_state.x == (self.wx.saturating_sub(8) as u8) {
-                    // Time to switch to window.
-                    let code_base_addr = if self.win_code_hi { 0x1C00 } else { 0x1800 };
-                    // TODO: gotta handle that weird window wrapping thing at 0xa6
-                    self.pt_state.code_addr = (code_base_addr + (((((self.ly-self.wy) / 8) % 32) * 32))) as usize;
-                    self.pt_state.tile_y = ((self.ly-self.wy) % 8) as usize;
-                    self.pt_state.step = PixelTransferStep::FetchTile;
-                    self.pt_state.init_fetch = true;
-                    self.pt_state.in_win = true;
-                    self.pt_state.fifo.clear();
-                }
-
                 if self.pt_state.fifo.len() > 0 && self.pt_state.x < 160 {
+                    if self.win_enabled && !self.pt_state.in_win && self.ly >= self.wy && self.pt_state.x == (self.wx.saturating_sub(7) as u8) {
+                        // Time to switch to window.
+                        let code_base_addr = if self.win_code_hi { 0x1C00 } else { 0x1800 };
+                        // TODO: gotta handle that weird window wrapping thing at 0xa6
+                        self.pt_state.code_addr = (code_base_addr + (((((self.ly-self.wy) / 8) % 32) * 32))) as usize;
+                        self.pt_state.tile_y = ((self.ly-self.wy) % 8) as usize;
+                        self.pt_state.step = PixelTransferStep::FetchTile;
+                        self.pt_state.init_fetch = true;
+                        self.pt_state.in_win = true;
+                        self.pt_state.fifo.clear();
+                        continue;
+                    }
+
                     let pix = self.pt_state.fifo.pop();
                     if self.pt_state.skip > 0 {
                         self.pt_state.skip -= 1;
@@ -697,5 +697,33 @@ mod tests {
         assert_eq!(43, test(0));
         assert_eq!(45, test(7));
         assert_eq!(43, test(8));
+    }
+
+    #[test]
+    fn test_scanline_pt_cycles_window() {
+        let test = |scx, wx| {
+            let cb = &mut |_: &[u32]| {};
+            let mut ppu = PPU::new(cb);
+            ppu.debug_thing = true;
+            ppu.wy = 66;
+            ppu.wx = wx;
+            ppu.ly = 66;
+            ppu.scx = scx;
+            ppu.enabled = true;
+            ppu.win_enabled = true;
+            for _ in 0..20 { ppu.advance(); }
+            assert_eq!(ppu.state, PPUState::PixelTransfer);
+
+            let mut cycles = 0;
+            while ppu.state == PPUState::PixelTransfer {
+                cycles += 1;
+                ppu.advance();
+            }
+            cycles
+        };
+
+        assert_eq!(45, test(0, 0));
+        assert_eq!(47, test(7, 0));
+        assert_eq!(45, test(8, 0));
     }
 }
