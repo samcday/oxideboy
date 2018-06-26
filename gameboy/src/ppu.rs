@@ -1,10 +1,10 @@
 // TODO: restore bg_enabled support
 // TODO: investigate sprite vs BG priority issues
-
+// TODO: investigate window x positioning. BGB seems to shift right by a pixel
 const DEFAULT_PALETTE: [u8; 4] = [0, 1, 2, 3];
 
 // Models the 4 states the PPU can be in when it is active.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PPUState {
     OAMSearch,
     PixelTransfer,
@@ -13,13 +13,24 @@ pub enum PPUState {
 }
 use self::PPUState::{*};
 
+#[derive(Debug, PartialEq)]
+enum PixelTransferStep { FetchTile, FetchP0, FetchP1, SpriteRead }
+impl Default for PixelTransferStep { fn default() -> Self { PixelTransferStep::FetchTile } }
+
 #[derive(Default)]
 struct PixelTransferState {
     ppu_cycles: u8,
+    step: PixelTransferStep,
+    stall: u8, bucket_stall: u8,
     fifo: PixelFifo,
     x: u8,
+    init_fetch: bool,
+    skip: u8,
     obj_fetch: bool,
-    code_addr: usize, tile_addr: usize, p0: u8, p1: u8,
+    code_addr: usize,
+    in_win: bool,
+    tile_y: usize,
+    tile_addr: usize, p0: u8, p1: u8,
 }
 
 // While drawing a scanline, we keep a small number of pixels in a FIFO queue before writing them to framebuffer.
@@ -146,7 +157,6 @@ pub struct PPU<'cb> {
     pt_state: PixelTransferState,
 
     pub framebuffer: [u32; ::SCREEN_SIZE],
-    fb_pos: usize,
 
     if_: u8,
 
@@ -170,7 +180,7 @@ impl <'cb> PPU<'cb> {
             vram: [0; 0x2000], oam: [0; 0xA0],
             pt_state: Default::default(),
             scanline_objs: Vec::new(),
-            framebuffer: [0; 160*144], fb_pos: 0,
+            framebuffer: [0; 160*144],
             if_: 0,
             cb
         }
@@ -272,7 +282,6 @@ impl <'cb> PPU<'cb> {
                 if self.cycles == 1140 {
                     (self.cb)(&self.framebuffer);
                     self.ly = 0;
-                    self.fb_pos = 0;
 
                     if self.interrupt_oam {
                         self.if_ |= 0x2;
@@ -300,9 +309,7 @@ impl <'cb> PPU<'cb> {
             let y = self.read_obj_y(idx) as u16;
             if ly_bound >= y && ly_bound < y + h {
                 let x = self.read_obj_x(idx);
-                // if x > 0 {
-                    self.scanline_objs.push((idx, x));
-                // }
+                self.scanline_objs.push((idx, x));
             }
             idx += 1;
         }
@@ -328,147 +335,100 @@ impl <'cb> PPU<'cb> {
     fn pixel_transfer(&mut self) {
         // On the first cycle of this stage we ensure our state info is clean.
         if self.cycles == 1 {
-            // let scy = self.scy as u16;
-            // let scx = self.scx as u16;
-            // let ly = self.ly as u16;
-            // self.pt_state.in_win = false;
-
-            // self.pt_state.flusher.fifo.clear();
-            // self.pt_state.flusher.stalled = false;
-            // self.pt_state.flusher.x = 0;
-            // self.pt_state.flusher.skip = (scx % 8) as u8;
-
-            // let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
-            // self.pt_state.fetcher.tile_y = ((scy + ly) % 8) as usize;
-            // self.pt_state.fetcher.map_base = (code_base_addr + (((ly + scy) / 8) % 32) * 32) as usize;
-            // self.pt_state.fetcher.map_x = ((scx / 8) % 32) as usize;
-            // self.pt_state.fetcher.state = PixelFetchState::ReadTile;
-            // self.pt_state.fetcher.obj = false;
-
-            // TODO: can SCX change mid-scanline?
             self.pt_state = Default::default();
+            // TODO: we're latching the memory addr for BG code map reads here.
+            // If SCX changes mid scanline what is supposed to happen?
             let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
             self.pt_state.code_addr = (code_base_addr + (((((self.ly + self.scy) / 8) % 32) * 32) + ((self.scx / 8) % 32))) as usize;
+            self.pt_state.tile_y = ((self.scy + self.ly) % 8) as usize;
+            self.pt_state.skip = (self.scx % 8) as u8;
+            self.pt_state.init_fetch = true;
         }
 
-        let mut pending_objs = self.obj_enabled && !self.scanline_objs.is_empty();
-        let mut next_obj_x = if pending_objs {
-            let (_, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
-            obj_x.saturating_sub(8)
-        } else { 0 };
-
-        for _ in 0..4 {
+        for _ in 0..2 {
             if self.pt_state.x == 160 {
-                let hblank_cycles = 51+43 - self.cycles;
-                self.next_state(HBlank(hblank_cycles));
-
-                // If HBlank STAT interrupt is enabled, we send it now.
-                if self.interrupt_hblank {
-                    self.if_ |= 0x2;
-                }
-                return;
+                break;
             }
 
-            self.pt_state.ppu_cycles += 1;
-
-            // Shift a pixel out, if there's one available and we're not stalled waiting on an OBJ fetch.
-            if self.pt_state.fifo.len() > 0 && !(pending_objs && self.pt_state.x >= next_obj_x) {
-                if self.pt_state.fifo.len() == 0 {
-                    panic!("lol man I suck {} {} {}", pending_objs, next_obj_x, self.pt_state.x);
-                }
-                let pix = self.pt_state.fifo.pop();
-                self.framebuffer[self.fb_pos] = match pix {
-                    0 => { 255 },
-                    1 => { 100 },
-                    2 => { 50 },
-                    3 => { 0 },
-                    _ => unreachable!("Pixels are 2bpp")
-                };
-                self.fb_pos += 1;
-                self.pt_state.x += 1;
-            }
-
-            if self.pt_state.obj_fetch {
-                if self.pt_state.ppu_cycles == 2 {
-                    let (obj_idx, _) = self.scanline_objs[self.scanline_objs.len() - 1];
-                    let obj = self.read_oam_entry(obj_idx);
-                    let obj_y = if obj.vert_flip {
-                        (if self.obj_tall { 16 } else { 8 }) - (self.ly + 16 - (obj.y as u16)) as usize
-                    } else {
-                        (self.ly + 16 - (obj.y as u16)) as usize
-                    };
-                    self.pt_state.tile_addr = ((obj.code as usize) * 16) + obj_y * 2;
-                } else if self.pt_state.ppu_cycles == 4 {
-                    self.pt_state.p0 = self.vram[self.pt_state.tile_addr];
-                } else if self.pt_state.ppu_cycles == 6 {
-                    self.pt_state.p1 = self.vram[self.pt_state.tile_addr + 1];
-                } else if self.pt_state.ppu_cycles == 8 {
-                    if self.pt_state.fifo.len() != 8 {
-                        panic!("Odd? {} {} {}", self.pt_state.fifo.len(), next_obj_x, self.pt_state.x);
-                    }
-
-                    let (obj_idx, _) = self.scanline_objs[self.scanline_objs.len() - 1];
-                    let obj = self.read_oam_entry(obj_idx);
-
-                    let mut lo = self.pt_state.p0;
-                    let mut hi = self.pt_state.p1;
-
-                    if obj.horz_flip {
-                        // This insanity flips the order of the bits in each byte using dark sorcery.
-                        // http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
-                        lo = (((lo as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
-                        hi = (((hi as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
-                    }
-
-                    let palette = if obj.palette == 1 { &self.obp1 } else { &self.obp0 };
-                    let (pixels, mask) = PPU::build_tile(lo, hi, palette);
-                    self.pt_state.fifo.blend_obj(pixels, mask, !obj.priority);
-
-                    self.scanline_objs.pop();
-                    self.pt_state.obj_fetch = false;
-
-                    // Is there another sprite for us to immediately go to?
-                    pending_objs = !self.scanline_objs.is_empty();
-                    if pending_objs {
-                        let (_, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
-                        next_obj_x = obj_x.saturating_sub(8);
-                        if self.pt_state.x + self.pt_state.fifo.len() > next_obj_x {
-                            // panic!("Heh!");
-                            self.pt_state.obj_fetch = true;
-                        }
-                    }
-
-                    self.pt_state.ppu_cycles = 0;
-                }
-            } else {
-                if self.pt_state.ppu_cycles == 2 {
-                    let tile_y = ((self.scy + self.ly) % 8) as usize;
+            match self.pt_state.step {
+                PixelTransferStep::FetchTile => {
                     let tile = self.vram[self.pt_state.code_addr];
-                    self.pt_state.tile_addr = if !self.bg_data_lo {
+                    self.pt_state.tile_addr = (if !self.bg_data_lo {
                         (0x1000 + ((tile as u8 as i8 as i16) * 16)) as usize
                     } else {
                         ((tile as usize) * 16)
-                    } + tile_y * 2;
-                } else if self.pt_state.ppu_cycles == 4 {
-                    self.pt_state.p0 = self.vram[self.pt_state.tile_addr];
-                } else if self.pt_state.ppu_cycles == 6 {
-                    self.pt_state.p1 = self.vram[self.pt_state.tile_addr + 1];
-                } else if self.pt_state.ppu_cycles == 8 {
-                    let (pixels, mask) = PPU::build_tile(self.pt_state.p0, self.pt_state.p1, &self.bgp);
-                    self.pt_state.fifo.push_bg(pixels, mask);
-
-                    // Only increment lower 5 bits, this ensures code addr wraps on the 32byte row.
-                    self.pt_state.code_addr = (self.pt_state.code_addr & !0x1F) | ((self.pt_state.code_addr + 1) & 0x1F);
-
-                    if pending_objs && self.pt_state.x + self.pt_state.fifo.len() > next_obj_x {
-                        if self.debug_thing && self.ly == 66 {
-                            println!("Alright let's go do stuff");
-                        }
-                        self.pt_state.obj_fetch = true;
-                    }
-
-                    self.pt_state.ppu_cycles = 0;
+                    }) + self.pt_state.tile_y * 2;
+                    self.pt_state.step = PixelTransferStep::FetchP0;
                 }
+                PixelTransferStep::FetchP0 => {
+                    self.pt_state.p0 = self.vram[self.pt_state.tile_addr];
+                    self.pt_state.step = PixelTransferStep::FetchP1;
+                }
+                PixelTransferStep::FetchP1 => {
+                    self.pt_state.p1 = self.vram[self.pt_state.tile_addr + 1];
+
+                    if self.pt_state.init_fetch {
+                        // The first BG read is thrown away and we don't spend the extra 2 cycles in OBJ read.
+                        self.pt_state.init_fetch = false;
+                        self.pt_state.step = PixelTransferStep::FetchTile;
+
+                        if self.pt_state.in_win {
+                            let (pixels, mask) = PPU::build_tile(self.pt_state.p0, self.vram[self.pt_state.tile_addr + 1], &self.bgp);
+                            self.pt_state.fifo.push_bg(pixels, mask);
+                            self.pt_state.code_addr = (self.pt_state.code_addr&!0x1F)|(((self.pt_state.code_addr+1)&0x1F));
+                        }
+                    } else {
+                        self.pt_state.step = PixelTransferStep::SpriteRead;
+                    }
+                }
+                PixelTransferStep::SpriteRead => {
+                    // By only incrementing the bottom 5 bits of code_addr, it wraps on the 32 byte boundary of BG map.
+                    self.pt_state.code_addr = (self.pt_state.code_addr&!0x1F)|(((self.pt_state.code_addr+1)&0x1F));
+                    let (pixels, mask) = PPU::build_tile(self.pt_state.p0, self.vram[self.pt_state.tile_addr + 1], &self.bgp);
+                    self.pt_state.fifo.push_bg(pixels, mask);
+                    self.pt_state.step = PixelTransferStep::FetchTile;
+                }
+            }
+
+            for _ in 0..2 {
+                self.pt_state.ppu_cycles += 1;
+
+                if self.win_enabled && !self.pt_state.in_win && self.ly >= self.wy && self.pt_state.x == (self.wx.saturating_sub(8) as u8) {
+                    // Time to switch to window.
+                    let code_base_addr = if self.win_code_hi { 0x1C00 } else { 0x1800 };
+                    // TODO: gotta handle that weird window wrapping thing at 0xa6
+                    self.pt_state.code_addr = (code_base_addr + (((((self.ly-self.wy) / 8) % 32) * 32))) as usize;
+                    self.pt_state.tile_y = ((self.ly-self.wy) % 8) as usize;
+                    self.pt_state.step = PixelTransferStep::FetchTile;
+                    self.pt_state.init_fetch = true;
+                    self.pt_state.in_win = true;
+                    self.pt_state.fifo.clear();
+                }
+
+                if self.pt_state.fifo.len() > 0 && self.pt_state.x < 160 {
+                    let pix = self.pt_state.fifo.pop();
+                    if self.pt_state.skip > 0 {
+                        self.pt_state.skip -= 1;
+                        continue;
+                    }
+                    self.framebuffer[((self.ly*160)+(self.pt_state.x as u16)) as usize] = match pix {
+                        0 => { 255 }, 1 => { 100 }, 2 => { 50 }, 3 => { 0 },
+                        _ => unreachable!("Pixels are 2bpp")
+                    };
+                    self.pt_state.x += 1;
+                }
+            }
+        }
+
+        if self.pt_state.x == 160 {
+            // if self.ly == 66 { println!("Scanline took {} 4mhz cycles", self.pt_state.ppu_cycles); }
+
+            let hblank_cycles = 51+43 - self.cycles;
+            self.next_state(HBlank(hblank_cycles));
+
+            // If HBlank STAT interrupt is enabled, we send it now.
+            if self.interrupt_hblank {
+                self.if_ |= 0x2;
             }
         }
     }
@@ -524,7 +484,6 @@ impl <'cb> PPU<'cb> {
         self.oam[(n * 4) as usize]
     }
 
-
     pub fn read_oam(&self, addr: u16) -> u8 {
         match self.state {
             HBlank(_) | VBlank => self.oam[addr as usize],
@@ -573,7 +532,6 @@ impl <'cb> PPU<'cb> {
         if enabled && !self.enabled {
             self.enabled = true;
             self.next_state(OAMSearch);
-            self.fb_pos = 0;
             self.ly = 0;
         } else if !enabled && self.enabled {
             if let VBlank = self.state {
@@ -714,5 +672,30 @@ mod tests {
         fifo.push_bg         (0b00_11_01_00_00000000, 0b00111100_00000000);
         fifo.blend_obj       (0b10_00_11_00_00000000, 0b11001100_00000000, false);
         assert_eq!(fifo.fifo, 0b10_11_01_00_00000000);
+    }
+
+    #[test]
+    fn test_scanline_pt_cycles_bg() {
+        let test = |scx| {
+            let cb = &mut |_: &[u32]| {};
+            let mut ppu = PPU::new(cb);
+            ppu.debug_thing = true;
+            ppu.ly = 66;
+            ppu.scx = scx;
+            ppu.enabled = true;
+            for _ in 0..20 { ppu.advance(); }
+            assert_eq!(ppu.state, PPUState::PixelTransfer);
+
+            let mut cycles = 0;
+            while ppu.state == PPUState::PixelTransfer {
+                cycles += 1;
+                ppu.advance();
+            }
+            cycles
+        };
+
+        assert_eq!(43, test(0));
+        assert_eq!(45, test(7));
+        assert_eq!(43, test(8));
     }
 }
