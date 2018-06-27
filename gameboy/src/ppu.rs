@@ -12,82 +12,14 @@ pub enum PPUState {
 }
 use self::PPUState::{*};
 
-#[derive(Debug, PartialEq)]
-enum PixelTransferStep { ObjFetchTile, ObjFetch0, ObjBlend, FetchTile, FetchP0, FetchP1, SpriteRead }
-impl Default for PixelTransferStep { fn default() -> Self { PixelTransferStep::FetchTile } }
-
-#[derive(Default)]
 struct PixelTransferState {
-    ppu_cycles: u8,
-    step: PixelTransferStep,
-    stall: u8, bucket_stall: u8,
-    fifo: PixelFifo,
+    cycle_countdown: u8,
+    scanline: [u8; 176],
+    scanline_prio: [bool; 176],
     x: u8,
-    init_fetch: bool,
-    skip: u8,
     code_addr: usize,
-    in_win: bool,
+    fetch_obj: bool,
     tile_y: usize,
-    tile_addr: usize, p0: u8, p1: u8,
-}
-
-// While drawing a scanline, we keep a small number of pixels in a FIFO queue before writing them to framebuffer.
-// We operate on this FIFO a lot, so we want it to be as efficient as possible. Furthermore, we also need it
-// to track a bit of extra information about which pixels are "writable".
-#[derive(Default)]
-struct PixelFifo {
-    bg: u16,
-    objs: [(u16, bool); 10],
-    obj_idx: usize,
-    size: u8,
-}
-
-impl PixelFifo {
-    fn new() -> PixelFifo {
-        PixelFifo { bg: 0, objs: [(0, false); 10], obj_idx: 0, size: 0 }
-    }
-
-    fn clear(&mut self) {
-        // TODO:
-        self.size = 0;
-    }
-
-    // Pushes a BG tile row into the FIFO.
-    fn latch_bg(&mut self, row: u16) {
-        debug_assert!(self.size == 0, "FIFO still has {} pixels", self.size);
-
-        self.bg = row;
-        self.size = 8;
-    }
-
-    fn latch_obj(&mut self, row: u16, prio: bool) {
-        self.objs[self.obj_idx] = (row, prio);
-        self.obj_idx += 1;
-    }
-
-    // Pops a single pixel from the FIFO.
-    fn pop(&mut self) -> u8 {
-        debug_assert!(self.size > 0);
-        self.size -= 1;
-
-        // First we grab the BG pixel.
-        let mut pix = ((self.bg & (0b11 << (self.size*2))) >> (self.size*2)) & 0b11;
-
-        // Then we loop through the latched OBJs. If we find one that has a non zero pixel AND priority
-        // over the BG, then we use that instead.
-        for (obj_row, obj_prio) in &self.objs[0..self.obj_idx] {
-            let obj_pix = (*obj_row & 0xC000) >> 14;
-            if obj_pix != 0 && *obj_prio {
-                pix = obj_pix;
-                break;
-            }
-        }
-        for (obj_row, _) in &mut self.objs[0..self.obj_idx] {
-            *obj_row <<= 2;
-        }
-
-        pix as u8
-    }
 }
 
 #[derive(Debug)]
@@ -105,17 +37,17 @@ struct OAMEntry {
 pub struct PPU<'cb> {
     pub debug_thing: bool,
 
-    pub enabled: bool,      // Master switch to turn LCD on/off.
+    pub enabled: bool,          // Master switch to turn LCD on/off.
     pub state: PPUState,
     pub prev_state: PPUState,   // STAT reports the current mode perpetually 1 cycle late
-    cycles: u16,         // Counts how many CPU cycles have elapsed in the current PPU stage.
+    cycles: u16,                // Counts how many CPU cycles have elapsed in the current PPU stage.
 
-    pub scy: u16,
-    pub scx: u16,
-    pub ly: u16,
-    pub lyc: u16,
-    pub wx: u16,
-    pub wy: u16,
+    pub scy: u8,
+    pub scx: u8,
+    pub ly: u8,
+    pub lyc: u8,
+    pub wx: u8,
+    pub wy: u8,
     bgp: [u8; 4],
     obp0: [u8; 4],
     obp1: [u8; 4],
@@ -164,7 +96,12 @@ impl <'cb> PPU<'cb> {
             obj_enabled: false, obj_tall: false,
             interrupt_oam: false, interrupt_hblank: false, interrupt_vblank: false, interrupt_lyc: false,
             vram: [0; 0x2000], oam: [0; 0xA0],
-            pt_state: Default::default(),
+            pt_state: PixelTransferState {
+                cycle_countdown: 0,
+                fetch_obj: false,
+                code_addr: 0, tile_y: 0, x: 0,
+                scanline: [0; 176], scanline_prio: [false; 176],
+            },
             scanline_objs: Vec::new(),
             framebuffer: [0; 160*144],
             if_: 0,
@@ -292,7 +229,7 @@ impl <'cb> PPU<'cb> {
         let ly_bound = self.ly + 16;
 
         while self.scanline_objs.len() < 10 && idx < 40 {
-            let y = self.read_obj_y(idx) as u16;
+            let y = self.read_obj_y(idx);
             if ly_bound >= y && ly_bound < y + h {
                 let x = self.read_obj_x(idx);
                 self.scanline_objs.push((idx, x));
@@ -308,50 +245,6 @@ impl <'cb> PPU<'cb> {
         // This way, once we've drawn an OBJ, we just pop it off the Vec (which simply decrements len).
         self.scanline_objs.sort_unstable_by(|(a_idx, a_x), (b_idx, b_x)| a_x.cmp(b_x).then(a_idx.cmp(b_idx)));
         self.scanline_objs.reverse();
-
-        if self.debug_thing && self.ly == 66 && self.scanline_objs.len() > 0 {
-            println!("This scanline has {} OBJs!", self.scanline_objs.len());
-        }
-    }
-
-    fn pixel_push(&mut self) {
-        let mut pending_objs = self.obj_enabled && !self.scanline_objs.is_empty();
-        let mut next_obj_x = if pending_objs {
-            let (_, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
-            obj_x
-        } else { 0 };
-
-        if self.pt_state.fifo.size > 0 && self.pt_state.x < 160 {
-            if self.win_enabled && !self.pt_state.in_win && self.ly >= self.wy && self.pt_state.x == (self.wx.saturating_sub(7) as u8) {
-                // Time to switch to window.
-                let code_base_addr = if self.win_code_hi { 0x1C00 } else { 0x1800 };
-                // TODO: gotta handle that weird window wrapping thing at 0xa6
-                self.pt_state.code_addr = (code_base_addr + (((((self.ly-self.wy) / 8) % 32) * 32))) as usize;
-                self.pt_state.tile_y = ((self.ly-self.wy) % 8) as usize;
-                self.pt_state.step = PixelTransferStep::FetchTile;
-                self.pt_state.init_fetch = true;
-                self.pt_state.in_win = true;
-                self.pt_state.fifo.clear();
-                return;
-            }
-
-            if pending_objs && self.pt_state.x == next_obj_x.saturating_sub(8) {
-                return;
-            }
-
-            let pix = self.pt_state.fifo.pop();
-            if self.pt_state.skip > 0 {
-                if self.debug_thing { println!(" -> Skipping pixel") }
-                self.pt_state.skip -= 1;
-                return;
-            }
-            if self.debug_thing { println!(" -> Pushing pixel #{}", self.pt_state.x) }
-            self.framebuffer[((self.ly*160)+(self.pt_state.x as u16)) as usize] = match pix {
-                0 => { 255 }, 1 => { 100 }, 2 => { 50 }, 3 => { 0 },
-                _ => unreachable!("Pixels are 2bpp")
-            };
-            self.pt_state.x += 1;
-        }
     }
 
     /// The second stage of the scanline. Takes 43+ cycles.
@@ -361,192 +254,98 @@ impl <'cb> PPU<'cb> {
     fn pixel_transfer(&mut self) {
         // On the first cycle of this stage we ensure our state info is clean.
         if self.cycles == 1 {
-            self.pt_state = Default::default();
+            // TODO: explain this.
+            self.pt_state.cycle_countdown = 14;
+            self.pt_state.x = 0;
+            self.pt_state.fetch_obj = false;
+
             // TODO: we're latching the memory addr for BG code map reads here.
             // If SCX changes mid scanline what is supposed to happen?
             let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
-            self.pt_state.code_addr = (code_base_addr + (((((self.ly + self.scy) / 8) % 32) * 32) + ((self.scx / 8) % 32))) as usize;
-            self.pt_state.tile_y = ((self.scy + self.ly) % 8) as usize;
-            self.pt_state.skip = (self.scx % 8) as u8;
-            self.pt_state.init_fetch = true;
+            let ly = self.ly as usize;
+            let scy = self.scy as usize;
+            let scx = self.scx as usize;
+            self.pt_state.code_addr = code_base_addr + (((((ly + scy) / 8) % 32) * 32) + ((scx / 8) % 32));
+            self.pt_state.tile_y = (scy + ly) % 8;
         }
 
-        if self.debug_thing { println!("PT cycle #{}", self.cycles) }
-
-        let mut deferred_latch = None;
-
         for _ in 0..4 {
-            self.pt_state.ppu_cycles += 1;
-
-            let mut pending_objs = self.obj_enabled && !self.scanline_objs.is_empty();
-            let mut next_obj_x = if pending_objs {
-                let (_, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
-                obj_x
-            } else { 0 };
-
-            if self.pt_state.x == 160 {
+            if self.pt_state.x == 168 {
                 break;
             }
 
-            let fetch_stall = self.pt_state.stall > 0;
-            if fetch_stall {
-                self.pt_state.stall -= 1;
+            self.pt_state.cycle_countdown -= 1;
+            if self.pt_state.cycle_countdown > 0 {
+                continue;
             }
 
-            if !fetch_stall {
-                if self.debug_thing { println!(" -> PT {:?}", self.pt_state.step) }
-                match self.pt_state.step {
-                    PixelTransferStep::FetchTile => {
-                        let tile = self.vram[self.pt_state.code_addr];
-                        self.pt_state.tile_addr = (if !self.bg_data_lo {
-                            (0x1000 + ((tile as u8 as i8 as i16) * 16)) as usize
-                        } else {
-                            ((tile as usize) * 16)
-                        }) + self.pt_state.tile_y * 2;
-                        self.pt_state.step = PixelTransferStep::FetchP0;
-                        self.pt_state.stall = 1;
-                    }
-                    PixelTransferStep::FetchP0 => {
-                        self.pt_state.p0 = self.vram[self.pt_state.tile_addr];
-                        self.pt_state.step = PixelTransferStep::FetchP1;
-                        self.pt_state.stall = 1;
-                    }
-                    PixelTransferStep::FetchP1 => {
-                        self.pt_state.p1 = self.vram[self.pt_state.tile_addr + 1];
-                        self.pt_state.stall = 1;
-
-                        if self.pt_state.init_fetch {
-                            // The first BG read is thrown away and we don't spend the extra 2 cycles in OBJ read.
-                            self.pt_state.init_fetch = false;
-                            self.pt_state.step = PixelTransferStep::FetchTile;
-
-                            if self.pt_state.in_win {
-                                let (pixels, _) = PPU::build_tile(self.pt_state.p0, self.vram[self.pt_state.tile_addr + 1], &self.bgp);
-                                self.pt_state.fifo.latch_bg(pixels);
-                                self.pt_state.code_addr = (self.pt_state.code_addr&!0x1F)|(((self.pt_state.code_addr+1)&0x1F));
-                            }
-                        } else {
-                            self.pt_state.step = PixelTransferStep::SpriteRead;
-                        }
-                    }
-                    PixelTransferStep::SpriteRead => {
-                        self.pt_state.bucket_stall = 5;
-
-                        // By only incrementing the bottom 5 bits of code_addr, it wraps on the 32 byte boundary of BG map.
-                        self.pt_state.code_addr = (self.pt_state.code_addr&!0x1F)|(((self.pt_state.code_addr+1)&0x1F));
-                        let (pixels, _) = PPU::build_tile(self.pt_state.p0, self.vram[self.pt_state.tile_addr + 1], &self.bgp);
-
-                        if self.pt_state.fifo.size != 0 {
-                            deferred_latch = Some(pixels);
-                        } else {
-                            self.pt_state.fifo.latch_bg(pixels);
-                        }
-
-                        // println!("Hmmm?! {} {} {} {}", pending_objs, self.pt_state.x, self.pt_state.fifo.size, next_obj_x);
-                        if pending_objs && self.pt_state.x + self.pt_state.fifo.size >= next_obj_x.saturating_sub(8) {
-                            // TODO:
-                            // self.pt_state.step = PixelTransferStep::ObjFetchTile;
-                            // self.pt_state.stall = 1;
-                            let (obj_idx, _) = self.scanline_objs[self.scanline_objs.len() - 1];
-                            let obj = self.read_oam_entry(obj_idx);
-                            let obj_y = if obj.vert_flip {
-                                (if self.obj_tall { 16 } else { 8 }) - (self.ly + 16 - (obj. y as u16)) as usize
-                            } else {
-                                (self.ly + 16 - (obj.y as u16)) as usize
-                            };
-                            self.pt_state.tile_addr = ((obj.code as usize) * 16) + obj_y * 2;
-                            self.pt_state.step = PixelTransferStep::ObjFetch0;
-                            self.pt_state.stall = 1;
-                        } else {
-                            self.pt_state.step = PixelTransferStep::FetchTile;
-                            self.pt_state.stall = 1;
-                        }
-                    }
-
-                    PixelTransferStep::ObjFetchTile => {
-                        let (obj_idx, _) = self.scanline_objs[self.scanline_objs.len() - 1];
-                        let obj = self.read_oam_entry(obj_idx);
-                        let obj_y = if obj.vert_flip {
-                            (if self.obj_tall { 16 } else { 8 }) - (self.ly + 16 - (obj. y as u16)) as usize
-                        } else {
-                            (self.ly + 16 - (obj.y as u16)) as usize
-                        };
-                        self.pt_state.tile_addr = ((obj.code as usize) * 16) + obj_y * 2;
-                        self.pt_state.step = PixelTransferStep::ObjFetch0;
-                        self.pt_state.stall = 1;
-                    }
-                    PixelTransferStep::ObjFetch0 => {
-                        self.pt_state.p0 = self.vram[self.pt_state.tile_addr];
-                        self.pt_state.step = PixelTransferStep::ObjBlend;
-
-                        let (obj_idx, _) = self.scanline_objs[self.scanline_objs.len() - 1];
-                        let obj = self.read_oam_entry(obj_idx);
-                        self.pt_state.stall = 5u8.saturating_sub(obj.x % 8).min(self.pt_state.bucket_stall);
-                        self.pt_state.bucket_stall -= self.pt_state.stall;
-                        println!("haha okay: {}", self.pt_state.stall);
-                    }
-                    PixelTransferStep::ObjBlend => {
-                        if self.pt_state.x != next_obj_x.saturating_sub(8) {
-                            panic!("Odd? {} {} {}", self.pt_state.fifo.size, next_obj_x, self.pt_state.x);
-                        }
-
-                        println!("Blending an OBJ broh.");
-
-                        let (obj_idx, _) = self.scanline_objs[self.scanline_objs.len() - 1];
-                        let obj = self.read_oam_entry(obj_idx);
-
-                        let mut lo = self.pt_state.p0;
-                        let mut hi = self.vram[self.pt_state.tile_addr + 1];
-
-                        if obj.horz_flip {
-                            // This insanity flips the order of the bits in each byte using dark sorcery.
-                            // http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
-                            lo = (((lo as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
-                            hi = (((hi as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
-                        }
-
-                        let palette = if obj.palette == 1 { &self.obp1 } else { &self.obp0 };
-                        let (pixels, _) = PPU::build_tile(lo, hi, palette);
-                        self.pt_state.fifo.latch_obj(pixels, !obj.priority);
-
-                        self.scanline_objs.pop();
-
-                        pending_objs = self.obj_enabled && !self.scanline_objs.is_empty();
-                        next_obj_x = if pending_objs {
-                            let (_, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
-                            obj_x
-                        } else { 0 };
-
-                        if pending_objs && self.pt_state.x + self.pt_state.fifo.size >= next_obj_x.saturating_sub(8) {
-                            // TODO:
-                            // self.pt_state.step = PixelTransferStep::ObjFetchTile;
-                            // self.pt_state.stall = 1;
-                            let (obj_idx, _) = self.scanline_objs[self.scanline_objs.len() - 1];
-                            let obj = self.read_oam_entry(obj_idx);
-                            let obj_y = if obj.vert_flip {
-                                (if self.obj_tall { 16 } else { 8 }) - (self.ly + 16 - (obj. y as u16)) as usize
-                            } else {
-                                (self.ly + 16 - (obj.y as u16)) as usize
-                            };
-                            self.pt_state.tile_addr = ((obj.code as usize) * 16) + obj_y * 2;
-                            self.pt_state.step = PixelTransferStep::ObjFetch0;
-                        } else {
-                            self.pt_state.step = PixelTransferStep::FetchTile;
-                        }
-                    }
+            if self.pt_state.fetch_obj {
+                let (obj_idx, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
+                let obj = self.read_oam_entry(obj_idx);
+                let obj_y = if obj.vert_flip {
+                    (if self.obj_tall { 16 } else { 8 }) - (self.ly + 16 - obj.y) as usize
+                } else {
+                    (self.ly + 16 - obj.y) as usize
+                };
+                let tile_addr = ((obj.code as usize) * 16) + obj_y * 2;
+                let palette = if obj.palette == 1 { &self.obp1 } else { &self.obp0 };
+                let mut lo = self.vram[tile_addr];
+                let mut hi = self.vram[tile_addr + 1];
+                if obj.horz_flip {
+                    // This insanity flips the order of the bits in each byte using dark sorcery.
+                    // http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
+                    lo = (((lo as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
+                    hi = (((hi as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
                 }
+                let obj_x = obj_x as usize;
+                Self::write_tile(&mut self.pt_state.scanline[obj_x..obj_x+8], lo, hi, palette);
+                self.scanline_objs.pop();
+                self.pt_state.fetch_obj = false;
+            } else {
+                // Fetch BG tile and write it into FIFO.
+                let tile = self.vram[self.pt_state.code_addr];
+                let tile_addr = (if !self.bg_data_lo {
+                    (0x1000 + ((tile as u8 as i8 as i16) * 16)) as usize
+                } else {
+                    ((tile as usize) * 16)
+                }) + self.pt_state.tile_y * 2;
+                let mut lo = self.vram[tile_addr];
+                let mut hi = self.vram[tile_addr + 1];
+                let x = self.pt_state.x as usize;
+                Self::write_tile(&mut self.pt_state.scanline[x+8..x+16], lo, hi, &self.bgp);
+                self.pt_state.x += 8;
+                self.pt_state.code_addr = (self.pt_state.code_addr&!0x1F)|(((self.pt_state.code_addr+1)&0x1F));
             }
 
-            self.pixel_push();
+            let mut pending_objs = self.obj_enabled && !self.scanline_objs.is_empty();
+            let mut next_obj_x = if pending_objs {
+                (self.scanline_objs[self.scanline_objs.len() - 1]).1
+            } else { 0 };
 
-            if let Some(pixels) = deferred_latch {
-                self.pt_state.fifo.latch_bg(pixels);
-                deferred_latch = None;
+            // Did we just cross over window boundary?
+            self.pt_state.cycle_countdown = 8;
+            if self.win_enabled && self.ly >= self.wy && self.pt_state.x >= self.wx && self.wx + 8 > self.pt_state.x {
+                self.pt_state.x = self.wx;
+                let code_base_addr = if self.win_code_hi { 0x1C00 } else { 0x1800 };
+                // TODO: gotta handle that weird window wrapping thing at 0xa6
+                let ly = self.ly as usize;
+                let wy = self.wy as usize;
+                self.pt_state.code_addr = code_base_addr + (((((ly-wy) / 8) % 32) * 32));
+                self.pt_state.tile_y = ((self.ly-self.wy) % 8) as usize;
+                self.pt_state.cycle_countdown = 6;
+            } else if pending_objs && self.pt_state.x >= next_obj_x {
+                self.pt_state.fetch_obj = true;
+                self.pt_state.cycle_countdown = 6;
             }
         }
 
-        if self.pt_state.x == 160 {
-            // if self.ly == 66 { println!("Scanline took {} 4mhz cycles", self.pt_state.ppu_cycles); }
+        if self.pt_state.x == 168 {
+            for (idx, pix) in self.pt_state.scanline[8..168].iter().enumerate() {
+                self.framebuffer[(self.ly as usize) * 160 + idx] = match pix {
+                    0 => { 255 }, 1 => { 100 }, 2 => { 50 }, 3 => { 0 },
+                    _ => unreachable!("Pixels are 2bpp")
+                };
+            }
 
             let hblank_cycles = 51+43 - self.cycles;
             self.next_state(HBlank(hblank_cycles));
@@ -558,33 +357,13 @@ impl <'cb> PPU<'cb> {
         }
     }
 
-    // Tile pixels are stored as 2 bytes which must be interleaved. Each pixel is 2 bit. The first byte
-    // contains the high bit for each pixel, and the second byte contains the low bits.
-    // Both the pixels and a mask are returned. The mask specifies which bits contain active pixels.
-    // The mask information is used by PixelFifo when blending OBJs.
-    // Finally, we apply the relevant palette transformation to each pixel. The palette can be either
-    // the BGP, OBP0 or OBP1 tables. An interesting thing to note here is that we specify the mask based
-    // on the original value. This means a pixel with value 00 is considered "transparent" or "not present", even
-    // if that pixel then maps to some other value via the palette.
-    fn build_tile(lo: u8, hi: u8, pal: &[u8; 4]) -> (u16, u16) {
-        let mut lo = lo as u16;
-        let mut hi = hi as u16;
-        let mut mask: u16 = 0;
-        let mut row: u16 = 0;
-
-        // Loop through each bit pair in lo+hi and interleave them. If the result is anything but zero
-        // we also set the mask.
-        hi <<= 1;
+    // TODO: document
+    fn write_tile(dst: &mut [u8], mut lo: u8, mut hi: u8, pal: &[u8; 4]) {
         for i in 0..8 {
-            let pix = (lo & 1) | (hi & 2);
+            let pix = (lo & 1) | ((hi & 1) << 1);
             lo >>= 1; hi >>= 1;
-            if pix > 0 {
-                mask |= 0b11 << (i*2);
-            }
-            row |= (pal[pix as usize] as u16) << (i * 2);
+            dst[7-i] = pal[pix as usize];
         }
-
-        (row, mask)
     }
 
     fn read_oam_entry(&self, n: u8) -> OAMEntry {
@@ -744,60 +523,6 @@ impl <'cb> PPU<'cb> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // #[test]
-    // fn build_tile() {
-    //     // Check that row and mask are built correctly.
-    //     let (row, mask) = PPU::build_tile(0b10101010, 0b10000001, &[0b00, 0b01, 0b10, 0b11]);
-    //     assert_eq!(row,  0b1100010001000110);
-    //     assert_eq!(mask, 0b1100110011001111);
-
-    //     // Check that palette transformation is done with correct mask.
-    //     let (row, mask) = PPU::build_tile(0b10101010, 0b10000001, &[0b11, 0b10, 0b01, 0b00]);
-    //     assert_eq!(row,  0b0011101110111001);
-    //     assert_eq!(mask, 0b1100110011001111);
-    // }
-
-    // // Test that basic push / pop is working correctly.
-    // #[test]
-    // fn fifo_push_pop() {
-    //     let mut fifo: PixelFifo = PixelFifo::new();
-
-    //     fifo.push_bg(0b00110100_00000000, 0);
-    //     assert_eq!(fifo.pop(), 0b00);
-    //     assert_eq!(fifo.pop(), 0b11);
-    //     assert_eq!(fifo.pop(), 0b01);
-    //     assert_eq!(fifo.pop(), 0b00);
-    //     // Actual fifo u32 shouldn't be needlessly shifted around when popping.
-    //     assert_eq!(fifo.fifo, 0b0011010000000000);
-    //     assert_eq!(fifo.size, 8);
-    // }
-
-    // // Test the behaviour when overlaying an OBJ onto some BG data.
-    // #[test]
-    // fn fifo_obj_blend() {
-    //     let mut fifo: PixelFifo = PixelFifo::new();
-
-    //     // Test how we blend an OBJ that has priority OVER the background.
-    //     //                      ↓↓    ↓↓ these BG pixels should be overridden by OBJ.
-    //     fifo.push_bg         (0b00_11_01_00_00000000, 0b00111100_00000000);
-    //     fifo.blend_obj       (0b10_00_11_00_00000000, 0b11001100_00000000, true);
-    //     assert_eq!(fifo.fifo, 0b10_11_11_00_00000000);
-
-    //     // Confirm that a subsequent OBJ with lower priority does not overwrite existing OBJ pixels.
-    //     //                      ↓↓ this pixel *should not* be overridden since a OBJ already drew there.
-    //     //                               ↓↓ this pixel *should* be overridden since an OBJ did not yet draw there.
-    //     fifo.blend_obj       (0b01_00_00_11_00000000, 0b11000011_00000000, true);
-    //     assert_eq!(fifo.fifo, 0b10_11_11_11_00000000);
-
-    //     // And now test blending an OBJ that does *not* have priority over the background.
-    //     let mut fifo: PixelFifo = PixelFifo::new();
-
-    //     //                            ↓↓ these BG pixels should be preserved.
-    //     fifo.push_bg         (0b00_11_01_00_00000000, 0b00111100_00000000);
-    //     fifo.blend_obj       (0b10_00_11_00_00000000, 0b11001100_00000000, false);
-    //     assert_eq!(fifo.fifo, 0b10_11_01_00_00000000);
-    // }
 
     #[test]
     fn test_scanline_pt_cycles_bg() {
