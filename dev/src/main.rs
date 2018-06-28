@@ -8,6 +8,7 @@ use std::env;
 use std::time::{Duration, Instant};
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::slice;
 
 use sdl2::audio::{AudioSpecDesired};
 use sdl2::pixels::PixelFormatEnum;
@@ -39,7 +40,7 @@ fn main() -> Result<()> {
     let mut canvas = window.into_canvas().build().unwrap();
     let texture_creator = canvas.texture_creator();
     let mut texture = texture_creator.create_texture_streaming(
-        PixelFormatEnum::RGB24, 160, 144).unwrap();
+        PixelFormatEnum::RGBA8888, 160, 144).unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
     let mut limit = false;
@@ -120,16 +121,11 @@ fn main() -> Result<()> {
             if now.elapsed().subsec_nanos() > 16666666 {
                 now = Instant::now();
 
-                texture.with_lock(None, |buffer: &mut [u8], pitch: usize| {
+                texture.with_lock(None, |buffer: &mut [u8], _: usize| {
                     let gb_buffer = gb_buffer.borrow();
-                    for y in 0..144 {
-                        for x in 0..160 {
-                            let offset = y*pitch + (x*3);
-                            buffer[offset] = gb_buffer[y*160+x] as u8;
-                            buffer[offset + 1] = gb_buffer[y*160+x] as u8;
-                            buffer[offset + 2] = gb_buffer[y*160+x] as u8;
-                        }
-                    }
+
+                    let buffer = unsafe { slice::from_raw_parts_mut(buffer.as_ptr() as *mut u32, 160*144) };
+                    buffer.copy_from_slice(&gb_buffer[..]);
                 }).unwrap();
 
                 canvas.clear();

@@ -264,7 +264,7 @@ impl <'cb> PPU<'cb> {
         if self.cycles == 1 {
             // TODO: explain this.
             self.pt_state.ppu_cycles = 0;
-            self.pt_state.cycle_countdown = 14;
+            self.pt_state.cycle_countdown = 12;
             self.pt_state.x = 8 - (self.scx % 8);
             self.pt_state.fetch_obj = false;
             self.pt_state.done = false;
@@ -313,6 +313,7 @@ impl <'cb> PPU<'cb> {
                 }
                 let obj_x = obj_x as usize;
                 Self::write_tile(&mut self.pt_state.scanline[obj_x..], &mut self.pt_state.scanline_prio[obj_x..], lo, hi, true, !obj.priority, palette);
+                if self.debug_thing { println!(" -> wrote OBJ tile @{}", obj_x) };
                 self.scanline_objs.pop();
                 self.pt_state.fetch_obj = false;
             } else if self.pt_state.x < 176 {
@@ -327,7 +328,7 @@ impl <'cb> PPU<'cb> {
                 let mut hi = self.vram[tile_addr + 1];
                 let x = self.pt_state.x as usize;
                 Self::write_tile(&mut self.pt_state.scanline[x..], &mut self.pt_state.scanline_prio[x..], lo, hi, false, false, &self.bgp);
-                if self.debug_thing { println!(" -> wrote {} tile {}", if self.pt_state.in_win { "Win" } else { "BG" }, self.pt_state.x) };
+                if self.debug_thing { println!(" -> wrote {} tile @{}", if self.pt_state.in_win { "Win" } else { "BG" }, self.pt_state.x) };
                 self.pt_state.x = (self.pt_state.x + 8).min(176);
                 self.pt_state.code_addr = (self.pt_state.code_addr&!0x1F)|(((self.pt_state.code_addr+1)&0x1F));
             }
@@ -364,11 +365,14 @@ impl <'cb> PPU<'cb> {
 
         if self.debug_thing { println!("PT cycle #{} over, PPU cycles: {} ({})", self.cycles, self.pt_state.ppu_cycles, self.pt_state.cycle_countdown); }
 
-        if self.pt_state.x >= 168 && self.pt_state.cycle_countdown == 0 && self.pt_state.done {
+        if self.pt_state.done {
             if self.debug_thing { println!("Done in {} PPU cycles", self.pt_state.ppu_cycles); }
             for (idx, pix) in self.pt_state.scanline[8..168].iter().enumerate() {
                 self.framebuffer[(self.ly as usize) * 160 + idx] = match pix {
-                    0 => { 255 }, 1 => { 100 }, 2 => { 50 }, 3 => { 0 },
+                    0 => { 0xE0F8D0FF },
+                    1 => { 0x88C070FF },
+                    2 => { 0x346856FF },
+                    3 => { 0x081820FF },
                     _ => unreachable!("Pixels are 2bpp")
                 };
             }
@@ -383,14 +387,6 @@ impl <'cb> PPU<'cb> {
         }
     }
 
-    // fn calculate_bg_code_addr(&self) -> usize {
-
-    // }
-
-    // fn calculate_win_code_addr(&self) -> usize {
-
-    // }
-
     // TODO: document
     fn write_tile(dst: &mut [u8], dst_prio: &mut[bool], mut lo: u8, mut hi: u8, sprite: bool, prio: bool, pal: &[u8; 4]) {
         for i in 0..8 {
@@ -400,13 +396,7 @@ impl <'cb> PPU<'cb> {
                 continue;
             }
             if sprite {
-                if pix == 0 { // 00 pixels in sprite are transparent
-                    continue;
-                }
-                if dst_prio[7-i] { // If destination pixel already has a sprite pixel we don't overwrite it
-                    continue;
-                }
-                if !prio && dst[7-i] > 0 {
+                if pix == 0 || dst_prio[7-i] || (!prio && dst[7-i] > 0) {
                     continue;
                 }
                 dst_prio[7-i] = true;
@@ -596,35 +586,36 @@ mod tests {
         };
 
         assert_eq!(43, test(0));
+        assert_eq!(44, test(1));
         assert_eq!(45, test(7));
         assert_eq!(43, test(8));
     }
 
     #[test]
     fn test_scanline_pt_cycles_window() {
-        // let test = |scx, wx| {
-        //     let cb = &mut |_: &[u32]| {};
-        //     let mut ppu = PPU::new(cb);
-        //     ppu.debug_thing = true;
-        //     ppu.wy = 66;
-        //     ppu.wx = wx;
-        //     ppu.ly = 66;
-        //     ppu.scx = scx;
-        //     ppu.enabled = true;
-        //     ppu.win_enabled = true;
-        //     for _ in 0..20 { ppu.advance(); }
-        //     assert_eq!(ppu.state, PPUState::PixelTransfer);
+        let test = |scx, wx| {
+            let cb = &mut |_: &[u32]| {};
+            let mut ppu = PPU::new(cb);
+            ppu.debug_thing = true;
+            ppu.wy = 66;
+            ppu.wx = wx;
+            ppu.ly = 66;
+            ppu.scx = scx;
+            ppu.enabled = true;
+            ppu.win_enabled = true;
+            for _ in 0..20 { ppu.advance(); }
+            assert_eq!(ppu.state, PPUState::PixelTransfer);
 
-        //     let mut cycles = 0;
-        //     while ppu.state == PPUState::PixelTransfer {
-        //         cycles += 1;
-        //         ppu.advance();
-        //     }
-        //     cycles
-        // };
+            let mut cycles = 0;
+            while ppu.state == PPUState::PixelTransfer {
+                cycles += 1;
+                ppu.advance();
+            }
+            cycles
+        };
 
         // assert_eq!(45, test(0, 7));
-        // assert_eq!(47, test(7, 7));
+        assert_eq!(47, test(7, 7));
         // assert_eq!(45, test(8, 7));
     }
 
@@ -674,5 +665,9 @@ mod tests {
         // assert_eq!(45, test(vec![0]));
         // assert_eq!(47, test(vec![0, 0]));
         // assert_eq!(48, test(vec![0, 0, 0]));
+        // assert_eq!(50, test(vec![0, 0, 0, 0]));
+        // assert_eq!(51, test(vec![0, 0, 0, 0, 0]));
+
+        // assert_eq!(48, test(vec![0, 8]));
     }
 }
