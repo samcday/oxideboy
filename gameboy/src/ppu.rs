@@ -13,8 +13,8 @@ pub enum PPUState {
 use self::PPUState::{*};
 
 struct PixelTransferState {
-    done: bool,
     ppu_cycles: u8,
+    cycle_budget: u8,
     cycle_countdown: u8,
     scanline: [u8; 176],
     scanline_prio: [bool; 176],
@@ -100,7 +100,7 @@ impl <'cb> PPU<'cb> {
             interrupt_oam: false, interrupt_hblank: false, interrupt_vblank: false, interrupt_lyc: false,
             vram: [0; 0x2000], oam: [0; 0xA0],
             pt_state: PixelTransferState {
-                done: false,
+                cycle_budget: 0,
                 ppu_cycles: 0,
                 cycle_countdown: 0,
                 fetch_obj: false,
@@ -263,11 +263,12 @@ impl <'cb> PPU<'cb> {
         // On the first cycle of this stage we ensure our state info is clean.
         if self.cycles == 1 {
             // TODO: explain this.
+            self.pt_state.cycle_budget = 172 + (self.scx % 8);
+
             self.pt_state.ppu_cycles = 0;
-            self.pt_state.cycle_countdown = 12;
+            self.pt_state.cycle_countdown = 14;
             self.pt_state.x = 8 - (self.scx % 8);
             self.pt_state.fetch_obj = false;
-            self.pt_state.done = false;
             self.pt_state.in_win = false;
 
             // TODO: we're latching the memory addr for BG code map reads here.
@@ -284,13 +285,13 @@ impl <'cb> PPU<'cb> {
 
         for _ in 0..4 {
             self.pt_state.ppu_cycles += 1;
+            if self.pt_state.ppu_cycles >= self.pt_state.cycle_budget {
+                break;
+            }
+
             self.pt_state.cycle_countdown -= 1;
             if self.pt_state.cycle_countdown > 0 {
                 continue;
-            }
-
-            if self.pt_state.done {
-                break;
             }
 
             if self.pt_state.fetch_obj {
@@ -338,16 +339,10 @@ impl <'cb> PPU<'cb> {
                 (self.scanline_objs[self.scanline_objs.len() - 1]).1
             } else { 0 };
 
-            if self.pt_state.x >= 168 && !pending_objs {
-                if self.debug_thing { println!("Flagging done @ {}", self.pt_state.ppu_cycles); }
-                self.pt_state.done = true;
-                self.pt_state.cycle_countdown = 6;
-                continue;
-            }
-
             // Did we just cross over window boundary?
             self.pt_state.cycle_countdown = 8;
             if self.win_enabled && self.ly >= self.wy && !self.pt_state.in_win && self.pt_state.x >= self.wx + 1 {
+                self.pt_state.cycle_budget += 6;
                 self.pt_state.in_win = true;
                 self.pt_state.x = self.wx + 1;
                 let code_base_addr = if self.win_code_hi { 0x1C00 } else { 0x1800 };
@@ -358,6 +353,7 @@ impl <'cb> PPU<'cb> {
                 self.pt_state.tile_y = ((self.ly-self.wy) % 8) as usize;
                 self.pt_state.cycle_countdown = 6;
             } else if pending_objs && self.pt_state.x >= next_obj_x + 8 {
+                self.pt_state.cycle_budget += 8 - (next_obj_x % 8);
                 self.pt_state.fetch_obj = true;
                 self.pt_state.cycle_countdown = 6;
             }
@@ -365,7 +361,7 @@ impl <'cb> PPU<'cb> {
 
         if self.debug_thing { println!("PT cycle #{} over, PPU cycles: {} ({})", self.cycles, self.pt_state.ppu_cycles, self.pt_state.cycle_countdown); }
 
-        if self.pt_state.done {
+        if self.pt_state.ppu_cycles >= self.pt_state.cycle_budget {
             if self.debug_thing { println!("Done in {} PPU cycles", self.pt_state.ppu_cycles); }
             for (idx, pix) in self.pt_state.scanline[8..168].iter().enumerate() {
                 self.framebuffer[(self.ly as usize) * 160 + idx] = match pix {
@@ -614,9 +610,9 @@ mod tests {
             cycles
         };
 
-        // assert_eq!(45, test(0, 7));
+        assert_eq!(45, test(0, 7));
         assert_eq!(47, test(7, 7));
-        // assert_eq!(45, test(8, 7));
+        assert_eq!(45, test(8, 7));
     }
 
     #[test]
@@ -644,26 +640,26 @@ mod tests {
             cycles
         };
 
-        // assert_eq!(45, test(vec![0]));
-        // assert_eq!(45, test(vec![1]));
-        // assert_eq!(45, test(vec![2]));
-        // assert_eq!(45, test(vec![3]));
-        // assert_eq!(44, test(vec![4]));
-        // assert_eq!(44, test(vec![5]));
-        // assert_eq!(44, test(vec![6]));
-        // assert_eq!(44, test(vec![7]));
-        // assert_eq!(45, test(vec![8]));
-        // assert_eq!(45, test(vec![9]));
-        // assert_eq!(45, test(vec![10]));
-        // assert_eq!(45, test(vec![11]));
-        // assert_eq!(44, test(vec![12]));
-        // assert_eq!(44, test(vec![13]));
-        // assert_eq!(44, test(vec![14]));
-        // assert_eq!(44, test(vec![15]));
-        // assert_eq!(45, test(vec![16]));
+        assert_eq!(45, test(vec![0]));
+        assert_eq!(45, test(vec![1]));
+        assert_eq!(45, test(vec![2]));
+        assert_eq!(45, test(vec![3]));
+        assert_eq!(44, test(vec![4]));
+        assert_eq!(44, test(vec![5]));
+        assert_eq!(44, test(vec![6]));
+        assert_eq!(44, test(vec![7]));
+        assert_eq!(45, test(vec![8]));
+        assert_eq!(45, test(vec![9]));
+        assert_eq!(45, test(vec![10]));
+        assert_eq!(45, test(vec![11]));
+        assert_eq!(44, test(vec![12]));
+        assert_eq!(44, test(vec![13]));
+        assert_eq!(44, test(vec![14]));
+        assert_eq!(44, test(vec![15]));
+        assert_eq!(45, test(vec![16]));
 
-        // assert_eq!(45, test(vec![0]));
-        // assert_eq!(47, test(vec![0, 0]));
+        assert_eq!(45, test(vec![0]));
+        assert_eq!(47, test(vec![0, 0]));
         // assert_eq!(48, test(vec![0, 0, 0]));
         // assert_eq!(50, test(vec![0, 0, 0, 0]));
         // assert_eq!(51, test(vec![0, 0, 0, 0, 0]));
