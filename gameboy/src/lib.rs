@@ -1143,10 +1143,7 @@ impl <'cb> CPU<'cb> {
             0x46 => Inst::LD8(Operand8::Reg(B), Operand8::Addr(HL)),
             0x47 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(A)),
             0x48 => Inst::LD8(Operand8::Reg(C), Operand8::Reg(B)),
-            0x49 => {
-                self.ppu.debug_thing = !self.ppu.debug_thing;
-                Inst::LD8(Operand8::Reg(C), Operand8::Reg(C))
-            },
+            0x49 => Inst::LD8(Operand8::Reg(C), Operand8::Reg(C)),
             0x4A => Inst::LD8(Operand8::Reg(C), Operand8::Reg(D)),
             0x4B => Inst::LD8(Operand8::Reg(C), Operand8::Reg(E)),
             0x4C => Inst::LD8(Operand8::Reg(C), Operand8::Reg(H)),
