@@ -347,7 +347,7 @@ impl <'cb> PPU<'cb> {
                 self.pt_state.cycle_countdown = 6;
             } else if pending_objs && self.pt_state.x >= next_obj_x + 8 {
                 self.pt_state.fetch_obj = true;
-                self.pt_state.cycle_countdown = 4;
+                self.pt_state.cycle_countdown = 6;
             }
         }
 
@@ -416,7 +416,7 @@ impl <'cb> PPU<'cb> {
     }
 
     pub fn read_oam(&self, addr: u16) -> u8 {
-        match self.state {
+        match self.prev_state {
             HBlank(_) | VBlank => self.oam[addr as usize],
             OAMSearch | PixelTransfer => 0xFF,
         }
