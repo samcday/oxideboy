@@ -1,7 +1,7 @@
 // TODO: how efficient is match expr in decode methods? Should we be using rust-phf instead?
 // TODO: how efficient is the mem addr matching in mem_read/mem_write functions?
 
-mod ppu;
+pub mod ppu;
 mod sound;
 
 use std::fmt;
@@ -450,7 +450,7 @@ pub struct CPU<'cb> {
     dma_request: bool,
     dma_active: bool,
     dma_from: u16,
-    dma_idx: u8,
+    dma_idx: usize,
 
     cart: Cartridge,
 
@@ -582,7 +582,7 @@ impl <'cb> CPU<'cb> {
 
         let addr = self.dma_from + (self.dma_idx as u16);
         let v = self.mem_get8(addr);
-        self.ppu.oam[self.dma_idx as usize] = v;
+        self.ppu.write_oam(self.dma_idx, v);
         self.dma_idx += 1;
         if self.dma_idx == 160 {
             self.dma_active = false;
@@ -816,7 +816,7 @@ impl <'cb> CPU<'cb> {
             0xA000 ... 0xBFFF => self.cart.ram()[(addr - 0xA000) as usize],
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
-            0xFE00 ... 0xFE9F => self.ppu.read_oam(addr - 0xFE00),
+            0xFE00 ... 0xFE9F => self.ppu.read_oam((addr - 0xFE00) as usize),
             0xFEA0 ... 0xFEFF => 0x00,
 
             0xFF00            => self.read_joypad(),
@@ -858,9 +858,9 @@ impl <'cb> CPU<'cb> {
             0xFF44            => self.ppu.ly as u8,
             0xFF45            => self.ppu.lyc as u8,
             0xFF46            => self.dma_reg,
-            0xFF47            => self.ppu.read_bgp(),
-            0xFF48            => self.ppu.read_obp0(),
-            0xFF49            => self.ppu.read_obp1(),
+            0xFF47            => self.ppu.bgp.to_u8(),
+            0xFF48            => self.ppu.obp0.to_u8(),
+            0xFF49            => self.ppu.obp1.to_u8(),
             0xFF4A            => self.ppu.wy as u8,
             0xFF4B            => self.ppu.wx as u8,
 
@@ -887,7 +887,7 @@ impl <'cb> CPU<'cb> {
             0xA000 ... 0xBFFF => { self.cart.write(addr, v); }
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v }
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v }
-            0xFE00 ... 0xFE9F => { self.ppu.write_oam(addr - 0xFE00, v) }
+            0xFE00 ... 0xFE9F => { self.ppu.write_oam((addr - 0xFE00) as usize, v) }
             0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
             0xFF01            => { self.sb = v; (self.serial_cb)(v); }
             0xFF02            => { self.write_sc(v) }
@@ -943,9 +943,9 @@ impl <'cb> CPU<'cb> {
             0xFF44            => { }                   // LY is readonly.
             0xFF45            => { self.ppu.lyc = v.into() }
             0xFF46            => { self.dma(v) }
-            0xFF47            => { self.ppu.write_bgp(v) }
-            0xFF48            => { self.ppu.write_obp0(v) }
-            0xFF49            => { self.ppu.write_obp1(v) }
+            0xFF47            => { self.ppu.bgp.from_u8(v) }
+            0xFF48            => { self.ppu.obp0.from_u8(v) }
+            0xFF49            => { self.ppu.obp1.from_u8(v) }
             0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; }
 
             0xFF4A            => { self.ppu.wy = v.into() },

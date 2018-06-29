@@ -1,6 +1,7 @@
+use std::slice;
+
 // TODO: restore bg_enabled support
 // TODO: investigate sprite vs BG priority issues
-const DEFAULT_PALETTE: [u8; 4] = [0, 1, 2, 3];
 
 // Models the 4 states the PPU can be in when it is active.
 #[derive(Clone, Debug, PartialEq)]
@@ -25,16 +26,80 @@ struct PixelTransferState {
     in_win: bool,
 }
 
-#[derive(Debug)]
-struct OAMEntry {
-    num: u8,
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct OAMEntry {
     y: u8,
     x: u8,
     code: u8,
-    palette: u8,
-    horz_flip: bool,
-    vert_flip: bool,
-    priority: bool,
+    attrs: u8,
+}
+
+#[derive(Copy, Clone)]
+pub struct TileEntry {
+    data: [[u8; 8]; 8]
+}
+impl TileEntry {
+    fn write(&self, dst: &mut [u8], dst_prio: &mut[bool], y: usize, sprite: bool, prio: bool, flip: bool, pal: &Palette) {
+        let mut each = |i, pix| {
+            if i >= dst.len() {
+                return;
+            }
+            if sprite {
+                if pix == 0 || dst_prio[i] || (!prio && dst[i] > 0) {
+                    return;
+                }
+                dst_prio[i] = true;
+            } else {
+                dst_prio[i] = false;
+            }
+            dst[i] = pal.entries[pix as usize];
+        };
+
+        if flip {
+            for (i, pix) in self.data[y].iter().rev().enumerate() {
+                each(i, *pix);
+            }
+        } else {
+            for (i, pix) in self.data[y].iter().enumerate() {
+                each(i, *pix);
+            }
+        }
+    }
+    fn write_byte(&mut self, pos: u16, mut v: u8) {
+        let lo = pos % 2 == 0;
+        for (_, pix) in self.data[(pos / 2) as usize].iter_mut().rev().enumerate() {
+            *pix &= if lo { !1 } else { !2 };
+            *pix |= if lo { v & 1 } else { (v & 1) << 1};
+            v >>= 1;
+        }
+    }
+    fn get_byte(&self, pos: u16) -> u8 {
+        let lo = pos % 2 == 0;
+        let mut byte = 0;
+        for (idx, pix) in self.data[(pos / 2) as usize].iter().enumerate() {
+            byte |= if lo { pix & 1 } else { (pix & 2) >> 1 } << (7-idx);
+        }
+        byte
+    }
+}
+
+impl OAMEntry {
+    fn priority(&self) -> bool {
+        self.attrs & 0x80 > 0
+    }
+
+    fn vert_flip(&self) -> bool {
+        self.attrs & 0x40 > 0
+    }
+
+    fn horz_flip(&self) -> bool {
+        self.attrs & 0x20 > 0
+    }
+
+    fn palette(&self) -> bool {
+        self.attrs & 0x10 > 0
+    }
 }
 
 pub struct PPU<'cb> {
@@ -49,9 +114,9 @@ pub struct PPU<'cb> {
     pub lyc: u8,
     pub wx: u8,
     pub wy: u8,
-    bgp: [u8; 4],
-    obp0: [u8; 4],
-    obp1: [u8; 4],
+    pub bgp: Palette,
+    pub obp0: Palette,
+    pub obp1: Palette,
 
     interrupt_oam: bool,
     interrupt_hblank: bool,
@@ -65,17 +130,18 @@ pub struct PPU<'cb> {
     bg_code_hi: bool,   // Toggles where we look for BG code data. true: 0x9C00-0x9FFF, false: 0x9800-0x9BFF
     bg_data_lo: bool,   // Toggles where we look for BG tile data. true: 0x8000-0x8FFF, false: 0x8800-0x97FF
 
-    obj_enabled: bool,  // Toggles display of OBJs on/off.
+    pub obj_enabled: bool,  // Toggles display of OBJs on/off.
     obj_tall: bool,     // If true, we're rendering 8x16 OBJs.
 
-    pub vram: [u8; 0x2000], // 0x8000 - 0x9FFF
-    pub oam: [u8; 0xA0],    // 0xFE00 - 0xFDFF
+    tiles: [TileEntry; 384],
+    vram: [u8; 0x2000],     // 0x8000 - 0x9FFF
+    oam: [OAMEntry; 40],    // 0xFE00 - 0xFDFF
 
-    scanline_objs: Vec<(u8, u8)>,
+    scanline_objs: Vec<(usize, u8)>,
 
     pt_state: PixelTransferState,
 
-    pub framebuffer: [u32; ::SCREEN_SIZE],
+    framebuffer: [u32; ::SCREEN_SIZE],
 
     if_: u8,
 
@@ -94,7 +160,8 @@ impl <'cb> PPU<'cb> {
             bg_enabled: false, bg_code_hi: false, bg_data_lo: false,
             obj_enabled: false, obj_tall: false,
             interrupt_oam: false, interrupt_hblank: false, interrupt_vblank: false, interrupt_lyc: false,
-            vram: [0; 0x2000], oam: [0; 0xA0],
+            tiles: [TileEntry{data: [[0; 8]; 8]}; 384],
+            vram: [0; 0x2000], oam: [Default::default(); 40],
             pt_state: PixelTransferState {
                 cycle_budget: 0,
                 ppu_cycles: 0,
@@ -214,22 +281,20 @@ impl <'cb> PPU<'cb> {
     }
 
     // Searches through the OAM table to find any OBJs that overlap the line we're currently drawing.
-    fn oam_search(&mut self) {
+    pub fn oam_search(&mut self) {
         self.scanline_objs.clear();
 
-        let mut idx = 0;
         let h = if self.obj_tall { 16 } else { 8 };
         let ly_bound = self.ly + 16;
 
-        while self.scanline_objs.len() < 10 && idx < 40 {
-            let y = self.read_obj_y(idx);
-            if ly_bound >= y && ly_bound < y + h {
-                let x = self.read_obj_x(idx);
-                if x < 168 {
-                    self.scanline_objs.push((idx, x));
-                }
+        for (idx, obj) in self.oam.iter().enumerate() {
+            if self.scanline_objs.len() == 10 {
+                break;
             }
-            idx += 1;
+
+            if ly_bound >= obj.y && ly_bound < obj.y + h && obj.x < 168 {
+                self.scanline_objs.push((idx, obj.x));
+            }
         }
 
         // Once the list is built, we ensure the elements are ordered by the OBJ x coord.
@@ -291,38 +356,32 @@ impl <'cb> PPU<'cb> {
 
             if self.pt_state.fetch_obj {
                 let (obj_idx, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
-                let obj = self.read_oam_entry(obj_idx);
-                let obj_y = if obj.vert_flip {
-                    (if self.obj_tall { 16 } else { 8 }) - (self.ly + 16 - obj.y) as usize
+                let obj = self.oam[obj_idx as usize];
+                let obj_y = if obj.vert_flip() {
+                    (if self.obj_tall { 15 } else { 7 }) - (self.ly + 16 - obj.y) as usize
                 } else {
                     (self.ly + 16 - obj.y) as usize
                 };
-                let tile_addr = ((obj.code as usize) * 16) + obj_y * 2;
-                let palette = if obj.palette == 1 { &self.obp1 } else { &self.obp0 };
-                let mut lo = self.vram[tile_addr];
-                let mut hi = self.vram[tile_addr + 1];
-                if obj.horz_flip {
-                    // This insanity flips the order of the bits in each byte using dark sorcery.
-                    // http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
-                    lo = (((lo as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
-                    hi = (((hi as u64) * 0x0202020202 & 0x010884422010) % 1023) as u8;
+                if obj_y == 8 {
+                    panic!("Oh fuck. {:?} {}", obj, self.ly);
                 }
+                let palette = if obj.palette() { &self.obp1 } else { &self.obp0 };
                 let obj_x = obj_x as usize;
-                Self::write_tile(&mut self.pt_state.scanline[obj_x..], &mut self.pt_state.scanline_prio[obj_x..], lo, hi, true, !obj.priority, palette);
+                self.tiles[obj.code as usize].write(
+                    &mut self.pt_state.scanline[obj_x..], &mut self.pt_state.scanline_prio[obj_x..], obj_y, true, !obj.priority(), obj.horz_flip(), palette
+                );
                 self.scanline_objs.pop();
                 self.pt_state.fetch_obj = false;
             } else if self.pt_state.x < 176 {
                 // Fetch BG tile and write it into FIFO.
                 let tile = self.vram[self.pt_state.code_addr];
-                let tile_addr = (if !self.bg_data_lo {
-                    (0x1000 + ((tile as u8 as i8 as i16) * 16)) as usize
+                let tile = if !self.bg_data_lo {
+                    (256 + (tile as u8 as i8 as i16)) as usize
                 } else {
-                    ((tile as usize) * 16)
-                }) + self.pt_state.tile_y * 2;
-                let mut lo = self.vram[tile_addr];
-                let mut hi = self.vram[tile_addr + 1];
+                    (tile as usize)
+                };
                 let x = self.pt_state.x as usize;
-                Self::write_tile(&mut self.pt_state.scanline[x..], &mut self.pt_state.scanline_prio[x..], lo, hi, false, false, &self.bgp);
+                self.tiles[tile].write(&mut self.pt_state.scanline[x..], &mut self.pt_state.scanline_prio[x..], self.pt_state.tile_y, false, false, false, &self.bgp);
                 self.pt_state.x = (self.pt_state.x + 8).min(176);
                 self.pt_state.code_addr = (self.pt_state.code_addr&!0x1F)|(((self.pt_state.code_addr+1)&0x1F));
             }
@@ -351,7 +410,6 @@ impl <'cb> PPU<'cb> {
             }
         }
 
-
         if self.pt_state.ppu_cycles >= self.pt_state.cycle_budget {
             for (idx, pix) in self.pt_state.scanline[8..168].iter().enumerate() {
                 self.framebuffer[(self.ly as usize) * 160 + idx] = match pix {
@@ -374,7 +432,7 @@ impl <'cb> PPU<'cb> {
     }
 
     // TODO: document
-    fn write_tile(dst: &mut [u8], dst_prio: &mut[bool], mut lo: u8, mut hi: u8, sprite: bool, prio: bool, pal: &[u8; 4]) {
+    fn write_tile(dst: &mut [u8], dst_prio: &mut[bool], mut lo: u8, mut hi: u8, sprite: bool, prio: bool, pal: &Palette) {
         for i in 0..8 {
             let pix = (lo & 1) | ((hi & 1) << 1);
             lo >>= 1; hi >>= 1;
@@ -389,56 +447,45 @@ impl <'cb> PPU<'cb> {
             } else {
                 dst_prio[7-i] = false;
             }
-            dst[7-i] = pal[pix as usize];
+            dst[7-i] = pal.entries[pix as usize];
         }
     }
 
-    fn read_oam_entry(&self, n: u8) -> OAMEntry {
-        let addr = (n * 4) as usize;
-        OAMEntry{
-            num: n,
-            y: self.oam[addr],
-            x: self.oam[addr + 1],
-            code: self.oam[addr + 2],
-            palette: (self.oam[addr + 3] & 0x10) >> 4,
-            horz_flip: self.oam[addr + 3] & 0x20 == 0x20,
-            vert_flip: self.oam[addr + 3] & 0x40 == 0x40,
-            priority: self.oam[addr + 3] & 0x80 == 0x80,
-        }
-    }
-
-    fn read_obj_x(&self, n: u8) -> u8 {
-        self.oam[(n * 4) as usize + 1]
-    }
-
-    fn read_obj_y(&self, n: u8) -> u8 {
-        self.oam[(n * 4) as usize]
-    }
-
-    pub fn read_oam(&self, addr: u16) -> u8 {
+    pub fn read_oam(&self, addr: usize) -> u8 {
         match self.prev_state {
-            HBlank(_) | VBlank => self.oam[addr as usize],
+            HBlank(_) | VBlank => (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr],
             OAMSearch | PixelTransfer => 0xFF,
         }
     }
 
-    pub fn write_oam(&mut self, addr: u16, v: u8) {
+    pub fn write_oam(&mut self, addr: usize, v: u8) {
         match self.state {
-            HBlank(_) | VBlank => { self.oam[addr as usize] = v },
+            HBlank(_) | VBlank => { (unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) })[addr] = v },
             OAMSearch | PixelTransfer => { },
         }
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
         match self.state {
-            OAMSearch | HBlank(_) | VBlank => self.vram[addr as usize],
+            OAMSearch | HBlank(_) | VBlank => {
+                if addr >= 0x1800 {
+                    self.vram[addr as usize]
+                } else {
+                    self.tiles[(addr / 16) as usize].get_byte(addr % 16)
+                }
+            }
             PixelTransfer => 0xFF,
         }
     }
 
     pub fn write_vram(&mut self, addr: u16, v: u8) {
         match self.state {
-            OAMSearch | HBlank(_) | VBlank => { self.vram[addr as usize] = v },
+            OAMSearch | HBlank(_) | VBlank => {
+                if addr >= 0x1800 {
+                    self.vram[addr as usize] = v;
+                } else {
+                    self.tiles[(addr / 16) as usize].write_byte(addr % 16, v) }
+                }
             PixelTransfer => { },
         }
     }
@@ -506,39 +553,6 @@ impl <'cb> PPU<'cb> {
         self.interrupt_lyc    = v & 0b0100_0000 > 0;
     }
 
-    pub fn read_bgp(&self) -> u8 {
-        self.bgp[0] | self.bgp[1] << 2 | self.bgp[2] << 4 | self.bgp[3] << 6
-    }
-
-    pub fn write_bgp(&mut self, v: u8) {
-        self.bgp[0] = v & 0b11;
-        self.bgp[1] = (v & 0b1100) >> 2;
-        self.bgp[2] = (v & 0b110000) >> 4;
-        self.bgp[3] = (v & 0b11000000) >> 6;
-    }
-
-    pub fn read_obp0(&self) -> u8 {
-        self.obp0[0] | self.obp0[1] << 2 | self.obp0[2] << 4 | self.obp0[3] << 6
-    }
-
-    pub fn write_obp0(&mut self, v: u8) {
-        self.obp0[0] = v & 0b11;
-        self.obp0[1] = (v & 0b1100) >> 2;
-        self.obp0[2] = (v & 0b110000) >> 4;
-        self.obp0[3] = (v & 0b11000000) >> 6;
-    }
-
-    pub fn read_obp1(&self) -> u8 {
-        self.obp1[0] | self.obp1[1] << 2 | self.obp1[2] << 4 | self.obp1[3] << 6
-    }
-
-    pub fn write_obp1(&mut self, v: u8) {
-        self.obp1[0] = v & 0b11;
-        self.obp1[1] = (v & 0b1100) >> 2;
-        self.obp1[2] = (v & 0b110000) >> 4;
-        self.obp1[3] = (v & 0b11000000) >> 6;
-    }
-
     pub fn dma_ok(&self) -> bool {
         match self.state {
             HBlank(_) | VBlank => true,
@@ -546,6 +560,21 @@ impl <'cb> PPU<'cb> {
         }
     }
 }
+
+#[derive(Copy, Clone)]
+pub struct Palette { entries: [u8; 4] }
+impl Palette {
+    pub fn to_u8(&self) -> u8 {
+        self.entries[0] | self.entries[1] << 2 | self.entries[2] << 4 | self.entries[3] << 6
+    }
+    pub fn from_u8(&mut self, v: u8) {
+        self.entries[0] =  v & 0b00000011;
+        self.entries[1] = (v & 0b00001100) >> 2;
+        self.entries[2] = (v & 0b00110000) >> 4;
+        self.entries[3] = (v & 0b11000000) >> 6;
+    }
+}
+const DEFAULT_PALETTE: Palette = Palette{entries: [0, 1, 2, 3]};
 
 #[cfg(test)]
 mod tests {
@@ -612,8 +641,8 @@ mod tests {
             ppu.enabled = true;
             ppu.obj_enabled = true;
             for (n, x) in sprites.iter().enumerate() {
-                ppu.oam[(n * 4) as usize + 1] = *x;
-                ppu.oam[(n * 4) as usize] = 66 + 16;
+                ppu.oam[n].x = *x;
+                ppu.oam[n].y = 66 + 16;
             }
             for _ in 0..20 { ppu.advance(); }
             assert_eq!(ppu.scanline_objs.len(), sprites.len());
