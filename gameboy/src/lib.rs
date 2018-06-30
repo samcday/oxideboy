@@ -489,10 +489,6 @@ impl <'cb> CPU<'cb> {
         return self.pc;
     }
 
-    pub fn is_vblank(&self) -> bool {
-        self.ppu.is_vblank()
-    }
-
     /// Runs the CPU for a whole "frame". A frame is exactly 17556 CPU cycles.
     /// This higher level abstraction over the CPU is useful for running the emulator at the correct speed.
     /// Instead of trying to execute the CPU at 1Mhz, you can execute this method at 59.7Hz.

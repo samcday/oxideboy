@@ -1,8 +1,5 @@
 use std::slice;
 
-// TODO: restore bg_enabled support
-// TODO: investigate sprite vs BG priority issues
-
 // Models the 4 states the PPU can be in when it is active.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PPUState {
@@ -20,7 +17,7 @@ struct PixelTransferState {
     scanline: [u8; 176],
     scanline_prio: [bool; 176],
     x: u8,
-    code_addr: usize,
+    tilemap_addr: usize,
     fetch_obj: bool,
     tile_y: usize,
     in_win: bool,
@@ -74,6 +71,8 @@ impl TileEntry {
     }
 }
 
+const EMPTY_TILE: TileEntry = TileEntry{data: [[0; 8]; 8]};
+
 impl OAMEntry {
     fn priority(&self) -> bool {
         self.attrs & 0x80 > 0
@@ -121,11 +120,11 @@ pub struct PPU<'cb> {
     bg_data_lo: bool,   // Toggles where we look for BG tile data. true: 0x8000-0x8FFF, false: 0x8800-0x97FF
 
     pub obj_enabled: bool,  // Toggles display of OBJs on/off.
-    obj_tall: bool,     // If true, we're rendering 8x16 OBJs.
+    obj_tall: bool,         // If true, we're rendering 8x16 OBJs.
 
-    tiles: [TileEntry; 384],
-    vram: [u8; 0x2000],     // 0x8000 - 0x9FFF
-    oam: [OAMEntry; 40],    // 0xFE00 - 0xFDFF
+    tiles: [TileEntry; 384], // 0x8000 - 0x97FF
+    tilemap: [u8; 2048],     // 0x9800 - 0x9FFF
+    oam: [OAMEntry; 40],     // 0xFE00 - 0xFDFF
 
     scanline_objs: Vec<(usize, u8)>,
 
@@ -151,13 +150,13 @@ impl <'cb> PPU<'cb> {
             obj_enabled: false, obj_tall: false,
             interrupt_oam: false, interrupt_hblank: false, interrupt_vblank: false, interrupt_lyc: false,
             tiles: [TileEntry{data: [[0; 8]; 8]}; 384],
-            vram: [0; 0x2000], oam: [Default::default(); 40],
+            tilemap: [0; 2048], oam: [Default::default(); 40],
             pt_state: PixelTransferState {
                 cycle_budget: 0,
                 ppu_cycles: 0,
                 cycle_countdown: 0,
                 fetch_obj: false,
-                code_addr: 0, tile_y: 0, x: 0,
+                tilemap_addr: 0, tile_y: 0, x: 0,
                 scanline: [0; 176], scanline_prio: [false; 176],
                 in_win: false,
             },
@@ -165,14 +164,6 @@ impl <'cb> PPU<'cb> {
             framebuffer: [0; 160*144],
             if_: 0,
             cb
-        }
-    }
-
-    pub fn is_vblank(&self) -> bool {
-        if let VBlank = self.state {
-            self.ly == 144 && self.cycles == 0
-        } else {
-            false
         }
     }
 
@@ -315,11 +306,11 @@ impl <'cb> PPU<'cb> {
 
             // TODO: we're latching the memory addr for BG code map reads here.
             // If SCX changes mid scanline what is supposed to happen?
-            let code_base_addr = if self.bg_code_hi { 0x1C00 } else { 0x1800 };
+            let code_base_addr = if self.bg_code_hi { 1024 } else { 0 };
             let ly = self.ly as usize;
             let scy = self.scy as usize;
             let scx = self.scx as usize;
-            self.pt_state.code_addr = code_base_addr + (((((ly + scy) / 8) % 32) * 32) + ((scx / 8) % 32));
+            self.pt_state.tilemap_addr = code_base_addr + (((((ly + scy) / 8) % 32) * 32) + ((scx / 8) % 32));
             self.pt_state.tile_y = (scy + ly) % 8;
 
             let mut stall_buckets = [0; 21];
@@ -360,17 +351,21 @@ impl <'cb> PPU<'cb> {
                 self.scanline_objs.pop();
                 self.pt_state.fetch_obj = false;
             } else if self.pt_state.x < 176 {
-                // Fetch BG tile and write it into FIFO.
-                let tile = self.vram[self.pt_state.code_addr];
-                let tile = if !self.bg_data_lo {
-                    (256 + (tile as u8 as i8 as i16)) as usize
-                } else {
-                    (tile as usize)
-                };
                 let x = self.pt_state.x as usize;
-                self.tiles[tile].write(&mut self.pt_state.scanline[x..], &mut self.pt_state.scanline_prio[x..], self.pt_state.tile_y, false, false, false, &self.bgp);
+                if self.bg_enabled {
+                    // Fetch BG tile and write it into FIFO.
+                    let tile = self.tilemap[self.pt_state.tilemap_addr];
+                    let tile = if !self.bg_data_lo {
+                        (256 + (tile as u8 as i8 as i16)) as usize
+                    } else {
+                        (tile as usize)
+                    };
+                    self.tiles[tile].write(&mut self.pt_state.scanline[x..], &mut self.pt_state.scanline_prio[x..], self.pt_state.tile_y, false, false, false, &self.bgp);
+                } else {
+                    EMPTY_TILE.write(&mut self.pt_state.scanline[x..], &mut self.pt_state.scanline_prio[x..], self.pt_state.tile_y, false, false, false, &self.bgp);
+                }
                 self.pt_state.x = (self.pt_state.x + 8).min(176);
-                self.pt_state.code_addr = (self.pt_state.code_addr&!0x1F)|(((self.pt_state.code_addr+1)&0x1F));
+                self.pt_state.tilemap_addr = (self.pt_state.tilemap_addr&!0x1F)|(((self.pt_state.tilemap_addr+1)&0x1F));
             }
 
             let mut pending_objs = self.obj_enabled && !self.scanline_objs.is_empty();
@@ -384,11 +379,11 @@ impl <'cb> PPU<'cb> {
                 self.pt_state.cycle_budget += 6;
                 self.pt_state.in_win = true;
                 self.pt_state.x = self.wx + 1;
-                let code_base_addr = if self.win_code_hi { 0x1C00 } else { 0x1800 };
+                let code_base_addr = if self.win_code_hi { 1024 } else { 0 };
                 // TODO: gotta handle that weird window wrapping thing at 0xa6
                 let ly = self.ly as usize;
                 let wy = self.wy as usize;
-                self.pt_state.code_addr = code_base_addr + (((((ly-wy) / 8) % 32) * 32));
+                self.pt_state.tilemap_addr = code_base_addr + (((((ly-wy) / 8) % 32) * 32));
                 self.pt_state.tile_y = ((self.ly-self.wy) % 8) as usize;
                 self.pt_state.cycle_countdown = 6;
             } else if pending_objs && self.pt_state.x >= next_obj_x + 8 {
@@ -418,26 +413,6 @@ impl <'cb> PPU<'cb> {
         }
     }
 
-    // TODO: document
-    fn write_tile(dst: &mut [u8], dst_prio: &mut[bool], mut lo: u8, mut hi: u8, sprite: bool, prio: bool, pal: &Palette) {
-        for i in 0..8 {
-            let pix = (lo & 1) | ((hi & 1) << 1);
-            lo >>= 1; hi >>= 1;
-            if 7 - i >= dst.len() {
-                continue;
-            }
-            if sprite {
-                if pix == 0 || dst_prio[7-i] || (!prio && dst[7-i] > 0) {
-                    continue;
-                }
-                dst_prio[7-i] = true;
-            } else {
-                dst_prio[7-i] = false;
-            }
-            dst[7-i] = pal.entries[pix as usize];
-        }
-    }
-
     pub fn read_oam(&self, addr: usize) -> u8 {
         match self.prev_state {
             HBlank(_) | VBlank => (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr],
@@ -456,7 +431,7 @@ impl <'cb> PPU<'cb> {
         match self.state {
             OAMSearch | HBlank(_) | VBlank => {
                 if addr >= 0x1800 {
-                    self.vram[addr as usize]
+                    self.tilemap[(addr - 0x1800) as usize]
                 } else {
                     self.tiles[(addr / 16) as usize].get_byte(addr % 16)
                 }
@@ -469,11 +444,11 @@ impl <'cb> PPU<'cb> {
         match self.state {
             OAMSearch | HBlank(_) | VBlank => {
                 if addr >= 0x1800 {
-                    self.vram[addr as usize] = v;
+                    self.tilemap[(addr - 0x1800) as usize] = v;
                 } else {
                     self.tiles[(addr / 16) as usize].write_byte(addr % 16, v) }
                 }
-            PixelTransfer => { },
+            PixelTransfer => {},
         }
     }
 
@@ -501,8 +476,10 @@ impl <'cb> PPU<'cb> {
         } else if !enabled && self.enabled {
             if let VBlank = self.state {
                 self.enabled = false;
-                // Clear the framebuffer to white.
-                unsafe { ::std::ptr::write_bytes(self.framebuffer.as_mut_ptr(), 255, self.framebuffer.len()); }
+                // Clear the framebuffer.
+                for pix in self.framebuffer.iter_mut() {
+                    *pix = 0xE0F8D0FF;
+                }
             } else {
                 panic!("Tried to disable LCD outside of VBlank");
             }
