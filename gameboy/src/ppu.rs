@@ -41,29 +41,19 @@ pub struct TileEntry {
 }
 impl TileEntry {
     fn write(&self, dst: &mut [u8], dst_prio: &mut[bool], y: usize, sprite: bool, prio: bool, flip: bool, pal: &Palette) {
-        let mut each = |i, pix| {
-            if i >= dst.len() {
-                return;
-            }
+        let mut tile_pos = if flip { 7 } else { 0 };
+        for i in 0..dst.len().min(8) {
+            let pix = self.data[y][tile_pos];
+            tile_pos = if flip { tile_pos - 1 } else { tile_pos + 1 };
             if sprite {
                 if pix == 0 || dst_prio[i] || (!prio && dst[i] > 0) {
-                    return;
+                    continue;
                 }
                 dst_prio[i] = true;
             } else {
                 dst_prio[i] = false;
             }
             dst[i] = pal.entries[pix as usize];
-        };
-
-        if flip {
-            for (i, pix) in self.data[y].iter().rev().enumerate() {
-                each(i, *pix);
-            }
-        } else {
-            for (i, pix) in self.data[y].iter().enumerate() {
-                each(i, *pix);
-            }
         }
     }
     fn write_byte(&mut self, pos: u16, mut v: u8) {
@@ -362,9 +352,6 @@ impl <'cb> PPU<'cb> {
                 } else {
                     (self.ly + 16 - obj.y) as usize
                 };
-                if obj_y == 8 {
-                    panic!("Oh fuck. {:?} {}", obj, self.ly);
-                }
                 let palette = if obj.palette() { &self.obp1 } else { &self.obp0 };
                 let obj_x = obj_x as usize;
                 self.tiles[obj.code as usize].write(
