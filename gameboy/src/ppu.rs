@@ -10,6 +10,13 @@ pub enum PPUState {
 }
 use self::PPUState::{*};
 
+const COLOR_MAPPING: [u32; 4] = [
+    0xE0F8D0FF,
+    0x88C070FF,
+    0x346856FF,
+    0x081820FF,
+];
+
 struct PixelTransferState {
     ppu_cycles: u16,
     cycle_budget: u16,
@@ -393,14 +400,10 @@ impl <'cb> PPU<'cb> {
         }
 
         if self.pt_state.ppu_cycles >= self.pt_state.cycle_budget {
-            for (idx, pix) in self.pt_state.scanline[8..168].iter().enumerate() {
-                self.framebuffer[(self.ly as usize) * 160 + idx] = match pix {
-                    0 => { 0xE0F8D0FF },
-                    1 => { 0x88C070FF },
-                    2 => { 0x346856FF },
-                    3 => { 0x081820FF },
-                    _ => unreachable!("Pixels are 2bpp")
-                };
+            let mut fb_pos = (self.ly as usize) * 160;
+            for i in 8..168 {
+                self.framebuffer[fb_pos] = COLOR_MAPPING[self.pt_state.scanline[i] as usize];
+                fb_pos += 1;
             }
 
             let hblank_cycles = 51+43 - self.cycles;
