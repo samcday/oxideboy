@@ -4,6 +4,13 @@ pub struct WaveRam {
     pub data: [u8; 16],
 }
 
+const DUTY_CYCLES: [[f32; 8]; 4] = [
+    [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0],
+    [1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0],
+    [1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0],
+    [-1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0],
+];
+
 impl WaveRam {
     fn get_step(&self, n: u8) -> f32 {
         (self.data[(n / 2) as usize] >> (n % 2 * 4) & 0b1111) as f32
@@ -34,6 +41,8 @@ pub struct SoundController<'cb> {
     sound1_env_steps: u8,
     sound1_freq: u16,
     sound1_counter: bool,
+    sound1_timer: u16,
+    sound1_pos: u8,                 // Position in the duty cycle, only lower 3 bits are used.
 
     // Tone voice
     sound2_on: bool,
@@ -77,6 +86,8 @@ impl <'cb> SoundController<'cb> {
             sound1_env_val: 0, sound1_env_inc: false, sound1_env_steps: 0,
             sound1_freq: 0,
             sound1_counter: false,
+            sound1_timer: 0,
+            sound1_pos: 0,
 
             // Tone voice
             sound2_on: false, sound2_left: false, sound2_right: false,
@@ -101,7 +112,6 @@ impl <'cb> SoundController<'cb> {
         if !self.enabled {
             return;
         }
-        return;
 
         self.timer += 1;
         if self.timer == 2048 {
@@ -116,6 +126,14 @@ impl <'cb> SoundController<'cb> {
             }
             if self.frame_seq_timer % 4 == 3 {
                 self.sweep_clock();
+            }
+        }
+
+        if self.sound1_on {
+            self.sound1_timer += 4;
+            if (self.sound1_timer / 16) >= (2048 - self.sound1_freq) {
+                self.sound1_pos = self.sound1_pos.wrapping_add(1);
+                self.sound1_timer = 0;
             }
         }
 
@@ -139,8 +157,9 @@ impl <'cb> SoundController<'cb> {
         let mut r = 0.0;
 
         if self.sound1_on {
-            l = 0.0;
-            r = 0.0;
+            let val = DUTY_CYCLES[self.sound1_duty as usize][(self.sound1_pos & 7) as usize] * 0.25;
+            l = val;
+            r = val;
         }
 
         // if self.sound3_on {
@@ -154,6 +173,13 @@ impl <'cb> SoundController<'cb> {
     }
 
     fn length_clock(&mut self) {
+        if self.sound1_on && self.sound1_counter {
+            self.sound1_length -= 1;
+            if self.sound1_length == 0 {
+                self.sound1_on = false;
+            }
+        }
+
         if self.sound3_on && self.sound3_counter {
             self.sound3_length -= 1;
             if self.sound3_length == 0 {

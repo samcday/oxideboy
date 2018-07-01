@@ -43,7 +43,7 @@ fn main() -> Result<()> {
         PixelFormatEnum::RGBA8888, 160, 144).unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    let mut limit = false;
+    let mut limit = true;
     let mut ratelimit = ratelimit::Builder::new()
         .capacity(1).quantum(1)
         .interval(Duration::new(0, 16660000))
@@ -53,15 +53,24 @@ fn main() -> Result<()> {
 
     let gb_buffer = Rc::new(RefCell::new([0; gameboy::SCREEN_SIZE]));
 
+    let sample_queue = Rc::new(RefCell::new(Vec::new()));
+
     let cb_gb_buffer = Rc::clone(&gb_buffer);
+    let video_cb_audio_device = Rc::clone(&audio_device);
+    let video_cb_sample_queue = Rc::clone(&sample_queue);
     let mut video_cb = move |buf: &[u32]| {
+        // video_cb_sample_queue.borrow_mut().clear();
         cb_gb_buffer.borrow_mut().copy_from_slice(buf);
+        // video_cb_audio_device.borrow_mut().clear();
+        println!("Woot: {}", video_cb_audio_device.borrow().size());
+        video_cb_audio_device.borrow_mut().queue(&video_cb_sample_queue.borrow()[..]);
+        video_cb_sample_queue.borrow_mut().clear();
     };
 
-    let cb_audio_device = Rc::clone(&audio_device);
+    let sound_cb_sample_queue = Rc::clone(&sample_queue);
     let mut sound_cb = move |(l, r)| {
-        cb_audio_device.borrow_mut().clear();
-        cb_audio_device.borrow_mut().queue(&[l, r]);
+        sound_cb_sample_queue.borrow_mut().push(l);
+        sound_cb_sample_queue.borrow_mut().push(r);
     };
 
     let mut serial_cb = |sb| {
@@ -140,7 +149,6 @@ fn main() -> Result<()> {
     }
 
     println!();
-    println!("Sigh: {}", gameboy.pc());
     println!("Executed a total of {} clock cycles", gameboy.cycle_count);
     println!();
 
