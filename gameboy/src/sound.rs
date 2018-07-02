@@ -1,8 +1,5 @@
 const SAMPLE_RATE: f64 = 44100.0;  // TODO: configurable?
 
-pub struct WaveRam {
-    pub data: [u8; 16],
-}
 
 const DUTY_CYCLES: [[f32; 8]; 4] = [
     [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0],
@@ -10,12 +7,6 @@ const DUTY_CYCLES: [[f32; 8]; 4] = [
     [1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0],
     [-1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0],
 ];
-
-impl WaveRam {
-    fn get_step(&self, n: u8) -> f32 {
-        (self.data[(n / 2) as usize] >> (n % 2 * 4) & 0b1111) as f32
-    }
-}
 
 pub struct SoundController<'cb> {
     sample_cycles: f64,
@@ -48,6 +39,13 @@ pub struct SoundController<'cb> {
     sound2_on: bool,
     sound2_left: bool,
     sound2_right: bool,
+    sound2_length: u8,
+    sound2_duty: u8,
+    sound2_env_val: u8,
+    sound2_env_inc: bool,
+    sound2_env_steps: u8,
+    sound2_freq: u16,
+    sound2_counter: bool,
 
     // Wave voice
     sound3_on: bool,
@@ -65,8 +63,26 @@ pub struct SoundController<'cb> {
     sound4_on: bool,
     sound4_left: bool,
     sound4_right: bool,
+    sound4_length: u8,
+    sound4_env_val: u8,
+    sound4_env_inc: bool,
+    sound4_env_steps: u8,
+    sound4_div_ratio: u8,
+    sound4_poly_steps: bool,
+    sound4_poly_freq: u8,
+    sound4_counter: bool,
 
     cb: &'cb mut FnMut((f32, f32)),
+}
+
+pub struct WaveRam {
+    pub data: [u8; 16],
+}
+
+impl WaveRam {
+    fn get_step(&self, n: u8) -> f32 {
+        (self.data[(n / 2) as usize] >> (n % 2 * 4) & 0b1111) as f32
+    }
 }
 
 impl <'cb> SoundController<'cb> {
@@ -91,6 +107,11 @@ impl <'cb> SoundController<'cb> {
 
             // Tone voice
             sound2_on: false, sound2_left: false, sound2_right: false,
+            sound2_length: 0,
+            sound2_duty: 0,
+            sound2_env_val: 0, sound2_env_inc: false, sound2_env_steps: 0,
+            sound2_freq: 0,
+            sound2_counter: false,
 
             // Wave voice
             sound3_on: false, sound3_left: false, sound3_right: false,
@@ -104,6 +125,13 @@ impl <'cb> SoundController<'cb> {
 
             // Noise voice
             sound4_on: false, sound4_left: false, sound4_right: false,
+            sound4_length: 0,
+            sound4_env_val: 0, sound4_env_inc: false, sound4_env_steps: 0,
+            sound4_div_ratio: 0,
+            sound4_poly_steps: false,
+            sound4_poly_freq: 0,
+            sound4_counter: false,
+
             cb,
         }
     }
@@ -200,7 +228,7 @@ impl <'cb> SoundController<'cb> {
         if !self.enabled {
             return 0;
         }
-        0
+        0x80
             | self.sound1_sweep_num
             | if self.sound1_sweep_sub { 0b0000_1000 } else { 0 }
             | self.sound1_sweep_time << 5
@@ -216,7 +244,7 @@ impl <'cb> SoundController<'cb> {
     }
 
     pub fn read_nr11(&self) -> u8 {
-        if self.enabled { self.sound1_duty << 6 } else { 0 }
+        if self.enabled { 0x3F | self.sound1_duty << 6 } else { 0 }
     }
 
     pub fn write_nr11(&mut self, v: u8) {
@@ -247,7 +275,7 @@ impl <'cb> SoundController<'cb> {
     }
 
     pub fn read_nr13(&self) -> u8 {
-        if self.enabled { self.sound1_freq as u8 } else { 0 }
+        0xFF
     }
 
     pub fn write_nr13(&mut self, v: u8) {
@@ -255,7 +283,7 @@ impl <'cb> SoundController<'cb> {
     }
 
     pub fn read_nr14(&self) -> u8 {
-        if self.enabled & self.sound1_counter { 0b0100_0000 } else { 0 }
+        if self.enabled && self.sound1_counter { 0xBF | 0b0100_0000 } else { 0xBF }
     }
 
     pub fn write_nr14(&mut self, v: u8) {
@@ -267,8 +295,60 @@ impl <'cb> SoundController<'cb> {
         self.sound1_on      = v & 0b1000_0000 > 0;
     }
 
+    pub fn read_nr21(&self) -> u8 {
+        if self.enabled { 0x3F | self.sound2_duty << 6 } else { 0x3F }
+    }
+
+    pub fn write_nr21(&mut self, v: u8) {
+        if !self.enabled {
+            return;
+        }
+        self.sound2_length = v & 0b0011_1111;
+        self.sound2_duty   = v & 0b1100_0000 >> 6;
+    }
+
+    pub fn read_nr22(&self) -> u8 {
+        if !self.enabled {
+            return 0;
+        }
+        0
+            | self.sound2_env_steps
+            | if self.sound2_env_inc { 0b0000_1000 } else { 0 }
+            | self.sound2_env_val << 4
+    }
+
+    pub fn write_nr22(&mut self, v: u8) {
+        if !self.enabled {
+            return;
+        }
+        self.sound2_env_steps = v & 0b0000_0111;
+        self.sound2_env_inc   = v & 0b0000_1000 > 0;
+        self.sound2_env_steps = v & 0b1111_0000 >> 4;
+    }
+
+    pub fn read_nr23(&self) -> u8 {
+        0xFF
+    }
+
+    pub fn write_nr23(&mut self, v: u8) {
+        self.sound2_freq = (self.sound2_freq & 0x700) | (v as u16);
+    }
+
+    pub fn read_nr24(&self) -> u8 {
+        if self.enabled & self.sound2_counter { 0xBF | 0b0100_0000 } else { 0xBF }
+    }
+
+    pub fn write_nr24(&mut self, v: u8) {
+        if !self.enabled {
+            return;
+        }
+        self.sound2_freq = (self.sound2_freq & 0xFF) | (((v & 0b111) as u16) << 8);
+        self.sound2_counter = v & 0b0100_0000 > 0;
+        self.sound2_on      = v & 0b1000_0000 > 0;
+    }
+
     pub fn read_nr30(&self) -> u8 {
-        if self.enabled && self.sound3_on { 0b1000_0000 } else { 0 }
+        if self.enabled && self.sound3_on { 0x7F | 0b1000_0000 } else { 0x7F }
     }
 
     pub fn write_nr30(&mut self, v: u8) {
@@ -279,10 +359,7 @@ impl <'cb> SoundController<'cb> {
     }
 
     pub fn read_nr31(&self) -> u8 {
-        if !self.enabled {
-            return 0;
-        }
-        self.sound3_length
+        0xFF
     }
 
     pub fn write_nr31(&mut self, v: u8) {
@@ -296,7 +373,7 @@ impl <'cb> SoundController<'cb> {
         if !self.enabled {
             return 0;
         }
-        self.sound3_level << 5
+        0x9F | (self.sound3_level << 5)
     }
 
     pub fn write_nr32(&mut self, v: u8) {
@@ -307,8 +384,7 @@ impl <'cb> SoundController<'cb> {
     }
 
     pub fn read_nr33(&self) -> u8 {
-        // Manual says this is write only.
-        0
+        0xFF
     }
 
     pub fn write_nr33(&mut self, v: u8) {
@@ -320,7 +396,7 @@ impl <'cb> SoundController<'cb> {
 
     pub fn read_nr34(&self) -> u8 {
         // Manual says only readable bit is continuous selection flag.
-        return if self.enabled && !self.sound3_counter { 0b0100_0000 } else { 0 };
+        if self.enabled && self.sound3_counter { 0xBF | 0b0100_0000 } else { 0xBF }
     }
 
     pub fn write_nr34(&mut self, v: u8) {
@@ -335,6 +411,67 @@ impl <'cb> SoundController<'cb> {
             self.sound3_timer = 0;
             self.sound3_pos = 0;
         }
+    }
+
+    pub fn read_nr41(&self) -> u8 {
+        0xFF
+    }
+
+    pub fn write_nr41(&mut self, v: u8) {
+        if !self.enabled {
+            return;
+        }
+        self.sound4_length = v & 0b0011_1111;
+    }
+
+    pub fn read_nr42(&self) -> u8 {
+        if !self.enabled {
+            return 0;
+        }
+        0
+            | self.sound4_env_steps
+            | if self.sound4_env_inc { 0b0000_1000 } else { 0 }
+            | self.sound4_env_val << 4
+    }
+
+    pub fn write_nr42(&mut self, v: u8) {
+        if !self.enabled {
+            return;
+        }
+        self.sound4_env_steps = v & 0b0000_0111;
+        self.sound4_env_inc   = v & 0b0000_1000 > 0;
+        self.sound4_env_steps = v & 0b1111_0000 >> 4;
+    }
+
+    pub fn read_nr43(&self) -> u8 {
+        if !self.enabled {
+            return 0;
+        }
+        0
+            | self.sound4_div_ratio
+            | if self.sound4_poly_steps { 0b0000_1000 } else { 0 }
+            | self.sound4_poly_freq << 4
+    }
+
+    pub fn write_nr43(&mut self, v: u8) {
+        if !self.enabled {
+            return;
+        }
+        self.sound4_div_ratio  = v & 0b0000_0111;
+        self.sound4_poly_steps = v & 0b0000_1000 > 0;
+        self.sound4_poly_freq = (v & 0b1111_0000) >> 4;
+    }
+
+    pub fn read_nr44(&self) -> u8 {
+        if self.enabled && self.sound4_counter { 0xBF | 0b0100_0000 } else { 0xBF }
+    }
+
+    pub fn write_nr44(&mut self, v: u8) {
+        if !self.enabled {
+            return;
+        }
+        self.sound4_counter = v & 0b0100_0000 > 0;
+        self.sound4_on      = v & 0b1000_0000 > 0;
     }
 
     pub fn read_nr50(&self) -> u8 {

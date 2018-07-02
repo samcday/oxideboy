@@ -59,10 +59,8 @@ fn main() -> Result<()> {
     let video_cb_audio_device = Rc::clone(&audio_device);
     let video_cb_sample_queue = Rc::clone(&sample_queue);
     let mut video_cb = move |buf: &[u32]| {
-        // video_cb_sample_queue.borrow_mut().clear();
         cb_gb_buffer.borrow_mut().copy_from_slice(buf);
-        // video_cb_audio_device.borrow_mut().clear();
-        println!("Woot: {}", video_cb_audio_device.borrow().size());
+        video_cb_audio_device.borrow_mut().clear();
         video_cb_audio_device.borrow_mut().queue(&video_cb_sample_queue.borrow()[..]);
         video_cb_sample_queue.borrow_mut().clear();
     };
