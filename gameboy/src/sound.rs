@@ -34,6 +34,7 @@ struct VolumeEnvelope {
     val: u8,
     inc: bool,
     steps: u8,
+    counter: u8,
 }
 
 impl VolumeEnvelope {
@@ -48,6 +49,25 @@ impl VolumeEnvelope {
             | self.steps
             | if self.inc { 0b0000_1000 } else { 0 }
             | (self.val << 4)
+    }
+
+    fn clock(&mut self) -> bool {
+        if self.steps == 0 {
+            return false;
+        }
+        self.counter += 1;
+        if self.counter == self.steps {
+            self.counter = 0;
+            if self.inc {
+                self.val = (self.val + 1).min(15);
+            } else {
+                self.val = self.val.saturating_sub(1);
+                if self.val == 0 {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -140,6 +160,7 @@ impl <'cb> SoundController<'cb> {
             return;
         }
 
+        // TODO: timer is supposed to keep ticking even when sound hardware is off
         self.timer += 1;
         if self.timer == 2048 {
             self.timer = 0;
@@ -233,8 +254,16 @@ impl <'cb> SoundController<'cb> {
         }
     }
 
-    fn vol_env_clock(&self) {
-
+    fn vol_env_clock(&mut self) {
+        if self.channel1.vol_env.clock() {
+            self.channel1.on = false;
+        }
+        if self.channel2.vol_env.clock() {
+            self.channel2.on = false;
+        }
+        if self.channel4.vol_env.clock() {
+            self.channel4.on = false;
+        }
     }
 
     fn sweep_clock(&self) {
@@ -525,8 +554,6 @@ impl <'cb> SoundController<'cb> {
         // Turning off sound controller turns off all voices.
         if !self.enabled {
             self.sample_cycles = 0.0;
-            self.timer = 0;
-            self.frame_seq_timer = 0;
             self.channel1 = Default::default();
             self.channel2 = Default::default();
             self.channel3 = Default::default();
@@ -535,6 +562,8 @@ impl <'cb> SoundController<'cb> {
             self.left_vin = false;
             self.right_vol = 0;
             self.right_vin = false;
+        } else {
+            self.frame_seq_timer = 0;
         }
     }
 }
