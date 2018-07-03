@@ -84,7 +84,7 @@ struct Channel3 {
     on: bool,
     left: bool,
     right: bool,
-    length: u8,
+    length: u16,
     level: u8,
     freq: u16,
     counter: bool,
@@ -147,12 +147,12 @@ impl <'cb> SoundController<'cb> {
             if self.frame_seq_timer % 2 == 1 {
                 self.length_clock();
             }
+            if self.frame_seq_timer % 4 == 3 {
+                self.sweep_clock();
+            }
             if self.frame_seq_timer == 8 {
                 self.vol_env_clock();
                 self.frame_seq_timer = 0;
-            }
-            if self.frame_seq_timer % 4 == 3 {
-                self.sweep_clock();
             }
         }
 
@@ -200,17 +200,35 @@ impl <'cb> SoundController<'cb> {
     }
 
     fn length_clock(&mut self) {
-        if self.channel1.on && self.channel1.counter {
-            self.channel1.length -= 1;
-            if self.channel1.length == 0 {
+        if self.channel1.counter {
+            self.channel1.length += 1;
+            if self.channel1.length == 64 {
                 self.channel1.on = false;
+                self.channel1.length = 0;
             }
         }
 
-        if self.channel3.on && self.channel3.counter {
-            self.channel3.length -= 1;
-            if self.channel3.length == 0 {
+        if self.channel2.counter {
+            self.channel2.length += 1;
+            if self.channel2.length == 64 {
+                self.channel2.on = false;
+                self.channel2.length = 0;
+            }
+        }
+
+        if self.channel3.counter {
+            self.channel3.length += 1;
+            if self.channel3.length == 255 {
                 self.channel3.on = false;
+                self.channel3.length = 0;
+            }
+        }
+
+        if self.channel4.counter {
+            self.channel4.length += 1;
+            if self.channel4.length == 64 {
+                self.channel4.on = false;
+                self.channel4.length = 0;
             }
         }
     }
@@ -280,7 +298,9 @@ impl <'cb> SoundController<'cb> {
         }
         self.channel1.freq = (self.channel1.freq & 0xFF) | (((v & 0b111) as u16) << 8);
         self.channel1.counter = v & 0b0100_0000 > 0;
-        self.channel1.on      = v & 0b1000_0000 > 0;
+        if v & 0b1000_0000 > 0 {
+            self.channel1.on = true;
+        }
     }
 
     pub fn read_nr21(&self) -> u8 {
@@ -324,7 +344,10 @@ impl <'cb> SoundController<'cb> {
         }
         self.channel2.freq = (self.channel2.freq & 0xFF) | (((v & 0b111) as u16) << 8);
         self.channel2.counter = v & 0b0100_0000 > 0;
-        self.channel2.on      = v & 0b1000_0000 > 0;
+
+        if v & 0b1000_0000 > 0 {
+            self.channel2.on = true;
+        }
     }
 
     pub fn read_nr30(&self) -> u8 {
@@ -335,7 +358,9 @@ impl <'cb> SoundController<'cb> {
         if !self.enabled {
             return;
         }
-        self.channel3.on = v & 0b1000_0000 > 0;
+        if v & 0b1000_0000 > 0 {
+            self.channel3.on = true;
+        }
     }
 
     pub fn read_nr31(&self) -> u8 {
@@ -346,7 +371,7 @@ impl <'cb> SoundController<'cb> {
         if !self.enabled {
             return;
         }
-        self.channel3.length = v;
+        self.channel3.length = v as u16;
     }
 
     pub fn read_nr32(&self) -> u8 {
@@ -437,7 +462,9 @@ impl <'cb> SoundController<'cb> {
             return;
         }
         self.channel4.counter = v & 0b0100_0000 > 0;
-        self.channel4.on      = v & 0b1000_0000 > 0;
+        if v & 0b1000_0000 > 0 {
+            self.channel4.on = true;
+        }
     }
 
     pub fn read_nr50(&self) -> u8 {
