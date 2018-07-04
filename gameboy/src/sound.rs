@@ -51,6 +51,10 @@ impl VolumeEnvelope {
             | (self.val << 4)
     }
 
+    fn is_zero(&self) -> bool {
+        self.steps > 0 && !self.inc && self.val == 0
+    }
+
     fn clock(&mut self) -> bool {
         if self.steps == 0 {
             return false;
@@ -307,6 +311,9 @@ impl <'cb> SoundController<'cb> {
             return;
         }
         self.channel1.vol_env.from_u8(v);
+        if self.channel1.vol_env.is_zero() {
+            self.channel1.on = false;
+        }
     }
 
     pub fn read_nr13(&self) -> u8 {
@@ -327,7 +334,7 @@ impl <'cb> SoundController<'cb> {
         }
         self.channel1.freq = (self.channel1.freq & 0xFF) | (((v & 0b111) as u16) << 8);
         self.channel1.counter = v & 0b0100_0000 > 0;
-        if v & 0b1000_0000 > 0 {
+        if v & 0b1000_0000 > 0 && !self.channel1.vol_env.is_zero() {
             self.channel1.on = true;
         }
     }
@@ -353,6 +360,9 @@ impl <'cb> SoundController<'cb> {
             return;
         }
         self.channel2.vol_env.from_u8(v);
+        if self.channel2.vol_env.is_zero() {
+            self.channel2.on = false;
+        }
     }
 
     pub fn read_nr23(&self) -> u8 {
@@ -374,7 +384,7 @@ impl <'cb> SoundController<'cb> {
         self.channel2.freq = (self.channel2.freq & 0xFF) | (((v & 0b111) as u16) << 8);
         self.channel2.counter = v & 0b0100_0000 > 0;
 
-        if v & 0b1000_0000 > 0 {
+        if v & 0b1000_0000 > 0 && !self.channel2.vol_env.is_zero() {
             self.channel2.on = true;
         }
     }
@@ -464,6 +474,9 @@ impl <'cb> SoundController<'cb> {
             return;
         }
         self.channel4.vol_env.from_u8(v);
+        if self.channel4.vol_env.is_zero() {
+            self.channel4.on = false;
+        }
     }
 
     pub fn read_nr43(&self) -> u8 {
@@ -491,7 +504,7 @@ impl <'cb> SoundController<'cb> {
             return;
         }
         self.channel4.counter = v & 0b0100_0000 > 0;
-        if v & 0b1000_0000 > 0 {
+        if v & 0b1000_0000 > 0 && !self.channel4.vol_env.is_zero() {
             self.channel4.on = true;
         }
     }
