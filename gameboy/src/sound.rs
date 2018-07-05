@@ -29,49 +29,54 @@ pub struct SoundController<'cb> {
     cb: &'cb mut FnMut((f32, f32)),
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct VolumeEnvelope {
-    val: u8,
+    default: u8,
     inc: bool,
     steps: u8,
-    counter: u8,
+    val: u8,
 }
 
 impl VolumeEnvelope {
     fn from_u8(&mut self, v: u8) {
-        self.steps =  v & 0b0000_0111;
-        self.inc   =  v & 0b0000_1000 > 0;
-        self.val   = (v & 0b1111_0000) >> 4;
+        self.steps   =  v & 0b0000_0111;
+        self.inc     =  v & 0b0000_1000 > 0;
+        self.default = (v & 0b1111_0000) >> 4;
+
+        if self.steps == 0 {
+            self.val = self.default;
+        }
     }
 
     fn to_u8(&self) -> u8 {
         0
             | self.steps
             | if self.inc { 0b0000_1000 } else { 0 }
-            | (self.val << 4)
+            | (self.default << 4)
     }
 
     fn is_zero(&self) -> bool {
         !self.inc && self.val == 0
     }
 
+    fn reload(&mut self) {
+        self.val = self.default;
+    }
+
     fn clock(&mut self) {
-        if self.steps == 0 {
+        if self.steps == 0 || self.val == 0 {
             return;
         }
-        self.counter += 1;
-        if self.counter == self.steps {
-            self.counter = 0;
-            if self.inc {
-                self.val = (self.val + 1).min(15);
-            } else {
-                self.val = self.val.saturating_sub(1);
-            }
+        self.steps = self.steps.saturating_sub(1);
+        if self.inc {
+            self.val = (self.val + 1).min(15);
+        } else {
+            self.val = self.val.saturating_sub(1);
         }
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Channel1 {
     on: bool,
     left: bool, right: bool,
@@ -101,6 +106,7 @@ struct Channel2 {
 
 #[derive(Default)]
 struct Channel3 {
+    enabled: bool,
     on: bool,
     left: bool,
     right: bool,
@@ -239,7 +245,7 @@ impl <'cb> SoundController<'cb> {
 
         if self.channel3.counter {
             self.channel3.length += 1;
-            if self.channel3.length == 255 {
+            if self.channel3.length == 256 {
                 self.channel3.on = false;
                 self.channel3.length = 0;
             }
@@ -256,17 +262,8 @@ impl <'cb> SoundController<'cb> {
 
     fn vol_env_clock(&mut self) {
         self.channel1.vol_env.clock();
-        if self.channel1.vol_env.is_zero() {
-            self.channel1.on = false;
-        }
         self.channel2.vol_env.clock();
-        if self.channel2.vol_env.is_zero() {
-            self.channel2.on = false;
-        }
         self.channel4.vol_env.clock();
-        if self.channel4.vol_env.is_zero() {
-            self.channel4.on = false;
-        }
     }
 
     fn sweep_clock(&self) {
@@ -335,8 +332,11 @@ impl <'cb> SoundController<'cb> {
         }
         self.channel1.freq = (self.channel1.freq & 0xFF) | (((v & 0b111) as u16) << 8);
         self.channel1.counter = v & 0b0100_0000 > 0;
-        if v & 0b1000_0000 > 0 && !self.channel1.vol_env.is_zero() {
-            self.channel1.on = true;
+        if v & 0b1000_0000 > 0 {
+            self.channel1.vol_env.reload();
+            if !self.channel1.vol_env.is_zero() {
+                self.channel1.on = true;
+            }
         }
     }
 
@@ -387,23 +387,24 @@ impl <'cb> SoundController<'cb> {
         self.channel2.freq = (self.channel2.freq & 0xFF) | (((v & 0b111) as u16) << 8);
         self.channel2.counter = v & 0b0100_0000 > 0;
 
-        if v & 0b1000_0000 > 0 && !self.channel2.vol_env.is_zero() {
-            self.channel2.on = true;
+        if v & 0b1000_0000 > 0 {
+            self.channel2.vol_env.reload();
+            if !self.channel2.vol_env.is_zero() {
+                self.channel2.on = true;
+            }
         }
     }
 
     pub fn read_nr30(&self) -> u8 {
         0b0111_1111 // Unreadable bits
-            | (if self.channel3.on { 0b1000_0000 } else { 0 })
+            | (if self.channel3.enabled { 0b1000_0000 } else { 0 })
     }
 
     pub fn write_nr30(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        if v & 0b1000_0000 > 0 {
-            self.channel3.on = true;
-        }
+        self.channel3.enabled = v & 0b1000_0000 > 0;
     }
 
     pub fn read_nr31(&self) -> u8 {
@@ -427,6 +428,10 @@ impl <'cb> SoundController<'cb> {
             return;
         }
         self.channel3.level = v >> 5;
+
+        if self.channel3.level == 0 {
+            self.channel3.on = false;
+        }
     }
 
     pub fn read_nr33(&self) -> u8 {
@@ -452,7 +457,7 @@ impl <'cb> SoundController<'cb> {
         self.channel3.freq = (self.channel3.freq & 0xFF) | (((v & 7) as u16) << 8);
         self.channel3.counter = v & 0b0100_0000 > 0;
         
-        if v & 0b1000_0000 > 0 {
+        if v & 0b1000_0000 > 0 && self.channel3.enabled {
             self.channel3.on = true;
             self.channel3.timer = 0;
             self.channel3.pos = 0;
@@ -510,8 +515,11 @@ impl <'cb> SoundController<'cb> {
             return;
         }
         self.channel4.counter = v & 0b0100_0000 > 0;
-        if v & 0b1000_0000 > 0 && !self.channel4.vol_env.is_zero() {
-            self.channel4.on = true;
+        if v & 0b1000_0000 > 0 {
+            self.channel4.vol_env.reload();
+            if !self.channel4.vol_env.is_zero() {
+                self.channel4.on = true;
+            }
         }
     }
 
