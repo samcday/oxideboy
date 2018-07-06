@@ -472,7 +472,7 @@ impl <'cb> CPU<'cb> {
             halted: false, ime: false, ime_defer: false, ie: 0, if_: 0,
             ppu: ppu::PPU::new(frame_cb),
             sound: sound::SoundController::new(sound_cb),
-            div: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0, tima_overflow: false, tima_new: false,
+            div: 0xABCC, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0, tima_overflow: false, tima_new: false,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
             sb: 0, serial_transfer: false, serial_internal_clock: false, serial_cb,
             dma_reg: 0, dma_request: false, dma_active: false, dma_from: 0, dma_idx: 0,
@@ -968,7 +968,9 @@ impl <'cb> CPU<'cb> {
             0xFFFF            => { self.ie = v & 0x1F }
 
             // TODO:
-            _                 => { println!("Unhandled write to ${:X}", addr) }
+            _                 => {
+                // println!("Unhandled write to ${:X}", addr)
+            }
         };
     }
 

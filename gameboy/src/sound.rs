@@ -1,10 +1,10 @@
 const SAMPLE_RATE: f64 = 44100.0;
 
 const DUTY_CYCLES: [[f32; 8]; 4] = [
-    [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0],
-    [1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0],
-    [1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0],
-    [-1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0],
+    [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0,  1.0],
+    [ 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0,  1.0],
+    [ 1.0, -1.0, -1.0, -1.0, -1.0,  1.0,  1.0,  1.0],
+    [-1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0, -1.0],
 ];
 
 pub struct SoundController<'cb> {
@@ -35,6 +35,7 @@ struct VolumeEnvelope {
     inc: bool,
     steps: u8,
     val: u8,
+    timer: u8,
 }
 
 impl VolumeEnvelope {
@@ -61,17 +62,21 @@ impl VolumeEnvelope {
 
     fn reload(&mut self) {
         self.val = self.default;
+        self.timer = self.steps;
     }
 
     fn clock(&mut self) {
-        if self.steps == 0 || self.val == 0 {
+        if self.val == 0 {
             return;
         }
-        self.steps = self.steps.saturating_sub(1);
-        if self.inc {
-            self.val = (self.val + 1).min(15);
-        } else {
-            self.val = self.val.saturating_sub(1);
+        self.timer -= 1;
+        if self.timer == 0 {
+            self.val = if self.inc {
+                 (self.val + 1).min(15)
+            } else {
+                self.val.saturating_sub(1)
+            };
+            self.timer = self.steps;
         }
     }
 }
@@ -90,6 +95,12 @@ struct Channel1 {
     counter: bool,
     timer: u16,
     pos: u8,
+}
+
+impl Channel1 {
+    fn reload_sweep(&mut self) {
+
+    }
 }
 
 #[derive(Default)]
@@ -190,7 +201,7 @@ impl <'cb> SoundController<'cb> {
 
         if self.channel1.on {
             self.channel1.timer += 4;
-            if (self.channel1.timer / 16) >= (2048 - self.channel1.freq) {
+            if (self.channel1.timer / 4) >= (2048 - self.channel1.freq) {
                 self.channel1.pos = self.channel1.pos.wrapping_add(1);
                 self.channel1.timer = 0;
             }
@@ -217,7 +228,7 @@ impl <'cb> SoundController<'cb> {
 
         if self.channel1.on {
             let val = DUTY_CYCLES[self.channel1.duty as usize][(self.channel1.pos & 7) as usize];
-            let vol = 15.0 / (self.channel1.vol_env.val as f32);
+            let vol = (self.channel1.vol_env.val as f32) / 15.0;
             l = val * vol;
             r = val * vol;
         }
@@ -242,7 +253,6 @@ impl <'cb> SoundController<'cb> {
             self.channel2.length += 1;
             if self.channel2.length == 64 {
                 self.channel2.on = false;
-                self.channel2.length = 0;
             }
         }
 
@@ -250,7 +260,6 @@ impl <'cb> SoundController<'cb> {
             self.channel3.length += 1;
             if self.channel3.length == 256 {
                 self.channel3.on = false;
-                self.channel3.length = 0;
             }
         }
 
@@ -258,7 +267,6 @@ impl <'cb> SoundController<'cb> {
             self.channel4.length += 1;
             if self.channel4.length == 64 {
                 self.channel4.on = false;
-                self.channel4.length = 0;
             }
         }
     }
@@ -348,6 +356,8 @@ impl <'cb> SoundController<'cb> {
 
         if v & 0b1000_0000 > 0 {
             self.channel1.vol_env.reload();
+            self.channel1.reload_sweep();
+
             if !self.channel1.vol_env.is_zero() {
                 self.channel1.on = true;
             }
