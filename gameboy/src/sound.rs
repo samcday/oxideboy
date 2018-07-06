@@ -162,15 +162,20 @@ impl <'cb> SoundController<'cb> {
     }
 
     pub fn advance(&mut self) {
+        self.timer += 1;
+        let frame_seq_clock = if self.timer == 2048 {
+            self.timer = 0;
+            self.frame_seq_timer += 1;
+            true
+        } else {
+            false
+        };
+
         if !self.enabled {
             return;
         }
 
-        // TODO: timer is supposed to keep ticking even when sound hardware is off
-        self.timer += 1;
-        if self.timer == 2048 {
-            self.timer = 0;
-            self.frame_seq_timer += 1;
+        if frame_seq_clock {
             if self.frame_seq_timer % 2 == 1 {
                 self.length_clock();
             }
@@ -211,9 +216,10 @@ impl <'cb> SoundController<'cb> {
         let mut r = 0.0;
 
         if self.channel1.on {
-            let val = DUTY_CYCLES[self.channel1.duty as usize][(self.channel1.pos & 7) as usize] * 0.25;
-            l = val;
-            r = val;
+            let val = DUTY_CYCLES[self.channel1.duty as usize][(self.channel1.pos & 7) as usize];
+            let vol = 15.0 / (self.channel1.vol_env.val as f32);
+            l = val * vol;
+            r = val * vol;
         }
 
         // if self.channel3.on {
@@ -222,16 +228,13 @@ impl <'cb> SoundController<'cb> {
         // }
 
         (self.cb)((l, r));
-        // self.samples.push(l);
-        // self.samples.push(r);
     }
 
     fn length_clock(&mut self) {
-        if self.channel1.counter {
+        if self.channel1.counter && self.channel1.length < 64 {
             self.channel1.length += 1;
             if self.channel1.length == 64 {
                 self.channel1.on = false;
-                self.channel1.length = 0;
             }
         }
 
@@ -331,11 +334,25 @@ impl <'cb> SoundController<'cb> {
             return;
         }
         self.channel1.freq = (self.channel1.freq & 0xFF) | (((v & 0b111) as u16) << 8);
+        let prev_counter = self.channel1.counter;
         self.channel1.counter = v & 0b0100_0000 > 0;
+
+        // If length counter was previously disabled and is now being enabled, we force an extra
+        // clock of the length immediately. This is a hardware quirk.
+        if self.frame_seq_timer % 2 == 1 && !prev_counter && self.channel1.counter {
+            self.channel1.length = (self.channel1.length + 1).min(64);
+            if self.channel1.length == 64 {
+                self.channel1.on = false;
+            }
+        }
+
         if v & 0b1000_0000 > 0 {
             self.channel1.vol_env.reload();
             if !self.channel1.vol_env.is_zero() {
                 self.channel1.on = true;
+            }
+            if self.channel1.length == 64 {
+                self.channel1.length = if self.channel1.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
             }
         }
     }
@@ -385,12 +402,25 @@ impl <'cb> SoundController<'cb> {
             return;
         }
         self.channel2.freq = (self.channel2.freq & 0xFF) | (((v & 0b111) as u16) << 8);
+        let prev_counter = self.channel2.counter;
         self.channel2.counter = v & 0b0100_0000 > 0;
+
+        // If length counter was previously disabled and is now being enabled, we force an extra
+        // clock of the length immediately. This is a hardware quirk.
+        if self.frame_seq_timer % 2 == 1 && !prev_counter && self.channel2.counter {
+            self.channel2.length = (self.channel2.length + 1).min(64);
+            if self.channel2.length == 64 {
+                self.channel2.on = false;
+            }
+        }
 
         if v & 0b1000_0000 > 0 {
             self.channel2.vol_env.reload();
             if !self.channel2.vol_env.is_zero() {
                 self.channel2.on = true;
+            }
+            if self.channel2.length == 64 {
+                self.channel2.length = if self.channel2.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
             }
         }
     }
@@ -455,12 +485,28 @@ impl <'cb> SoundController<'cb> {
             return;
         }
         self.channel3.freq = (self.channel3.freq & 0xFF) | (((v & 7) as u16) << 8);
+        let prev_counter = self.channel3.counter;
         self.channel3.counter = v & 0b0100_0000 > 0;
-        
-        if v & 0b1000_0000 > 0 && self.channel3.enabled {
-            self.channel3.on = true;
-            self.channel3.timer = 0;
-            self.channel3.pos = 0;
+
+        // If length counter was previously disabled and is now being enabled, we force an extra
+        // clock of the length immediately. This is a hardware quirk.
+        if self.frame_seq_timer % 2 == 1 && !prev_counter && self.channel3.counter {
+            self.channel3.length = (self.channel3.length + 1).min(256);
+            if self.channel3.length == 256 {
+                self.channel3.on = false;
+            }
+        }
+
+        if v & 0b1000_0000 > 0 {
+            if self.channel3.enabled {
+                self.channel3.on = true;
+                self.channel3.timer = 0;
+                self.channel3.pos = 0;
+            }
+
+            if self.channel3.length == 256 {
+                self.channel3.length = if self.channel3.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
+            }
         }
     }
 
@@ -514,11 +560,25 @@ impl <'cb> SoundController<'cb> {
         if !self.enabled {
             return;
         }
+        let prev_counter = self.channel4.counter;
         self.channel4.counter = v & 0b0100_0000 > 0;
+
+        // If length counter was previously disabled and is now being enabled, we force an extra
+        // clock of the length immediately. This is a hardware quirk.
+        if self.frame_seq_timer % 2 == 1 && !prev_counter && self.channel4.counter {
+            self.channel4.length = (self.channel4.length + 1).min(64);
+            if self.channel4.length == 64 {
+                self.channel4.on = false;
+            }
+        }
+
         if v & 0b1000_0000 > 0 {
             self.channel4.vol_env.reload();
             if !self.channel4.vol_env.is_zero() {
                 self.channel4.on = true;
+            }
+            if self.channel4.length == 64 {
+                self.channel4.length = if self.channel4.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
             }
         }
     }
