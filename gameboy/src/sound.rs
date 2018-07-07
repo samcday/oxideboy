@@ -85,9 +85,11 @@ impl VolumeEnvelope {
 struct Channel1 {
     on: bool,
     left: bool, right: bool,
-    sweep_num: u8,
+    sweep_shift: u8,
     sweep_sub: bool,
-    sweep_time: u8,
+    sweep_period: u8,
+    sweep_timer: u8,
+    sweep_shadow_freq: u16,
     vol_env: VolumeEnvelope,
     length: u8,
     duty: u8,
@@ -98,9 +100,51 @@ struct Channel1 {
 }
 
 impl Channel1 {
-    fn reload_sweep(&mut self) {
-
+    fn sweep_next_freq(&self) -> u16 {
+        if self.sweep_sub {
+            self.sweep_shadow_freq.saturating_sub(self.sweep_shadow_freq >> self.sweep_shift)
+        } else {
+            self.sweep_shadow_freq + (self.sweep_shadow_freq >> self.sweep_shift)
+        }
     }
+
+    fn sweep_clock(&mut self) {
+        self.sweep_timer = self.sweep_timer.saturating_sub(1);
+        if self.sweep_timer == 0 {
+            self.sweep_timer = if self.sweep_period > 0 { self.sweep_period } else { 8 };
+
+            if self.sweep_period > 0 {
+                let new_freq = self.sweep_next_freq();
+                if new_freq > 2047 {
+                    self.on = false;
+                } else if self.sweep_shift > 0 {
+                    self.sweep_shadow_freq = new_freq;
+                    self.freq = self.sweep_shadow_freq;
+                }
+
+                if self.sweep_next_freq() > 2047 {
+                    self.on = false;
+                }
+            }
+        }
+    }
+
+    fn reload_sweep(&mut self) -> bool {
+        self.sweep_shadow_freq = self.freq;
+        self.sweep_timer = if self.sweep_period > 0 { self.sweep_period } else { 8 };
+
+        if self.sweep_shift > 0 {
+            self.sweep_next_freq() <= 2047
+        } else { true }
+    }
+
+    // fn get_output(&self) -> f32 {
+    //     if !self.on {
+    //         return 0.0;
+    //     }
+    //     DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize]
+    //         * (self.vol_env.val as f32) / 15.0
+    // }
 }
 
 #[derive(Default)]
@@ -113,6 +157,18 @@ struct Channel2 {
     vol_env: VolumeEnvelope,
     freq: u16,
     counter: bool,
+    timer: u16,
+    pos: u8,
+}
+
+impl Channel2 {
+    // fn get_output(&self) -> f32 {
+    //     if !self.on {
+    //         return 0.0;
+    //     }
+    //     DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize]
+    //         * (self.vol_env.val as f32) / 15.0
+    // }
 }
 
 #[derive(Default)]
@@ -147,9 +203,9 @@ pub struct WaveRam {
 }
 
 impl WaveRam {
-    fn get_step(&self, n: u8) -> f32 {
-        (self.data[(n / 2) as usize] >> (n % 2 * 4) & 0b1111) as f32
-    }
+    // fn get_step(&self, n: u8) -> f32 {
+    //     (self.data[(n / 2) as usize] >> (n % 2 * 4) & 0b1111) as f32
+    // }
 }
 
 impl SoundController {
@@ -176,7 +232,7 @@ impl SoundController {
         self.timer += 1;
         let frame_seq_clock = if self.timer == 2048 {
             self.timer = 0;
-            self.frame_seq_timer += 1;
+            self.frame_seq_timer = self.frame_seq_timer.wrapping_add(1);
             true
         } else {
             false
@@ -191,7 +247,7 @@ impl SoundController {
                 self.length_clock();
             }
             if self.frame_seq_timer % 4 == 3 {
-                self.sweep_clock();
+                self.channel1.sweep_clock();
             }
             if self.frame_seq_timer == 8 {
                 self.vol_env_clock();
@@ -204,6 +260,14 @@ impl SoundController {
             if (self.channel1.timer / 4) >= (2048 - self.channel1.freq) {
                 self.channel1.pos = self.channel1.pos.wrapping_add(1);
                 self.channel1.timer = 0;
+            }
+        }
+
+        if self.channel2.on {
+            self.channel2.timer += 4;
+            if (self.channel2.timer / 4) >= (2048 - self.channel2.freq) {
+                self.channel2.pos = self.channel2.pos.wrapping_add(1);
+                self.channel2.timer = 0;
             }
         }
 
@@ -282,24 +346,20 @@ impl SoundController {
         self.channel4.vol_env.clock();
     }
 
-    fn sweep_clock(&self) {
-
-    }
-
     pub fn read_nr10(&self) -> u8 {
         0b1000_0000 // Unreadable bits
-            | self.channel1.sweep_num
+            | self.channel1.sweep_shift
             | if self.channel1.sweep_sub { 0b0000_1000 } else { 0 }
-            | (self.channel1.sweep_time << 4)
+            | (self.channel1.sweep_period << 4)
     }
 
     pub fn write_nr10(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        self.channel1.sweep_num  =  v & 0b0000_0111;
-        self.channel1.sweep_sub  =  v & 0b0000_1000 > 0;
-        self.channel1.sweep_time = (v & 0b0111_0000) >> 4;
+        self.channel1.sweep_shift  =  v & 0b0000_0111;
+        self.channel1.sweep_sub    =  v & 0b0000_1000 > 0;
+        self.channel1.sweep_period = (v & 0b0111_0000) >> 4;
     }
 
     pub fn read_nr11(&self) -> u8 {
@@ -360,12 +420,17 @@ impl SoundController {
         }
 
         if v & 0b1000_0000 > 0 {
-            self.channel1.vol_env.reload();
-            self.channel1.reload_sweep();
+            self.channel1.on = true;
 
-            if !self.channel1.vol_env.is_zero() {
-                self.channel1.on = true;
+            self.channel1.vol_env.reload();
+            if self.channel1.vol_env.is_zero() {
+                self.channel1.on = false;
             }
+
+            if !self.channel1.reload_sweep() {
+                self.channel1.on = false;
+            }
+
             if self.channel1.length == 64 {
                 self.channel1.length = if self.channel1.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
             }
