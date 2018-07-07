@@ -90,6 +90,8 @@ struct Channel1 {
     sweep_period: u8,
     sweep_timer: u8,
     sweep_shadow_freq: u16,
+    sweep_enabled: bool,
+    sweep_has_negated: bool,
     vol_env: VolumeEnvelope,
     length: u8,
     duty: u8,
@@ -100,7 +102,8 @@ struct Channel1 {
 }
 
 impl Channel1 {
-    fn sweep_next_freq(&self) -> u16 {
+    fn sweep_next_freq(&mut self) -> u16 {
+        self.sweep_has_negated = self.sweep_sub;
         if self.sweep_sub {
             self.sweep_shadow_freq.saturating_sub(self.sweep_shadow_freq >> self.sweep_shift)
         } else {
@@ -109,6 +112,10 @@ impl Channel1 {
     }
 
     fn sweep_clock(&mut self) {
+        if !self.sweep_enabled {
+            return;
+        }
+
         self.sweep_timer = self.sweep_timer.saturating_sub(1);
         if self.sweep_timer == 0 {
             self.sweep_timer = if self.sweep_period > 0 { self.sweep_period } else { 8 };
@@ -120,16 +127,18 @@ impl Channel1 {
                 } else if self.sweep_shift > 0 {
                     self.sweep_shadow_freq = new_freq;
                     self.freq = self.sweep_shadow_freq;
-                }
 
-                if self.sweep_next_freq() > 2047 {
-                    self.on = false;
+                    if self.sweep_next_freq() > 2047 {
+                        self.on = false;
+                    }
                 }
             }
         }
     }
 
     fn reload_sweep(&mut self) -> bool {
+        self.sweep_has_negated = false;
+        self.sweep_enabled = self.sweep_period > 0 || self.sweep_shift > 0;
         self.sweep_shadow_freq = self.freq;
         self.sweep_timer = if self.sweep_period > 0 { self.sweep_period } else { 8 };
 
@@ -357,9 +366,16 @@ impl SoundController {
         if !self.enabled {
             return;
         }
+        let was_sub = self.channel1.sweep_sub;
         self.channel1.sweep_shift  =  v & 0b0000_0111;
         self.channel1.sweep_sub    =  v & 0b0000_1000 > 0;
         self.channel1.sweep_period = (v & 0b0111_0000) >> 4;
+
+        // If, since enabling sweep, we've subtracted freqency, then switching from subtraction mode to
+        // addition mode causes the channel to be instantly disabled.
+        if self.channel1.sweep_has_negated && was_sub && !self.channel1.sweep_sub {
+            self.channel1.on = false;
+        }
     }
 
     pub fn read_nr11(&self) -> u8 {
