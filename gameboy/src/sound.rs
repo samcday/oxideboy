@@ -611,9 +611,6 @@ impl SoundController {
     }
 
     pub fn write_nr41(&mut self, v: u8) {
-        if !self.enabled {
-            return;
-        }
         self.channel4.length = v & 0b0011_1111;
     }
 
