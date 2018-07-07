@@ -1,0 +1,38 @@
+[[package]]
+name = "gameboy"
+version = "0.1.0"
+
+[[package]]
+name = "libc"
+version = "0.2.42"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "libretro-backend"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "libc 0.2.42 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libretro-sys 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "libretro-core"
+version = "0.1.0"
+dependencies = [
+ "gameboy 0.1.0",
+ "libretro-backend 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "libretro-sys"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "libc 0.2.42 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[metadata]
+"checksum libc 0.2.42 (registry+https://github.com/rust-lang/crates.io-index)" = "b685088df2b950fccadf07a7187c8ef846a959c142338a48f9dc0b94517eb5f1"
+"checksum libretro-backend 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "667a71a6fdeec429bd88023eb7cc7b51264881b0cf9835431482a7c2f6e85d6e"
+"checksum libretro-sys 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "19465a3a0d54ad81f1abc5937971a36e6922c69d0ba612b78a35f83f32ce9ffe"

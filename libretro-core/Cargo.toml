@@ -1,13 +1,13 @@
 [package]
-name = "dev"
+name = "libretro-core"
 version = "0.1.0"
 authors = ["Sam Day <me@samcday.com>"]
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
-sdl2 = "0.31"
+libretro-backend = "0.2"
 
 [dependencies.gameboy]
 path = "../gameboy"
-
-[profile.release]
-debug = true

@@ -10,6 +10,7 @@ use std::fmt::Display;
 static BOOT_ROM: &[u8; 256] = include_bytes!("boot.rom");
 
 pub const SCREEN_SIZE: usize = 160 * 144;
+pub const FRAME_RATE: f64 = 1048576.0 / 17556.0;
 
 #[derive(Default)]
 struct CpuFlags {
@@ -394,7 +395,7 @@ pub struct Joypad {
     pub start: bool,
 }
 
-pub struct CPU<'cb> {
+pub struct CPU {
     // Registers.
     a: u8,
     b: u8,
@@ -421,10 +422,10 @@ pub struct CPU<'cb> {
     ime_defer: bool,
 
     // PPU
-    ppu: ppu::PPU<'cb>,
+    ppu: ppu::PPU,
 
     // Sound
-    sound: sound::SoundController<'cb>,
+    sound: sound::SoundController,
 
     // Timer.
     div: u16,               // Increments every CPU clock cycle (4.194304Mhz). Only top 8 bits are visible to programs.
@@ -441,10 +442,9 @@ pub struct CPU<'cb> {
     joypad: Joypad,
 
     // Serial I/O
-    sb: u8,
+    pub sb: Option<u8>,
     serial_transfer: bool,
     serial_internal_clock: bool,
-    serial_cb: &'cb mut FnMut(u8),
 
     dma_reg: u8,
     dma_request: bool,
@@ -463,18 +463,18 @@ pub struct CPU<'cb> {
     mooneye_breakpoint: bool,
 }
 
-impl <'cb> CPU<'cb> {
-    pub fn new(rom: Vec<u8>, frame_cb: &'cb mut FnMut(&[u32]), sound_cb: &'cb mut FnMut((f32, f32)), serial_cb: &'cb mut FnMut(u8)) -> Self {
+impl CPU {
+    pub fn new(rom: Vec<u8>) -> Self {
         Self{
             a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Default::default(), sp: 0, pc: 0,
             bootrom_enabled: true,
             ram: [0; 0x2000], hram: [0; 0x7F],
             halted: false, ime: false, ime_defer: false, ie: 0, if_: 0,
-            ppu: ppu::PPU::new(frame_cb),
-            sound: sound::SoundController::new(sound_cb),
+            ppu: ppu::PPU::new(),
+            sound: sound::SoundController::new(),
             div: 0xABCC, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0, tima_overflow: false, tima_new: false,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
-            sb: 0, serial_transfer: false, serial_internal_clock: false, serial_cb,
+            sb: None, serial_transfer: false, serial_internal_clock: false,
             dma_reg: 0, dma_request: false, dma_active: false, dma_from: 0, dma_idx: 0,
             cart: Cartridge::from_rom(rom),
             cycle_count: 0,
@@ -495,17 +495,28 @@ impl <'cb> CPU<'cb> {
     /// Because we emulate at the instruction level, sometimes the last instruction we execute in this loop
     /// may take us over the 17556 cycle threshold. We return a delta number of cycles that should be fed in to the
     /// next call to ensure we don't run too fast.
-    pub fn run_frame(&mut self, delta: u16) -> u16 {
+    pub fn run_frame(&mut self, delta: u16) -> (u16, &[u32], &[f32]) {
+        self.sound.sample_queue.clear();
+
         let mut counter = 0;
         while counter < 17556 - delta {
             counter += self.run();
 
             if self.pc == self.breakpoint {
                 self.breakpoint_hit = true;
-                return 0;
+                return (0, &self.ppu.framebuffer, &self.sound.sample_queue[..]);
             }
         }
-        counter - (17556 - delta)
+
+        // If the LCD is enabled, but LY isn't 0, the screen was enabled/disabled mid frame at some point.
+        // In this case we keep emulating until the next Vsync to re-sync.
+        if self.ppu.enabled && self.ppu.ly != 0 {
+            while self.ppu.ly != 0 {
+                self.run();
+            }
+        }
+
+        (counter - (17556 - delta), &self.ppu.framebuffer, &self.sound.sample_queue[..])
     }
 
     // Runs the CPU for a single instruction.
@@ -818,7 +829,7 @@ impl <'cb> CPU<'cb> {
             0xFF00            => self.read_joypad(),
 
             // Serial
-            0xFF01            => self.sb,
+            0xFF01            => self.sb.unwrap_or(0),
             0xFF02            => self.read_sc(),
 
             // Timer
@@ -893,7 +904,7 @@ impl <'cb> CPU<'cb> {
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v }
             0xFE00 ... 0xFE9F => { self.ppu.write_oam((addr - 0xFE00) as usize, v) }
             0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
-            0xFF01            => { self.sb = v; (self.serial_cb)(v); }
+            0xFF01            => { self.sb = Some(v) }
             0xFF02            => { self.write_sc(v) }
             0xFF04            => { self.write_div() }
             0xFF05            => {
@@ -2103,15 +2114,10 @@ impl <'cb> CPU<'cb> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
-    use std::cell::RefCell;
     use std::time::Instant;
 
     fn run_mooneye_test(rom: &[u8]) {
-        let mut video_cb = |_: &[u32]| {};
-        let mut sound_cb = |_: (f32, f32)| {};
-        let mut serial_cb = move |_: u8| {};
-        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb, &mut serial_cb);
+        let mut cpu = CPU::new(rom.to_vec());
 
         let start = Instant::now();
         while !cpu.mooneye_breakpoint {
@@ -2192,58 +2198,52 @@ mod tests {
     #[test]
     fn cpu_instructions() {
         let rom = include_bytes!("../test/cpu_instrs.gb");
-        let serial_output = Rc::new(RefCell::new(String::new()));
-        let mut video_cb = |_: &[u32]| {};
-        let mut sound_cb = |_: (f32, f32)| {};
-        let cb_serial_out = Rc::clone(&serial_output);
-        let mut serial_cb = move |v: u8| {
-            cb_serial_out.borrow_mut().push(v as char);
-        };
-        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb, &mut serial_cb);
+        let mut serial_output = String::new();
+        let mut cpu = CPU::new(rom.to_vec());
 
         while cpu.pc() != 0x681 {
             cpu.run();
+            let sb = cpu.sb.take();
+            if sb.is_some() {
+            serial_output.push(sb.unwrap() as char);
+            }
         }
 
-        assert_eq!(*serial_output.borrow(), "cpu_instrs\n\n01:ok  02:ok  03:ok  04:ok  05:ok  06:ok  07:ok  08:ok  09:ok  10:ok  11:ok  ");
+        assert_eq!(serial_output, "cpu_instrs\n\n01:ok  02:ok  03:ok  04:ok  05:ok  06:ok  07:ok  08:ok  09:ok  10:ok  11:ok  ");
     }
 
     #[test]
     fn instruction_timing() {
         let rom = include_bytes!("../test/instr_timing.gb");
-        let serial_output = Rc::new(RefCell::new(String::new()));
-        let mut video_cb = |_: &[u32]| {};
-        let mut sound_cb = |_: (f32, f32)| {};
-        let cb_serial_out = Rc::clone(&serial_output);
-        let mut serial_cb = move |v: u8| {
-            cb_serial_out.borrow_mut().push(v as char);
-        };
-        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb, &mut serial_cb);
+        let mut serial_output = String::new();
+        let mut cpu = CPU::new(rom.to_vec());
 
         while cpu.pc() != 0xC8A6 {
             cpu.run();
+            let sb = cpu.sb.take();
+            if sb.is_some() {
+                serial_output.push(sb.unwrap() as char);
+            }
         }
 
-        assert_eq!(*serial_output.borrow(), "instr_timing\n\n\nPassed\n");
+        assert_eq!(serial_output, "instr_timing\n\n\nPassed\n");
     }
 
     #[test]
     fn mem_timing() {
         let rom = include_bytes!("../test/mem_timing.gb");
-        let serial_output = Rc::new(RefCell::new(String::new()));
-        let mut video_cb = |_: &[u32]| {};
-        let mut sound_cb = |_: (f32, f32)| {};
-        let cb_serial_out = Rc::clone(&serial_output);
-        let mut serial_cb = move |v: u8| {
-            cb_serial_out.borrow_mut().push(v as char);
-        };
-        let mut cpu = CPU::new(rom.to_vec(), &mut video_cb, &mut sound_cb, &mut serial_cb);
+        let mut serial_output = String::new();
+        let mut cpu = CPU::new(rom.to_vec());
 
         while cpu.pc() != 0x06A1 {
             cpu.run();
+            let sb = cpu.sb.take();
+            if sb.is_some() {
+                serial_output.push(sb.unwrap() as char);
+            }
         }
 
-        assert_eq!(*serial_output.borrow(), "mem_timing\n\n01:ok  02:ok  03:ok  \n\nPassed all tests");
+        assert_eq!(serial_output, "mem_timing\n\n01:ok  02:ok  03:ok  \n\nPassed all tests");
     }
 }
 

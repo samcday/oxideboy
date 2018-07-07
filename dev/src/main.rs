@@ -1,22 +1,20 @@
 extern crate gameboy;
-extern crate ratelimit;
 extern crate sdl2;
 
 use std::io::prelude::*;
 use std::fs::File;
-use std::env;
 use std::time::{Duration, Instant};
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::slice;
 
-use sdl2::audio::{AudioSpecDesired};
+use sdl2::audio::{AudioSpecDesired, AudioStatus};
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 
 type Result<T> = std::result::Result<T, Box<std::error::Error>>;
+
+const FRAME_TIME: Duration = Duration::from_nanos((1_000_000_000.0 / (1048576.0 / 17556.0)) as u64);
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -27,11 +25,11 @@ fn main() -> Result<()> {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
-    let audio_device = Rc::new(RefCell::new(audio_subsystem.open_queue(None, &AudioSpecDesired{
+    let audio_device = audio_subsystem.open_queue(None, &AudioSpecDesired{
         freq: Some(44100),
         channels: Some(2),
         samples: None,
-    }).unwrap()));
+    }).unwrap();
     let window = video_subsystem.window("oxideboy", 320, 288)
         .position_centered()
         .opengl()
@@ -40,57 +38,42 @@ fn main() -> Result<()> {
     let mut canvas = window.into_canvas().build().unwrap();
     let texture_creator = canvas.texture_creator();
     let mut texture = texture_creator.create_texture_streaming(
-        PixelFormatEnum::RGBA8888, 160, 144).unwrap();
+        PixelFormatEnum::ARGB8888, 160, 144).unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
+    let mut gb_buffer = [0; gameboy::SCREEN_SIZE];
+
     let mut limit = true;
-    let mut ratelimit = ratelimit::Builder::new()
-        .capacity(1).quantum(1)
-        .interval(Duration::new(0, 16660000))
-        .build();
-
-    let print_serial = env::var_os("PRINT_SERIAL").map(|s| &s == "1").unwrap_or(false);
-
-    let gb_buffer = Rc::new(RefCell::new([0; gameboy::SCREEN_SIZE]));
-
-    let sample_queue = Rc::new(RefCell::new(Vec::new()));
-
-    let cb_gb_buffer = Rc::clone(&gb_buffer);
-    let video_cb_audio_device = Rc::clone(&audio_device);
-    let video_cb_sample_queue = Rc::clone(&sample_queue);
-    let mut video_cb = move |buf: &[u32]| {
-        cb_gb_buffer.borrow_mut().copy_from_slice(buf);
-        video_cb_audio_device.borrow_mut().clear();
-        video_cb_audio_device.borrow_mut().queue(&video_cb_sample_queue.borrow()[..]);
-        video_cb_sample_queue.borrow_mut().clear();
-    };
-
-    let sound_cb_sample_queue = Rc::clone(&sample_queue);
-    let mut sound_cb = move |(l, r)| {
-        sound_cb_sample_queue.borrow_mut().push(l);
-        sound_cb_sample_queue.borrow_mut().push(r);
-    };
-
-    let mut serial_cb = |sb| {
-        if print_serial {
-            std::io::stdout().write(&[sb]).unwrap();
-            std::io::stdout().flush().unwrap();
-        }
-    };
-
     let mut paused = false;
-    let mut gameboy = gameboy::CPU::new(rom, &mut video_cb, &mut sound_cb, &mut serial_cb);
+    let mut gameboy = gameboy::CPU::new(rom);
 
-    audio_device.borrow_mut().resume();
+    audio_device.resume();
 
     // gameboy.breakpoint = 0x681;
 
     let mut delta = 0;
+    let mut start = Instant::now();
+    let mut next_frame = FRAME_TIME;
 
-    let mut now = Instant::now();
+    let mut update_fb = |gb_buffer: &[u32]| {
+        texture.with_lock(None, |buffer: &mut [u8], _: usize| {
+            let buffer = unsafe { slice::from_raw_parts_mut(buffer.as_ptr() as *mut u32, 160*144) };
+            buffer.copy_from_slice(&gb_buffer[..]);
+        }).unwrap();
+
+        canvas.clear();
+        canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
+        canvas.present();
+    };
+
+    let mut frames = 0;
+    let mut fps_timer = Instant::now();
+    let sec = Duration::from_secs(1);
     'running: loop {
-        if limit {
-            ratelimit.wait();
+        if fps_timer.elapsed() >= sec {
+            println!("FPS: {} ({})", frames, audio_device.size());
+            fps_timer = Instant::now();
+            frames = 0;
         }
 
         for event in event_pump.poll_iter() {
@@ -118,32 +101,49 @@ fn main() -> Result<()> {
 
                 Event::KeyUp {keycode: Some(Keycode::L), ..} => { limit = !limit; }
                 Event::KeyUp {keycode: Some(Keycode::P), ..} => { paused = !paused; }
+                Event::KeyUp {keycode: Some(Keycode::M), ..} => {
+                    if audio_device.status() == AudioStatus::Playing {
+                        audio_device.clear();
+                        audio_device.pause();
+                    } else {
+                        audio_device.resume();
+                    }
+                }
                 _ => {}
             }
         }
 
         if !paused {
-            delta = gameboy.run_frame(delta);
+            let (new_delta, framebuf, samples) = gameboy.run_frame(delta);
 
-            if now.elapsed().subsec_nanos() > 16666666 {
-                now = Instant::now();
+            gb_buffer.copy_from_slice(framebuf);
 
-                texture.with_lock(None, |buffer: &mut [u8], _: usize| {
-                    let gb_buffer = gb_buffer.borrow();
-
-                    let buffer = unsafe { slice::from_raw_parts_mut(buffer.as_ptr() as *mut u32, 160*144) };
-                    buffer.copy_from_slice(&gb_buffer[..]);
-                }).unwrap();
-
-                canvas.clear();
-                canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
-                canvas.present();
+            if audio_device.status() == AudioStatus::Playing  {
+                audio_device.queue(samples);
             }
+            delta = new_delta;
         }
 
         if gameboy.breakpoint_hit {
             break 'running;
         }
+
+        if limit {
+            update_fb(&gb_buffer);
+
+            let elapsed = start.elapsed();
+            if elapsed < next_frame {
+                std::thread::sleep(next_frame - elapsed);
+            }
+            next_frame += FRAME_TIME;
+        } else {
+            if start.elapsed() >= FRAME_TIME {
+                update_fb(&gb_buffer);
+                start = Instant::now();
+            }
+        }
+
+        frames += 1;
     }
 
     println!();

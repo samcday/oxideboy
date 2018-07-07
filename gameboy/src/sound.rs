@@ -7,7 +7,7 @@ const DUTY_CYCLES: [[f32; 8]; 4] = [
     [-1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0, -1.0],
 ];
 
-pub struct SoundController<'cb> {
+pub struct SoundController {
     sample_cycles: f64,
 
     timer: u16,
@@ -26,7 +26,7 @@ pub struct SoundController<'cb> {
 
     pub wave_ram: WaveRam,
 
-    cb: &'cb mut FnMut((f32, f32)),
+    pub sample_queue: Vec<f32>,
 }
 
 #[derive(Debug, Default)]
@@ -152,8 +152,8 @@ impl WaveRam {
     }
 }
 
-impl <'cb> SoundController<'cb> {
-    pub fn new(cb: &'cb mut FnMut((f32, f32))) -> SoundController {
+impl SoundController {
+    pub fn new() -> SoundController {
         SoundController{
             sample_cycles: 0.0,
             timer: 0, frame_seq_timer: 0,
@@ -168,7 +168,7 @@ impl <'cb> SoundController<'cb> {
             channel4: Default::default(),
             wave_ram: WaveRam{data: [0; 16]},
 
-            cb,
+            sample_queue: Vec::new(),
         }
     }
 
@@ -238,7 +238,12 @@ impl <'cb> SoundController<'cb> {
         //     r = self.channel3.wave_ram.get_step(self.channel3.pos) / 15.0 * 0.5;
         // }
 
-        (self.cb)((l, r));
+        if cfg!(test) {
+            return;
+        }
+
+        self.sample_queue.push(l);
+        self.sample_queue.push(r);
     }
 
     fn length_clock(&mut self) {

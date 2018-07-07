@@ -11,10 +11,10 @@ pub enum PPUState {
 use self::PPUState::{*};
 
 const COLOR_MAPPING: [u32; 4] = [
-    0xE0F8D0FF,
-    0x88C070FF,
-    0x346856FF,
-    0x081820FF,
+    0xFFE0F8D0,
+    0xFF88C070,
+    0xFF346856,
+    0xFF081820,
 ];
 
 struct PixelTransferState {
@@ -98,7 +98,7 @@ impl OAMEntry {
     }
 }
 
-pub struct PPU<'cb> {
+pub struct PPU {
     pub enabled: bool,          // Master switch to turn LCD on/off.
     pub state: PPUState,
     pub prev_state: PPUState,   // STAT reports the current mode perpetually 1 cycle late
@@ -137,15 +137,13 @@ pub struct PPU<'cb> {
 
     pt_state: PixelTransferState,
 
-    framebuffer: [u32; ::SCREEN_SIZE],
+    pub framebuffer: [u32; ::SCREEN_SIZE],
 
     if_: u8,
-
-    cb: &'cb mut FnMut(&[u32]),
 }
 
-impl <'cb> PPU<'cb> {
-    pub fn new(cb: &'cb mut FnMut(&[u32])) -> PPU<'cb> {
+impl PPU {
+    pub fn new() -> PPU {
         PPU {
             enabled: false, state: OAMSearch, prev_state: OAMSearch, cycles: 0,
             scy: 0, scx: 0,
@@ -170,7 +168,6 @@ impl <'cb> PPU<'cb> {
             scanline_objs: Vec::new(),
             framebuffer: [0; 160*144],
             if_: 0,
-            cb
         }
     }
 
@@ -251,7 +248,6 @@ impl <'cb> PPU<'cb> {
                     self.ly += 1;
                 }
                 if self.cycles == 1140 {
-                    (self.cb)(&self.framebuffer);
                     self.ly = 0;
 
                     if self.interrupt_oam {
@@ -550,8 +546,7 @@ mod tests {
     #[test]
     fn test_scanline_pt_cycles_bg() {
         let test = |scx| {
-            let cb = &mut |_: &[u32]| {};
-            let mut ppu = PPU::new(cb);
+            let mut ppu = PPU::new();
             ppu.ly = 66;
             ppu.scx = scx;
             ppu.enabled = true;
@@ -575,8 +570,7 @@ mod tests {
     #[test]
     fn test_scanline_pt_cycles_window() {
         let test = |scx, wx| {
-            let cb = &mut |_: &[u32]| {};
-            let mut ppu = PPU::new(cb);
+            let mut ppu = PPU::new();
             ppu.wy = 66;
             ppu.wx = wx;
             ppu.ly = 66;
@@ -602,8 +596,7 @@ mod tests {
     #[test]
     fn test_scanline_pt_cycles_obj() {
         let test = |sprites: Vec<u8>| {
-            let cb = &mut |_: &[u32]| {};
-            let mut ppu = PPU::new(cb);
+            let mut ppu = PPU::new();
             ppu.ly = 66;
             ppu.enabled = true;
             ppu.obj_enabled = true;
