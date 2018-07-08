@@ -3,6 +3,7 @@ extern crate sdl2;
 
 use std::io::prelude::*;
 use std::fs::File;
+use std::env;
 use std::time::{Duration, Instant};
 use std::slice;
 
@@ -43,8 +44,9 @@ fn main() -> Result<()> {
 
     let mut gb_buffer = [0; gameboy::SCREEN_SIZE];
 
-    let mut limit = true;
+    let mut limit = false;
     let mut paused = false;
+    let print_fps = env::var("PRINT_FPS").ok().unwrap_or(String::from("0")) == "1";
     let mut gameboy = gameboy::CPU::new(rom);
 
     audio_device.resume();
@@ -52,7 +54,7 @@ fn main() -> Result<()> {
     // gameboy.breakpoint = 0x681;
 
     let mut delta = 0;
-    let mut start = Instant::now();
+    let start = Instant::now();
     let mut next_frame = FRAME_TIME;
 
     let mut update_fb = |gb_buffer: &[u32]| {
@@ -66,12 +68,15 @@ fn main() -> Result<()> {
         canvas.present();
     };
 
+    let mut throwaway_samples = true;
+    let mut throwaway_count = 44100;
+
     let mut frames = 0;
     let mut fps_timer = Instant::now();
     let sec = Duration::from_secs(1);
     'running: loop {
         if fps_timer.elapsed() >= sec {
-            println!("FPS: {} ({})", frames, audio_device.size());
+            if print_fps { println!("FPS: {}", frames); }
             fps_timer = Instant::now();
             frames = 0;
         }
@@ -99,7 +104,10 @@ fn main() -> Result<()> {
                 Event::KeyUp {keycode: Some(Keycode::Return), ..} => { gameboy.joypad().start = false; }
                 Event::KeyUp {keycode: Some(Keycode::RShift), ..} => { gameboy.joypad().select = false; }
 
-                Event::KeyUp {keycode: Some(Keycode::L), ..} => { limit = !limit; }
+                Event::KeyUp {keycode: Some(Keycode::L), ..} => {
+                    limit = !limit;
+                    audio_device.clear();
+                }
                 Event::KeyUp {keycode: Some(Keycode::P), ..} => { paused = !paused; }
                 Event::KeyUp {keycode: Some(Keycode::M), ..} => {
                     if audio_device.status() == AudioStatus::Playing {
@@ -114,11 +122,23 @@ fn main() -> Result<()> {
         }
 
         if !paused {
-            let (new_delta, framebuf, samples) = gameboy.run_frame(delta);
-
+            let (new_delta, framebuf, mut samples) = gameboy.run_frame(delta);
             gb_buffer.copy_from_slice(framebuf);
 
-            if audio_device.status() == AudioStatus::Playing  {
+            if throwaway_samples {
+                if throwaway_count > samples.len() {
+                    throwaway_count -= samples.len();
+                    samples = &[];
+                } else {
+                    samples = &samples[throwaway_count..];
+                    throwaway_samples = false;
+                }
+            }
+
+            if audio_device.status() == AudioStatus::Playing {
+                if !limit {
+                    audio_device.clear();
+                }
                 audio_device.queue(samples);
             }
             delta = new_delta;
@@ -137,9 +157,9 @@ fn main() -> Result<()> {
             }
             next_frame += FRAME_TIME;
         } else {
-            if start.elapsed() >= FRAME_TIME {
+            if start.elapsed() >= next_frame {
                 update_fb(&gb_buffer);
-                start = Instant::now();
+                next_frame += FRAME_TIME;
             }
         }
 

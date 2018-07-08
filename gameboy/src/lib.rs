@@ -501,22 +501,9 @@ impl CPU {
         let mut counter = 0;
         while counter < 17556 - delta {
             counter += self.run();
-
-            if self.pc == self.breakpoint {
-                self.breakpoint_hit = true;
-                return (0, &self.ppu.framebuffer, &self.sound.sample_queue[..]);
-            }
         }
 
-        // If the LCD is enabled, but LY isn't 0, the screen was enabled/disabled mid frame at some point.
-        // In this case we keep emulating until the next Vsync to re-sync.
-        if self.ppu.enabled && self.ppu.ly != 0 {
-            while self.ppu.ly != 0 {
-                self.run();
-            }
-        }
-
-        (counter - (17556 - delta), &self.ppu.framebuffer, &self.sound.sample_queue[..])
+        (counter - (17556 - delta), &self.ppu.framebuffer(), &self.sound.sample_queue[..])
     }
 
     // Runs the CPU for a single instruction.

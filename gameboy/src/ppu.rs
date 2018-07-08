@@ -137,14 +137,15 @@ pub struct PPU {
 
     pt_state: PixelTransferState,
 
-    pub framebuffer: [u32; ::SCREEN_SIZE],
+    framebuffers: [[u32; ::SCREEN_SIZE]; 2],
+    cur_framebuffer: usize,
 
     if_: u8,
 }
 
 impl PPU {
     pub fn new() -> PPU {
-        PPU {
+        let mut ppu = PPU {
             enabled: false, state: OAMSearch, prev_state: OAMSearch, cycles: 0,
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
@@ -166,8 +167,24 @@ impl PPU {
                 in_win: false,
             },
             scanline_objs: Vec::new(),
-            framebuffer: [0; 160*144],
+            framebuffers: [[0; 160*144]; 2],
+            cur_framebuffer: 0,
             if_: 0,
+        };
+        ppu.clear_framebuffers();
+        ppu
+    }
+
+    // Gets the last drawn framebuffer (i.e the currently *inactive* one).
+    pub fn framebuffer(&self) -> &[u32] {
+        &self.framebuffers[(self.cur_framebuffer + 1) % 2]
+    }
+
+    fn clear_framebuffers(&mut self) {
+        for framebuffer in self.framebuffers.iter_mut() {
+            for pix in framebuffer.iter_mut() {
+                *pix = 0xFFE0F8D0;
+            }
         }
     }
 
@@ -256,6 +273,7 @@ impl PPU {
                     if self.interrupt_lyc && self.ly == self.lyc {
                         self.if_ |= 0x2;
                     }
+                    self.cur_framebuffer = (self.cur_framebuffer + 1) % 2;
                     self.next_state(OAMSearch);
                 }
             }
@@ -398,7 +416,7 @@ impl PPU {
         if self.pt_state.ppu_cycles >= self.pt_state.cycle_budget {
             let mut fb_pos = (self.ly as usize) * 160;
             for i in 8..168 {
-                self.framebuffer[fb_pos] = COLOR_MAPPING[self.pt_state.scanline[i] as usize];
+                self.framebuffers[self.cur_framebuffer as usize][fb_pos] = COLOR_MAPPING[self.pt_state.scanline[i] as usize];
                 fb_pos += 1;
             }
 
@@ -475,10 +493,8 @@ impl PPU {
         } else if !enabled && self.enabled {
             if let VBlank = self.state {
                 self.enabled = false;
-                // Clear the framebuffer.
-                for pix in self.framebuffer.iter_mut() {
-                    *pix = 0xE0F8D0FF;
-                }
+                // Clear the framebuffers.
+                self.clear_framebuffers();
             } else {
                 panic!("Tried to disable LCD outside of VBlank");
             }
