@@ -327,21 +327,21 @@ impl SoundController {
             }
         }
 
-        if self.channel2.counter {
+        if self.channel2.counter && self.channel2.length < 64 {
             self.channel2.length += 1;
             if self.channel2.length == 64 {
                 self.channel2.on = false;
             }
         }
 
-        if self.channel3.counter {
+        if self.channel3.counter && self.channel3.length < 256 {
             self.channel3.length += 1;
             if self.channel3.length == 256 {
                 self.channel3.on = false;
             }
         }
 
-        if self.channel4.counter {
+        if self.channel4.counter && self.channel4.length < 64 {
             self.channel4.length += 1;
             if self.channel4.length == 64 {
                 self.channel4.on = false;
@@ -384,11 +384,10 @@ impl SoundController {
     }
 
     pub fn write_nr11(&mut self, v: u8) {
-        if !self.enabled {
-            return;
-        }
         self.channel1.length =  v & 0b0011_1111;
-        self.channel1.duty   = (v & 0b1100_0000) >> 6;
+        if self.enabled {
+            self.channel1.duty   = (v & 0b1100_0000) >> 6;
+        }
     }
 
     pub fn read_nr12(&self) -> u8 {
@@ -459,11 +458,10 @@ impl SoundController {
     }
 
     pub fn write_nr21(&mut self, v: u8) {
-        if !self.enabled {
-            return;
-        }
         self.channel2.length =  v & 0b0011_1111;
-        self.channel2.duty   = (v & 0b1100_0000) >> 6;
+        if self.enabled {
+            self.channel2.duty   = (v & 0b1100_0000) >> 6;
+        }
     }
 
     pub fn read_nr22(&self) -> u8 {
@@ -538,9 +536,6 @@ impl SoundController {
     }
 
     pub fn write_nr31(&mut self, v: u8) {
-        if !self.enabled {
-            return;
-        }
         self.channel3.length = v as u16;
     }
 
@@ -734,10 +729,22 @@ impl SoundController {
         // Turning off sound controller turns off all voices.
         if !self.enabled {
             self.sample_cycles = 0.0;
-            self.channel1 = Default::default();
-            self.channel2 = Default::default();
-            self.channel3 = Default::default();
-            self.channel4 = Default::default();
+            self.channel1 = Channel1{
+                length: self.channel1.length,
+                ..Default::default()
+            };
+            self.channel2 = Channel2{
+                length: self.channel2.length,
+                ..Default::default()
+            };
+            self.channel3 = Channel3{
+                length: self.channel3.length,
+                ..Default::default()
+            };
+            self.channel4 = Channel4{
+                length: self.channel4.length,
+                ..Default::default()
+            };
             self.left_vol = 0;
             self.left_vin = false;
             self.right_vol = 0;
