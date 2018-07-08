@@ -6,6 +6,7 @@ const DUTY_CYCLES: [[f32; 8]; 4] = [
     [ 1.0, -1.0, -1.0, -1.0, -1.0,  1.0,  1.0,  1.0],
     [-1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0, -1.0],
 ];
+const NOISE_DIVISORS: [u16; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
 pub struct SoundController {
     sample_cycles: f64,
@@ -24,7 +25,7 @@ pub struct SoundController {
     channel3: Channel3, // Wave voice
     channel4: Channel4, // Noise voice
 
-    pub wave_ram: WaveRam,
+    wave_ram: [u8; 32],
 
     pub sample_queue: Vec<f32>,
 }
@@ -97,7 +98,7 @@ struct Channel1 {
     duty: u8,
     freq: u16,
     counter: bool,
-    timer: u16,
+    freq_timer: u16,
     pos: u8,
 }
 
@@ -147,13 +148,17 @@ impl Channel1 {
         } else { true }
     }
 
-    // fn get_output(&self) -> f32 {
-    //     if !self.on {
-    //         return 0.0;
-    //     }
-    //     DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize]
-    //         * (self.vol_env.val as f32) / 15.0
-    // }
+    fn get_output(&self, l: f32, r: f32) -> (f32, f32) {
+        if !self.on {
+            return (l, r);
+        }
+        let val = DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize]
+            * (self.vol_env.val as f32) / 15.0;
+        (
+            l + if self.left  { val } else { 0.0 },
+            r + if self.right { val } else { 0.0 }
+        )
+    }
 }
 
 #[derive(Default)]
@@ -166,18 +171,22 @@ struct Channel2 {
     vol_env: VolumeEnvelope,
     freq: u16,
     counter: bool,
-    timer: u16,
+    freq_timer: u16,
     pos: u8,
 }
 
 impl Channel2 {
-    // fn get_output(&self) -> f32 {
-    //     if !self.on {
-    //         return 0.0;
-    //     }
-    //     DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize]
-    //         * (self.vol_env.val as f32) / 15.0
-    // }
+    fn get_output(&self, l: f32, r: f32) -> (f32, f32) {
+        if !self.on {
+            return (l, r);
+        }
+        let val = DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize]
+            * (self.vol_env.val as f32) / 15.0;
+        (
+            l + if self.left  { val } else { 0.0 },
+            r + if self.right { val } else { 0.0 }
+        )
+    }
 }
 
 #[derive(Default)]
@@ -190,8 +199,23 @@ struct Channel3 {
     level: u8,
     freq: u16,
     counter: bool,
-    pos: u8,
-    timer: u16,
+    pos: usize,
+    freq_timer: u16,
+}
+
+impl Channel3 {
+    fn get_output(&self, l: f32, r: f32, wav: u8) -> (f32, f32) {
+        if !self.on {
+            return (l, r);
+        }
+        let wav = (if self.level == 0 { 0. }
+                   else if self.level == 1 { wav as f32 }
+                   else { (wav >> (self.level - 1)) as f32 }) / 15.0;
+        (
+            l + if self.left  { wav } else { 0.0 },
+            r + if self.right { wav } else { 0.0 }
+        )
+    }
 }
 
 #[derive(Default)]
@@ -202,19 +226,32 @@ struct Channel4 {
     length: u8,
     vol_env: VolumeEnvelope,
     div_ratio: u8,
-    poly_steps: bool,
+    poly_7bit: bool,
     poly_freq: u8,
     counter: bool,
+    lfsr: u16,
+    freq_timer: u16,
 }
 
-pub struct WaveRam {
-    pub data: [u8; 16],
-}
+impl Channel4 {
+    fn noise_clock(&mut self) {
+        let new_bit = (self.lfsr & 1) ^ ((self.lfsr & 2) >> 1);
+        self.lfsr >>= 1;
+        self.lfsr |= new_bit << 14;
+        if self.poly_7bit { self.lfsr |= new_bit << 6; }
+    }
 
-impl WaveRam {
-    // fn get_step(&self, n: u8) -> f32 {
-    //     (self.data[(n / 2) as usize] >> (n % 2 * 4) & 0b1111) as f32
-    // }
+    fn get_output(&self, l: f32, r: f32) -> (f32, f32) {
+        if !self.on {
+            return (l, r);
+        }
+        let val = if (self.lfsr & 1) ^ 1 == 1 { 1.0 } else { -1.0 }
+            * (self.vol_env.val as f32) / 15.0;;
+        (
+            l + if self.left  { val } else { 0.0 },
+            r + if self.right { val } else { 0.0 }
+        )
+    }
 }
 
 impl SoundController {
@@ -231,7 +268,7 @@ impl SoundController {
             channel2: Default::default(),
             channel3: Default::default(),
             channel4: Default::default(),
-            wave_ram: WaveRam{data: [0; 16]},
+            wave_ram: [0; 32],
 
             sample_queue: Vec::new(),
         }
@@ -265,25 +302,35 @@ impl SoundController {
         }
 
         if self.channel1.on {
-            self.channel1.timer += 4;
-            if (self.channel1.timer / 4) >= (2048 - self.channel1.freq) {
+            self.channel1.freq_timer += 4;
+            if (self.channel1.freq_timer / 4) >= (2048 - self.channel1.freq) {
                 self.channel1.pos = self.channel1.pos.wrapping_add(1);
-                self.channel1.timer = 0;
+                self.channel1.freq_timer = 0;
             }
         }
 
         if self.channel2.on {
-            self.channel2.timer += 4;
-            if (self.channel2.timer / 4) >= (2048 - self.channel2.freq) {
+            self.channel2.freq_timer += 4;
+            if (self.channel2.freq_timer / 4) >= (2048 - self.channel2.freq) {
                 self.channel2.pos = self.channel2.pos.wrapping_add(1);
-                self.channel2.timer = 0;
+                self.channel2.freq_timer = 0;
             }
         }
 
         if self.channel3.on {
-            self.channel3.timer += 1;
-            if (self.channel3.timer / 16) == (2048 - self.channel3.freq) {
+            self.channel3.freq_timer += 4;
+            if (self.channel3.freq_timer / 2) >= (2048 - self.channel3.freq) {
                 self.channel3.pos = (self.channel3.pos + 1) % 32;
+                self.channel3.freq_timer = 0;
+            }
+        }
+
+        if self.channel4.on {
+            self.channel4.freq_timer += 4;
+            let freq = NOISE_DIVISORS[self.channel4.div_ratio as usize] << self.channel4.poly_freq;
+            if (self.channel4.freq_timer / 8) >= freq {
+                self.channel4.noise_clock();
+                self.channel4.freq_timer = 0;
             }
         }
 
@@ -296,24 +343,28 @@ impl SoundController {
     }
 
     fn generate_sample(&mut self) {
-        let mut l = 0.0;
-        let mut r = 0.0;
+        let l = 0.0;
+        let r = 0.0;
 
-        if self.channel1.on {
-            let val = DUTY_CYCLES[self.channel1.duty as usize][(self.channel1.pos & 7) as usize];
-            let vol = (self.channel1.vol_env.val as f32) / 15.0;
-            l = val * vol;
-            r = val * vol;
-        }
+        let (l, r) = self.channel1.get_output(l, r);
+        let (l, r) = self.channel2.get_output(l, r);
+        let (l, r) = self.channel3.get_output(l, r, self.wave_ram[self.channel3.pos]);
+        let (l, r) = self.channel4.get_output(l, r);
 
-        // if self.channel3.on {
-        //     l = self.channel3.wave_ram.get_step(self.channel3.pos) / 15.0 * 0.5;
-        //     r = self.channel3.wave_ram.get_step(self.channel3.pos) / 15.0 * 0.5;
-        // }
+        // Divide each value by the number of channels.
+        let l = l / 4.; 
+        let r = r / 4.;
+
+        // Master volume control.
+        let l = l * (self.left_vol as f32) / 7.;
+        let r = r * (self.right_vol as f32) / 7.;
 
         if cfg!(test) {
             return;
         }
+
+        let l = l * 0.1;
+        let r = r * 0.1;
 
         self.sample_queue.push(l);
         self.sample_queue.push(r);
@@ -529,6 +580,9 @@ impl SoundController {
             return;
         }
         self.channel3.enabled = v & 0b1000_0000 > 0;
+        if !self.channel3.enabled {
+            self.channel3.on = false;
+        }
     }
 
     pub fn read_nr31(&self) -> u8 {
@@ -591,7 +645,6 @@ impl SoundController {
         if v & 0b1000_0000 > 0 {
             if self.channel3.enabled {
                 self.channel3.on = true;
-                self.channel3.timer = 0;
                 self.channel3.pos = 0;
             }
 
@@ -626,7 +679,7 @@ impl SoundController {
     pub fn read_nr43(&self) -> u8 {
         0
             | self.channel4.div_ratio
-            | if self.channel4.poly_steps { 0b0000_1000 } else { 0 }
+            | if self.channel4.poly_7bit { 0b0000_1000 } else { 0 }
             | (self.channel4.poly_freq << 4)
     }
 
@@ -635,7 +688,7 @@ impl SoundController {
             return;
         }
         self.channel4.div_ratio  = v & 0b0000_0111;
-        self.channel4.poly_steps = v & 0b0000_1000 > 0;
+        self.channel4.poly_7bit  = v & 0b0000_1000 > 0;
         self.channel4.poly_freq = (v & 0b1111_0000) >> 4;
     }
 
@@ -661,10 +714,14 @@ impl SoundController {
         }
 
         if v & 0b1000_0000 > 0 {
+            self.channel4.on = true;
+            self.channel4.lfsr = 0b0111_1111_1111_1111;
+
             self.channel4.vol_env.reload();
-            if !self.channel4.vol_env.is_zero() {
-                self.channel4.on = true;
+            if self.channel4.vol_env.is_zero() {
+                self.channel4.on = false;
             }
+
             if self.channel4.length == 64 {
                 self.channel4.length = if self.channel4.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
             }
@@ -752,5 +809,19 @@ impl SoundController {
         } else {
             self.frame_seq_timer = 0;
         }
+    }
+
+    pub fn wave_read(&self, addr: u16) -> u8 {
+        if self.channel3.on {
+        }
+
+        let base = (addr as usize)*2;
+        self.wave_ram[base] << 4 | self.wave_ram[base+1]
+    }
+
+    pub fn wave_write(&mut self, addr: u16, v: u8) {
+        let base = (addr as usize) * 2;
+        self.wave_ram[base] = v >> 4;
+        self.wave_ram[base + 1] = v & 0b1111;
     }
 }

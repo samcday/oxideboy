@@ -850,7 +850,7 @@ impl CPU {
             0xFF24            => self.sound.read_nr50(),
             0xFF25            => self.sound.read_nr51(),
             0xFF26            => self.sound.read_nr52(),
-            0xFF30 ... 0xFF3F => self.sound.wave_ram.data[(addr - 0xFF30) as usize],
+            0xFF30 ... 0xFF3F => self.sound.wave_read(addr - 0xFF30),
 
             // PPU
             0xFF40            => self.ppu.read_lcdc(),
@@ -942,7 +942,7 @@ impl CPU {
             0xFF24            => { self.sound.write_nr50(v) }
             0xFF25            => { self.sound.write_nr51(v) }
             0xFF26            => { self.sound.write_nr52(v) }
-            0xFF30 ... 0xFF3F => { self.sound.wave_ram.data[(addr - 0xFF30) as usize] = v }
+            0xFF30 ... 0xFF3F => { self.sound.wave_write(addr - 0xFF30, v) }
 
             // PPU
             0xFF40            => { self.ppu.write_lcdc(v) }
