@@ -8,12 +8,13 @@ const COLOR_MAPPING: [u32; 4] = [
     0xFF081820,
 ];
 const EMPTY_TILE: TileEntry = TileEntry{data: [[0; 8]; 8]};
+const DEFAULT_PALETTE: Palette = Palette{entries: [0, 3, 3, 3]};
 
 pub struct PPU {
     pub enabled: bool,          // Master switch to turn LCD on/off.
     pub state: PPUState,
     pub prev_state: PPUState,   // STAT reports the current mode perpetually 1 cycle late
-    cycles: u16,                // Counts how many CPU cycles have elapsed in the current PPU stage.
+    pub cycles: u16,            // Counts how many CPU cycles have elapsed in the current PPU stage.
 
     pub scy: u8,
     pub scx: u8,
@@ -422,7 +423,7 @@ impl PPU {
 
     // Compute value of the STAT register.
     pub fn read_stat(&self) -> u8 {
-        0
+        0b1000_0000 // Unused bits
             | match self.prev_state {
                 HBlank(_)             => 0b0000_0000,
                 VBlank                => 0b0000_0001,
@@ -500,7 +501,7 @@ impl OAMEntry {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct TileEntry {
     data: [[u8; 8]; 8]
 }
@@ -543,7 +544,7 @@ impl TileEntry {
 pub struct Palette { entries: [u8; 4] }
 impl Palette {
     pub fn pack(&self) -> u8 {
-        self.entries[0] | self.entries[1] << 2 | self.entries[2] << 4 | self.entries[3] << 6
+        self.entries[0] | (self.entries[1] << 2) | (self.entries[2] << 4) | (self.entries[3] << 6)
     }
     pub fn unpack(&mut self, v: u8) {
         self.entries[0] =  v & 0b00000011;
@@ -552,7 +553,6 @@ impl Palette {
         self.entries[3] = (v & 0b11000000) >> 6;
     }
 }
-const DEFAULT_PALETTE: Palette = Palette{entries: [0, 1, 2, 3]};
 
 #[cfg(test)]
 mod tests {

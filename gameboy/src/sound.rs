@@ -20,7 +20,7 @@ pub struct SoundController {
     left_vin: bool,
     right_vin: bool,
 
-    chan1: Channel1, // Tone & Sweep voice
+    pub chan1: Channel1, // Tone & Sweep voice
     chan2: Channel2, // Tone voice
     chan3: Channel3, // Wave voice
     chan4: Channel4, // Noise voice
@@ -31,12 +31,12 @@ pub struct SoundController {
 }
 
 #[derive(Debug, Default)]
-struct VolumeEnvelope {
-    default: u8,
-    inc: bool,
-    steps: u8,
-    val: u8,
-    timer: u8,
+pub struct VolumeEnvelope {
+    pub default: u8,
+    pub inc: bool,
+    pub steps: u8,
+    pub val: u8,
+    pub timer: u8,
 }
 
 impl VolumeEnvelope {
@@ -82,8 +82,8 @@ impl VolumeEnvelope {
 }
 
 #[derive(Debug, Default)]
-struct Channel1 {
-    on: bool,
+pub struct Channel1 {
+    pub on: bool,
     left: bool, right: bool,
     sweep_shift: u8,
     sweep_sub: bool,
@@ -92,7 +92,7 @@ struct Channel1 {
     sweep_shadow_freq: u16,
     sweep_enabled: bool,
     sweep_has_negated: bool,
-    vol_env: VolumeEnvelope,
+    pub vol_env: VolumeEnvelope,
     length: u16,
     duty: u8,
     freq: u16,

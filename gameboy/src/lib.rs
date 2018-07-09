@@ -1,7 +1,5 @@
-
 // TODO: how efficient is match expr in decode methods? Should we be using rust-phf instead?
 // TODO: how efficient is the mem addr matching in mem_read/mem_write functions?
-
 pub mod ppu;
 mod sound;
 
@@ -407,7 +405,7 @@ pub struct CPU {
     l: u8,
     f: CpuFlags,
     sp: u16,
-    pc: u16,
+    pub pc: u16,
 
     bootrom_enabled: bool,
 
@@ -467,13 +465,14 @@ pub struct CPU {
 impl CPU {
     pub fn new(rom: Vec<u8>) -> Self {
         Self{
-            a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Default::default(), sp: 0, pc: 0,
+            a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Default::default(),
+            sp: 0, pc: 0,
             bootrom_enabled: true,
             ram: [0; 0x2000], hram: [0; 0x7F],
             halted: false, ime: false, ime_defer: false, ie: 0, if_: 0,
             ppu: ppu::PPU::new(),
             sound: sound::SoundController::new(),
-            div: 0xABCC, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0, tima_overflow: false, tima_new: false,
+            div: 0, tima: 0, tma: 0, timer_enabled: false, timer_freq: 0, tima_overflow: false, tima_new: false,
             joypad_btn: false, joypad_dir: false, joypad: Default::default(),
             sb: None, serial_transfer: false, serial_internal_clock: false,
             dma_reg: 0, dma_request: false, dma_active: false, dma_from: 0, dma_idx: 0,
@@ -484,6 +483,81 @@ impl CPU {
             breakpoint_hit: false,
             mooneye_breakpoint: false,
         }
+    }
+
+    /// Skips emulating the bootrom (scrolling Nintendo logo) and just ensures all internal state looks like it ran.
+    pub fn skip_bootrom(&mut self) {
+        self.pc = 0x100;
+        self.sp = 0xFFFE;
+        self.div = 0x1800;
+        self.if_ = 0x1;
+        
+        self.a = 0x01;
+        self.b = 0xFF;
+        self.c = 0x13;
+        self.e = 0xC1;
+        self.h = 0x84;
+        self.l = 0x03;
+
+        // Ensure PPU has correct state (enabled, BG enabled, etc)
+        self.ppu.write_lcdc(0x91);
+        // PPU should be in the middle of a VBlank.
+        self.ppu.state = ppu::PPUState::VBlank;
+        self.ppu.prev_state = ppu::PPUState::VBlank;
+        self.ppu.ly = 145;
+        self.ppu.cycles = 144;
+        // Setup Nintendo logo in tilemap.
+        let mut addr = 0x1904;
+        for v in 1..=12 {
+            self.ppu.write_vram(addr, v);
+            addr += 1;
+        }
+        // TODO: not in DMG0.
+        // self.ppu.write_vram(addr, 0x19);
+        addr = 0x1924;
+        for v in 13..=24 {
+            self.ppu.write_vram(addr, v);
+            addr += 1;
+        }
+        // Copy Nintendo logo data from cart.
+        let mut vram_addr = 0x10;
+        let mut src_addr = 0x104;
+        for _ in 0..48 {
+            let b = self.mem_get8(src_addr);
+            src_addr += 1;
+            // Double up each bit in the source byte, using sorcery.
+            // The best kind of sorcery too: copy/pasted from the interwebz.
+            let z = (((b as u64).wrapping_mul(0x0101010101010101) & 0x8040201008040201).wrapping_mul(0x0102040810204081) >> 49) & 0x5555 |
+                    (((b as u64).wrapping_mul(0x0101010101010101) & 0x8040201008040201).wrapping_mul(0x0102040810204081) >> 48) & 0xAAAAu64;
+            self.ppu.write_vram(vram_addr, (z >> 8) as u8); vram_addr += 2;
+            self.ppu.write_vram(vram_addr, (z >> 8) as u8); vram_addr += 2;
+            self.ppu.write_vram(vram_addr, z as u8); vram_addr += 2;
+            self.ppu.write_vram(vram_addr, z as u8); vram_addr += 2;
+        }
+
+        // TODO: not in DMG0 mode.
+        // let mut src_addr = 0xD8;
+        // for _ in 0..8 {
+        //     let v = self.mem_get8(src_addr);
+        //     self.ppu.write_vram(vram_addr, v);
+        //     src_addr += 1;
+        //     vram_addr += 2;
+        // }
+
+        // After bootrom is finished, sound1 is still enabled but muted.
+        self.sound.chan1.vol_env = sound::VolumeEnvelope{
+            default: 0b1111,
+            inc: false,
+            steps: 0b011,
+            val: 0,
+            timer: 0,
+        };
+        self.sound.chan1.on = true;
+        self.sound.write_nr11(0b1000_0000);
+        self.sound.write_nr50(0x77);
+        self.sound.write_nr51(0xF3);
+
+        self.bootrom_enabled = false;
     }
 
     pub fn pc(&self) -> u16 {
@@ -612,7 +686,7 @@ impl CPU {
     }
 
     fn get_tac(&self) -> u8 {
-        (if self.timer_enabled { 0b100 } else { 0 }) | match self.timer_freq {
+        0b1111_1000 | (if self.timer_enabled { 0b100 } else { 0 }) | match self.timer_freq {
             0 => 0,
             1024 => 0,
             16 => 1,
@@ -821,7 +895,7 @@ impl CPU {
             0xFF02            => self.read_sc(),
 
             // Timer
-            0xFF04            => ((self.div & 0xFFFF) >> 8) as u8,
+            0xFF04            => (self.div >> 8) as u8,
             0xFF05            => self.tima,
             0xFF06            => self.tma,
             0xFF07            => self.get_tac(),
@@ -866,11 +940,8 @@ impl CPU {
             0xFF49            => self.ppu.obp1.pack(),
             0xFF4A            => self.ppu.wy as u8,
             0xFF4B            => self.ppu.wx as u8,
-
-            0xFF4D            => 0x00,      // KEY1 for CGB.
-            0xFF50            => if self.bootrom_enabled { 0 } else { 1 },
             0xFF80 ... 0xFFFE => self.hram[(addr - 0xFF80) as usize],
-            0xFFFF            => 0xE0 | self.ie,    // Unused IE bits are always 1
+            0xFFFF            => self.ie,
 
             _                 => 0xFF,
         }
@@ -956,7 +1027,9 @@ impl CPU {
             0xFF47            => { self.ppu.bgp.unpack(v) }
             0xFF48            => { self.ppu.obp0.unpack(v) }
             0xFF49            => { self.ppu.obp1.unpack(v) }
-            0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; }
+            0xFF50 if self.bootrom_enabled && v == 1 => {
+                self.bootrom_enabled = false;
+            }
 
             0xFF4A            => { self.ppu.wy = v.into() },
             0xFF4B            => { self.ppu.wx = v.into() },
@@ -2104,8 +2177,9 @@ mod tests {
     use super::*;
     use std::time::Instant;
 
-    fn run_mooneye_test(rom: &[u8]) {
+    fn run_mooneye_test(rom: &[u8], enable_bootrom: bool) {
         let mut cpu = CPU::new(rom.to_vec());
+        if !enable_bootrom { cpu.skip_bootrom(); }
 
         let start = Instant::now();
         while !cpu.mooneye_breakpoint {
@@ -2125,69 +2199,74 @@ mod tests {
         }
     }
 
-    #[test] fn mooneye_acceptance_bits_mem_oam() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/mem_oam.gb")); }
-    #[test] fn mooneye_acceptance_bits_reg_f() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/reg_f.gb")); }
+    #[test] fn mooneye_acceptance_bits_mem_oam() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/mem_oam.gb"), false); }
+    #[test] fn mooneye_acceptance_bits_reg_f() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/reg_f.gb"), false); }
 
-    #[test] fn mooneye_acceptance_interrupts_ie_push() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/interrupts/ie_push.gb")); }
+    #[test] fn mooneye_acceptance_interrupts_ie_push() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/interrupts/ie_push.gb"), false); }
 
-    #[test] fn mooneye_acceptance_oam_dma_basic() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/basic.gb")); }
-    #[test] fn mooneye_acceptance_oam_dma_reg_read() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/reg_read.gb")); }
+    #[test] fn mooneye_acceptance_oam_dma_basic() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/basic.gb"), false); }
+    #[test] fn mooneye_acceptance_oam_dma_reg_read() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma/reg_read.gb"), false); }
 
-    #[test] fn mooneye_acceptance_ppu_hblank_ly_scx_timing_gs() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/hblank_ly_scx_timing-GS.gb")); }
-    #[test] fn mooneye_acceptance_ppu_intr_1_2_timing_gs() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_1_2_timing-GS.gb")); }
-    #[test] fn mooneye_acceptance_ppu_intr_2_0_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_0_timing.gb")); }
-    #[test] fn mooneye_acceptance_ppu_intr_2_mode0_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_mode0_timing.gb")); }
-    #[test] fn mooneye_acceptance_ppu_intr_2_mode0_timing_sprites() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_mode0_timing_sprites.gb")); }
-    #[test] fn mooneye_acceptance_ppu_intr_2_mode3_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_mode3_timing.gb")); }
-    #[test] fn mooneye_acceptance_ppu_intr_2_oam_ok_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_oam_ok_timing.gb")); }
+    #[test] fn mooneye_acceptance_ppu_hblank_ly_scx_timing_gs() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/hblank_ly_scx_timing-GS.gb"), false); }
+    #[test] fn mooneye_acceptance_ppu_intr_1_2_timing_gs() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_1_2_timing-GS.gb"), false); }
+    #[test] fn mooneye_acceptance_ppu_intr_2_0_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_0_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_ppu_intr_2_mode0_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_mode0_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_ppu_intr_2_mode0_timing_sprites() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_mode0_timing_sprites.gb"), false); }
+    #[test] fn mooneye_acceptance_ppu_intr_2_mode3_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_mode3_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_ppu_intr_2_oam_ok_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ppu/intr_2_oam_ok_timing.gb"), false); }
 
-    #[test] fn mooneye_acceptance_timer_div_write() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/div_write.gb")); }
-    #[test] fn mooneye_acceptance_timer_rapid_toggle() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/rapid_toggle.gb")); }
-    #[test] fn mooneye_acceptance_timer_tim00() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim00.gb")); }
-    #[test] fn mooneye_acceptance_timer_tim00_div_trigger() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim00_div_trigger.gb")); }
-    #[test] fn mooneye_acceptance_timer_tim01() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim01.gb")); }
-    #[test] fn mooneye_acceptance_timer_tim01_div_trigger() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim01_div_trigger.gb")); }
-    #[test] fn mooneye_acceptance_timer_tim10() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim10.gb")); }
-    #[test] fn mooneye_acceptance_timer_tim10_div_trigger() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim10_div_trigger.gb")); }
-    #[test] fn mooneye_acceptance_timer_tim11() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim11.gb")); }
-    #[test] fn mooneye_acceptance_timer_tim11_div_trigger() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim11_div_trigger.gb")); }
-    #[test] fn mooneye_acceptance_timer_tima_reload() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_reload.gb")); }
-    #[test] fn mooneye_acceptance_timer_tima_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_write_reloading.gb")); }
-    #[test] fn mooneye_acceptance_timer_tma_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tma_write_reloading.gb")); }
+    #[test] fn mooneye_acceptance_timer_div_write() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/div_write.gb"), false); }
+    #[test] fn mooneye_acceptance_timer_rapid_toggle() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/rapid_toggle.gb"), false); }
+    #[test] fn mooneye_acceptance_timer_tim00() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim00.gb"), false); }
+    #[test] fn mooneye_acceptance_timer_tim00_div_trigger() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim00_div_trigger.gb"), false); }
+    #[test] fn mooneye_acceptance_timer_tim01() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim01.gb"), false); }
+    #[test] fn mooneye_acceptance_timer_tim01_div_trigger() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim01_div_trigger.gb"), false); }
+    #[test] fn mooneye_acceptance_timer_tim10() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim10.gb"), false); }
+    #[test] fn mooneye_acceptance_timer_tim10_div_trigger() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim10_div_trigger.gb"), false); }
+    #[test] fn mooneye_acceptance_timer_tim11() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim11.gb"), false); }
+    #[test] fn mooneye_acceptance_timer_tim11_div_trigger() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tim11_div_trigger.gb"), false); }
+    #[test] fn mooneye_acceptance_timer_tima_reload() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_reload.gb"), false); }
+    #[test] fn mooneye_acceptance_timer_tima_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tima_write_reloading.gb"), false); }
+    #[test] fn mooneye_acceptance_timer_tma_write_reloading() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/timer/tma_write_reloading.gb"), false); }
 
-    #[test] fn mooneye_acceptance_add_sp_e_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/add_sp_e_timing.gb")); }
-    #[test] fn mooneye_acceptance_call_cc_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/call_cc_timing.gb")); }
-    #[test] fn mooneye_acceptance_call_cc_timing2() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/call_cc_timing2.gb")); }
-    #[test] fn mooneye_acceptance_call_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/call_timing.gb")); }
-    #[test] fn mooneye_acceptance_call_timing2() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/call_timing2.gb")); }
-    #[test] fn mooneye_acceptance_div_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/div_timing.gb")); }
-    #[test] fn mooneye_acceptance_ei_sequence() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ei_sequence.gb")); }
-    #[test] fn mooneye_acceptance_ei_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ei_timing.gb")); }
-    #[test] fn mooneye_acceptance_halt_ime0_ei() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime0_ei.gb")); }
-    #[test] fn mooneye_acceptance_halt_ime0_nointr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime0_nointr_timing.gb")); }
-    #[test] fn mooneye_acceptance_halt_ime1_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime1_timing.gb")); }
-    #[test] fn mooneye_acceptance_if_ie_registers() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/if_ie_registers.gb")); }
-    #[test] fn mooneye_acceptance_intr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/intr_timing.gb")); }
-    #[test] fn mooneye_acceptance_jp_cc_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/jp_cc_timing.gb")); }
-    #[test] fn mooneye_acceptance_jp_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/jp_timing.gb")); }
-    #[test] fn mooneye_acceptance_ld_hl_sp_e_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ld_hl_sp_e_timing.gb")); }
-    #[test] fn mooneye_acceptance_oam_dma_restart() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_restart.gb")); }
-    #[test] fn mooneye_acceptance_oam_dma_start() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_start.gb")); }
-    #[test] fn mooneye_acceptance_oam_dma_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_timing.gb")); }
-    #[test] fn mooneye_acceptance_pop_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/pop_timing.gb")); }
-    #[test] fn mooneye_acceptance_push_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/push_timing.gb")); }
-    #[test] fn mooneye_acceptance_rapid_di_ei() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/rapid_di_ei.gb")); }
-    #[test] fn mooneye_acceptance_ret_cc_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ret_cc_timing.gb")); }
-    #[test] fn mooneye_acceptance_ret_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ret_timing.gb")); }
-    #[test] fn mooneye_acceptance_reti_intr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/reti_intr_timing.gb")); }
-    #[test] fn mooneye_acceptance_reti_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/reti_timing.gb")); }
-    #[test] fn mooneye_acceptance_rst_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/rst_timing.gb")); }
+    #[test] fn mooneye_acceptance_add_sp_e_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/add_sp_e_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_boot_hwio_dmg0() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/boot_hwio-dmg0.gb"), false); }
+    #[test] fn mooneye_acceptance_boot_hwio_dmg0_realbootrom() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/boot_hwio-dmg0.gb"), true); }
+    #[test] fn mooneye_acceptance_boot_regs_dmg0() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/boot_regs-dmg0.gb"), false); }
+    #[test] fn mooneye_acceptance_boot_regs_dmg0_realbootrom() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/boot_regs-dmg0.gb"), true); }
+    #[test] fn mooneye_acceptance_call_cc_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/call_cc_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_call_cc_timing2() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/call_cc_timing2.gb"), false); }
+    #[test] fn mooneye_acceptance_call_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/call_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_call_timing2() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/call_timing2.gb"), false); }
+    #[test] fn mooneye_acceptance_div_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/div_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_ei_sequence() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ei_sequence.gb"), false); }
+    #[test] fn mooneye_acceptance_ei_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ei_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_halt_ime0_ei() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime0_ei.gb"), false); }
+    #[test] fn mooneye_acceptance_halt_ime0_nointr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime0_nointr_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_halt_ime1_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/halt_ime1_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_if_ie_registers() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/if_ie_registers.gb"), false); }
+    #[test] fn mooneye_acceptance_intr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/intr_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_jp_cc_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/jp_cc_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_jp_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/jp_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_ld_hl_sp_e_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ld_hl_sp_e_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_oam_dma_restart() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_restart.gb"), false); }
+    #[test] fn mooneye_acceptance_oam_dma_start() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_start.gb"), false); }
+    #[test] fn mooneye_acceptance_oam_dma_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/oam_dma_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_pop_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/pop_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_push_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/push_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_rapid_di_ei() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/rapid_di_ei.gb"), false); }
+    #[test] fn mooneye_acceptance_ret_cc_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ret_cc_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_ret_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/ret_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_reti_intr_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/reti_intr_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_reti_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/reti_timing.gb"), false); }
+    #[test] fn mooneye_acceptance_rst_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/rst_timing.gb"), false); }
 
     #[test]
     fn cpu_instructions() {
         let rom = include_bytes!("../test/cpu_instrs.gb");
         let mut serial_output = String::new();
         let mut cpu = CPU::new(rom.to_vec());
+        cpu.skip_bootrom();
 
         while cpu.pc() != 0x681 {
             cpu.run();
@@ -2205,6 +2284,7 @@ mod tests {
         let rom = include_bytes!("../test/instr_timing.gb");
         let mut serial_output = String::new();
         let mut cpu = CPU::new(rom.to_vec());
+        cpu.skip_bootrom();
 
         while cpu.pc() != 0xC8A6 {
             cpu.run();
@@ -2222,6 +2302,7 @@ mod tests {
         let rom = include_bytes!("../test/mem_timing.gb");
         let mut serial_output = String::new();
         let mut cpu = CPU::new(rom.to_vec());
+        cpu.skip_bootrom();
 
         while cpu.pc() != 0x06A1 {
             cpu.run();

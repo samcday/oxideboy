@@ -49,6 +49,10 @@ fn main() -> Result<()> {
     let print_fps = env::var("PRINT_FPS").ok().unwrap_or(String::from("0")) == "1";
     let mut gameboy = gameboy::CPU::new(rom);
 
+    if !(env::var("RUN_BOOTROM").ok().unwrap_or(String::from("0")) == "1") {
+        gameboy.skip_bootrom();
+    }
+
     audio_device.resume();
 
     // gameboy.breakpoint = 0x681;
