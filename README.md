@@ -6,10 +6,9 @@ Nothing to really see here yet, unless you're really into terrible codez.
 
 # Current TODO list:
 
- * Pass all mooneye tests
- * Pass all gb-test-roms oam_bug tests
  * Pass all gb-test-roms dmg_sound tests
- * Implement sound
+ * Pass all gb-test-roms oam_bug tests
+ * Pass all mooneye tests
  * Finish MBC1 impl (sram)
  * GBVideoPlayer running smoothly
 

@@ -20,10 +20,10 @@ pub struct SoundController {
     left_vin: bool,
     right_vin: bool,
 
-    channel1: Channel1, // Tone & Sweep voice
-    channel2: Channel2, // Tone voice
-    channel3: Channel3, // Wave voice
-    channel4: Channel4, // Noise voice
+    chan1: Channel1, // Tone & Sweep voice
+    chan2: Channel2, // Tone voice
+    chan3: Channel3, // Wave voice
+    chan4: Channel4, // Noise voice
 
     wave_ram: [u8; 32],
 
@@ -40,7 +40,7 @@ struct VolumeEnvelope {
 }
 
 impl VolumeEnvelope {
-    fn from_u8(&mut self, v: u8) {
+    fn unpack(&mut self, v: u8) {
         self.steps   =  v & 0b0000_0111;
         self.inc     =  v & 0b0000_1000 > 0;
         self.default = (v & 0b1111_0000) >> 4;
@@ -50,7 +50,7 @@ impl VolumeEnvelope {
         }
     }
 
-    fn to_u8(&self) -> u8 {
+    fn pack(&self) -> u8 {
         0
             | self.steps
             | if self.inc { 0b0000_1000 } else { 0 }
@@ -67,17 +67,16 @@ impl VolumeEnvelope {
     }
 
     fn clock(&mut self) {
-        if self.val == 0 {
-            return;
-        }
-        self.timer -= 1;
-        if self.timer == 0 {
-            self.val = if self.inc {
-                 (self.val + 1).min(15)
-            } else {
-                self.val.saturating_sub(1)
-            };
-            self.timer = self.steps;
+        if self.val > 0 {
+            self.timer -= 1;
+            if self.timer == 0 {
+                self.val = if self.inc {
+                     (self.val + 1).min(15)
+                } else {
+                    self.val.saturating_sub(1)
+                };
+                self.timer = self.steps;
+            }
         }
     }
 }
@@ -94,7 +93,7 @@ struct Channel1 {
     sweep_enabled: bool,
     sweep_has_negated: bool,
     vol_env: VolumeEnvelope,
-    length: u8,
+    length: u16,
     duty: u8,
     freq: u16,
     counter: bool,
@@ -166,7 +165,7 @@ struct Channel2 {
     on: bool,
     left: bool,
     right: bool,
-    length: u8,
+    length: u16,
     duty: u8,
     vol_env: VolumeEnvelope,
     freq: u16,
@@ -223,7 +222,7 @@ struct Channel4 {
     on: bool,
     left: bool,
     right: bool,
-    length: u8,
+    length: u16,
     vol_env: VolumeEnvelope,
     div_ratio: u8,
     poly_7bit: bool,
@@ -264,10 +263,10 @@ impl SoundController {
             left_vol: 0, right_vol: 0,
             left_vin: false, right_vin: false,
 
-            channel1: Default::default(),
-            channel2: Default::default(),
-            channel3: Default::default(),
-            channel4: Default::default(),
+            chan1: Default::default(),
+            chan2: Default::default(),
+            chan3: Default::default(),
+            chan4: Default::default(),
             wave_ram: [0; 32],
 
             sample_queue: Vec::new(),
@@ -290,10 +289,13 @@ impl SoundController {
 
         if frame_seq_clock {
             if self.frame_seq_timer % 2 == 1 {
-                self.length_clock();
+                if self.chan1.counter { Self::length_clock(64,  &mut self.chan1.length, &mut self.chan1.on); }
+                if self.chan2.counter { Self::length_clock(64,  &mut self.chan2.length, &mut self.chan2.on); }
+                if self.chan3.counter { Self::length_clock(255, &mut self.chan3.length, &mut self.chan3.on); }
+                if self.chan4.counter { Self::length_clock(64,  &mut self.chan4.length, &mut self.chan4.on); }
             }
             if self.frame_seq_timer % 4 == 3 {
-                self.channel1.sweep_clock();
+                self.chan1.sweep_clock();
             }
             if self.frame_seq_timer == 8 {
                 self.vol_env_clock();
@@ -301,36 +303,36 @@ impl SoundController {
             }
         }
 
-        if self.channel1.on {
-            self.channel1.freq_timer += 4;
-            if (self.channel1.freq_timer / 4) >= (2048 - self.channel1.freq) {
-                self.channel1.pos = self.channel1.pos.wrapping_add(1);
-                self.channel1.freq_timer = 0;
+        if self.chan1.on {
+            self.chan1.freq_timer += 4;
+            if (self.chan1.freq_timer / 4) >= (2048 - self.chan1.freq) {
+                self.chan1.pos = self.chan1.pos.wrapping_add(1);
+                self.chan1.freq_timer = 0;
             }
         }
 
-        if self.channel2.on {
-            self.channel2.freq_timer += 4;
-            if (self.channel2.freq_timer / 4) >= (2048 - self.channel2.freq) {
-                self.channel2.pos = self.channel2.pos.wrapping_add(1);
-                self.channel2.freq_timer = 0;
+        if self.chan2.on {
+            self.chan2.freq_timer += 4;
+            if (self.chan2.freq_timer / 4) >= (2048 - self.chan2.freq) {
+                self.chan2.pos = self.chan2.pos.wrapping_add(1);
+                self.chan2.freq_timer = 0;
             }
         }
 
-        if self.channel3.on {
-            self.channel3.freq_timer += 4;
-            if (self.channel3.freq_timer / 2) >= (2048 - self.channel3.freq) {
-                self.channel3.pos = (self.channel3.pos + 1) % 32;
-                self.channel3.freq_timer = 0;
+        if self.chan3.on {
+            self.chan3.freq_timer += 4;
+            if (self.chan3.freq_timer / 2) >= (2048 - self.chan3.freq) {
+                self.chan3.pos = (self.chan3.pos + 1) % 32;
+                self.chan3.freq_timer = 0;
             }
         }
 
-        if self.channel4.on {
-            self.channel4.freq_timer += 4;
-            let freq = NOISE_DIVISORS[self.channel4.div_ratio as usize] << self.channel4.poly_freq;
-            if (self.channel4.freq_timer / 8) >= freq {
-                self.channel4.noise_clock();
-                self.channel4.freq_timer = 0;
+        if self.chan4.on {
+            self.chan4.freq_timer += 4;
+            let freq = NOISE_DIVISORS[self.chan4.div_ratio as usize] << self.chan4.poly_freq;
+            if (self.chan4.freq_timer / 8) >= freq {
+                self.chan4.noise_clock();
+                self.chan4.freq_timer = 0;
             }
         }
 
@@ -346,10 +348,10 @@ impl SoundController {
         let l = 0.0;
         let r = 0.0;
 
-        let (l, r) = self.channel1.get_output(l, r);
-        let (l, r) = self.channel2.get_output(l, r);
-        let (l, r) = self.channel3.get_output(l, r, self.wave_ram[self.channel3.pos]);
-        let (l, r) = self.channel4.get_output(l, r);
+        let (l, r) = self.chan1.get_output(l, r);
+        let (l, r) = self.chan2.get_output(l, r);
+        let (l, r) = self.chan3.get_output(l, r, self.wave_ram[self.chan3.pos]);
+        let (l, r) = self.chan4.get_output(l, r);
 
         // Divide each value by the number of channels.
         let l = l / 4.; 
@@ -370,88 +372,66 @@ impl SoundController {
         self.sample_queue.push(r);
     }
 
-    fn length_clock(&mut self) {
-        if self.channel1.counter && self.channel1.length < 64 {
-            self.channel1.length += 1;
-            if self.channel1.length == 64 {
-                self.channel1.on = false;
-            }
-        }
-
-        if self.channel2.counter && self.channel2.length < 64 {
-            self.channel2.length += 1;
-            if self.channel2.length == 64 {
-                self.channel2.on = false;
-            }
-        }
-
-        if self.channel3.counter && self.channel3.length < 256 {
-            self.channel3.length += 1;
-            if self.channel3.length == 256 {
-                self.channel3.on = false;
-            }
-        }
-
-        if self.channel4.counter && self.channel4.length < 64 {
-            self.channel4.length += 1;
-            if self.channel4.length == 64 {
-                self.channel4.on = false;
+    fn length_clock(max: u16, len: &mut u16, on: &mut bool) {
+        if *len < max {
+            *len += 1;
+            if *len == max {
+                *on = false;
             }
         }
     }
 
     fn vol_env_clock(&mut self) {
-        self.channel1.vol_env.clock();
-        self.channel2.vol_env.clock();
-        self.channel4.vol_env.clock();
+        self.chan1.vol_env.clock();
+        self.chan2.vol_env.clock();
+        self.chan4.vol_env.clock();
     }
 
     pub fn read_nr10(&self) -> u8 {
         0b1000_0000 // Unreadable bits
-            | self.channel1.sweep_shift
-            | if self.channel1.sweep_sub { 0b0000_1000 } else { 0 }
-            | (self.channel1.sweep_period << 4)
+            | self.chan1.sweep_shift
+            | if self.chan1.sweep_sub { 0b0000_1000 } else { 0 }
+            | (self.chan1.sweep_period << 4)
     }
 
     pub fn write_nr10(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        let was_sub = self.channel1.sweep_sub;
-        self.channel1.sweep_shift  =  v & 0b0000_0111;
-        self.channel1.sweep_sub    =  v & 0b0000_1000 > 0;
-        self.channel1.sweep_period = (v & 0b0111_0000) >> 4;
+        let was_sub = self.chan1.sweep_sub;
+        self.chan1.sweep_shift  =  v & 0b0000_0111;
+        self.chan1.sweep_sub    =  v & 0b0000_1000 > 0;
+        self.chan1.sweep_period = (v & 0b0111_0000) >> 4;
 
         // If, since enabling sweep, we've subtracted freqency, then switching from subtraction mode to
         // addition mode causes the channel to be instantly disabled.
-        if self.channel1.sweep_has_negated && was_sub && !self.channel1.sweep_sub {
-            self.channel1.on = false;
+        if self.chan1.sweep_has_negated && was_sub && !self.chan1.sweep_sub {
+            self.chan1.on = false;
         }
     }
 
     pub fn read_nr11(&self) -> u8 {
-        0b0011_1111 // Unreadable bits
-            | (self.channel1.duty << 6)
+        /* Unreadable bits */ 0b0011_1111 | (self.chan1.duty << 6)
     }
 
     pub fn write_nr11(&mut self, v: u8) {
-        self.channel1.length =  v & 0b0011_1111;
+        self.chan1.length = v as u16 & 0b0011_1111;
         if self.enabled {
-            self.channel1.duty   = (v & 0b1100_0000) >> 6;
+            self.chan1.duty = (v & 0b1100_0000) >> 6;
         }
     }
 
     pub fn read_nr12(&self) -> u8 {
-        self.channel1.vol_env.to_u8()
+        self.chan1.vol_env.pack()
     }
 
     pub fn write_nr12(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        self.channel1.vol_env.from_u8(v);
-        if self.channel1.vol_env.is_zero() {
-            self.channel1.on = false;
+        self.chan1.vol_env.unpack(v);
+        if self.chan1.vol_env.is_zero() {
+            self.chan1.on = false;
         }
     }
 
@@ -460,72 +440,70 @@ impl SoundController {
     }
 
     pub fn write_nr13(&mut self, v: u8) {
-        self.channel1.freq = (self.channel1.freq & 0x700) | (v as u16);
+        self.chan1.freq = (self.chan1.freq & 0x700) | (v as u16);
     }
 
     pub fn read_nr14(&self) -> u8 {
-        0b1011_1111 // Unreadable bits
-            | (if self.channel1.counter { 0b0100_0000 } else { 0 })
+        /* Unreadable bits */ 0b1011_1111 | (if self.chan1.counter { 0b0100_0000 } else { 0 })
     }
 
     pub fn write_nr14(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        self.channel1.freq = (self.channel1.freq & 0xFF) | (((v & 0b111) as u16) << 8);
-        let prev_counter = self.channel1.counter;
-        self.channel1.counter = v & 0b0100_0000 > 0;
+        self.chan1.freq = (self.chan1.freq & 0xFF) | (((v & 0b111) as u16) << 8);
+        let prev_counter = self.chan1.counter;
+        self.chan1.counter = v & 0b0100_0000 > 0;
 
         // If length counter was previously disabled and is now being enabled, we force an extra
         // clock of the length immediately. This is a hardware quirk.
-        if self.frame_seq_timer % 2 == 1 && !prev_counter && self.channel1.counter {
-            self.channel1.length = (self.channel1.length + 1).min(64);
-            if self.channel1.length == 64 {
-                self.channel1.on = false;
+        if self.frame_seq_timer % 2 == 1 && !prev_counter && self.chan1.counter {
+            self.chan1.length = (self.chan1.length + 1).min(64);
+            if self.chan1.length == 64 {
+                self.chan1.on = false;
             }
         }
 
         if v & 0b1000_0000 > 0 {
-            self.channel1.on = true;
+            self.chan1.on = true;
 
-            self.channel1.vol_env.reload();
-            if self.channel1.vol_env.is_zero() {
-                self.channel1.on = false;
+            self.chan1.vol_env.reload();
+            if self.chan1.vol_env.is_zero() {
+                self.chan1.on = false;
             }
 
-            if !self.channel1.reload_sweep() {
-                self.channel1.on = false;
+            if !self.chan1.reload_sweep() {
+                self.chan1.on = false;
             }
 
-            if self.channel1.length == 64 {
-                self.channel1.length = if self.channel1.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
+            if self.chan1.length == 64 {
+                self.chan1.length = if self.chan1.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
             }
         }
     }
 
     pub fn read_nr21(&self) -> u8 {
-        0b0011_1111 // Unreadable bits
-            | (self.channel2.duty << 6)
+        /* Unreadable bits */ 0b0011_1111 | (self.chan2.duty << 6)
     }
 
     pub fn write_nr21(&mut self, v: u8) {
-        self.channel2.length =  v & 0b0011_1111;
+        self.chan2.length = v as u16 & 0b0011_1111;
         if self.enabled {
-            self.channel2.duty   = (v & 0b1100_0000) >> 6;
+            self.chan2.duty = (v & 0b1100_0000) >> 6;
         }
     }
 
     pub fn read_nr22(&self) -> u8 {
-        self.channel2.vol_env.to_u8()
+        self.chan2.vol_env.pack()
     }
 
     pub fn write_nr22(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        self.channel2.vol_env.from_u8(v);
-        if self.channel2.vol_env.is_zero() {
-            self.channel2.on = false;
+        self.chan2.vol_env.unpack(v);
+        if self.chan2.vol_env.is_zero() {
+            self.chan2.on = false;
         }
     }
 
@@ -534,54 +512,52 @@ impl SoundController {
     }
 
     pub fn write_nr23(&mut self, v: u8) {
-        self.channel2.freq = (self.channel2.freq & 0x700) | (v as u16);
+        self.chan2.freq = (self.chan2.freq & 0x700) | (v as u16);
     }
 
     pub fn read_nr24(&self) -> u8 {
-        0b1011_1111 // Unreadable bits
-            | (if self.channel2.counter { 0b0100_0000 } else { 0 })
+        /* Unreadable bits */ 0b1011_1111 | (if self.chan2.counter { 0b0100_0000 } else { 0 })
     }
 
     pub fn write_nr24(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        self.channel2.freq = (self.channel2.freq & 0xFF) | (((v & 0b111) as u16) << 8);
-        let prev_counter = self.channel2.counter;
-        self.channel2.counter = v & 0b0100_0000 > 0;
+        self.chan2.freq = (self.chan2.freq & 0xFF) | (((v & 0b111) as u16) << 8);
+        let prev_counter = self.chan2.counter;
+        self.chan2.counter = v & 0b0100_0000 > 0;
 
         // If length counter was previously disabled and is now being enabled, we force an extra
         // clock of the length immediately. This is a hardware quirk.
-        if self.frame_seq_timer % 2 == 1 && !prev_counter && self.channel2.counter {
-            self.channel2.length = (self.channel2.length + 1).min(64);
-            if self.channel2.length == 64 {
-                self.channel2.on = false;
+        if self.frame_seq_timer % 2 == 1 && !prev_counter && self.chan2.counter {
+            self.chan2.length = (self.chan2.length + 1).min(64);
+            if self.chan2.length == 64 {
+                self.chan2.on = false;
             }
         }
 
         if v & 0b1000_0000 > 0 {
-            self.channel2.vol_env.reload();
-            if !self.channel2.vol_env.is_zero() {
-                self.channel2.on = true;
+            self.chan2.vol_env.reload();
+            if !self.chan2.vol_env.is_zero() {
+                self.chan2.on = true;
             }
-            if self.channel2.length == 64 {
-                self.channel2.length = if self.channel2.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
+            if self.chan2.length == 64 {
+                self.chan2.length = if self.chan2.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
             }
         }
     }
 
     pub fn read_nr30(&self) -> u8 {
-        0b0111_1111 // Unreadable bits
-            | (if self.channel3.enabled { 0b1000_0000 } else { 0 })
+        /* Unreadable bits */ 0b0111_1111 | (if self.chan3.enabled { 0b1000_0000 } else { 0 })
     }
 
     pub fn write_nr30(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        self.channel3.enabled = v & 0b1000_0000 > 0;
-        if !self.channel3.enabled {
-            self.channel3.on = false;
+        self.chan3.enabled = v & 0b1000_0000 > 0;
+        if !self.chan3.enabled {
+            self.chan3.on = false;
         }
     }
 
@@ -590,22 +566,21 @@ impl SoundController {
     }
 
     pub fn write_nr31(&mut self, v: u8) {
-        self.channel3.length = v as u16;
+        self.chan3.length = v as u16;
     }
 
     pub fn read_nr32(&self) -> u8 {
-        0b1001_1111 // Unreadable bits
-            | (self.channel3.level << 5)
+        /* Unreadable bits */ 0b1001_1111 | (self.chan3.level << 5)
     }
 
     pub fn write_nr32(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        self.channel3.level = v >> 5;
+        self.chan3.level = v >> 5;
 
-        if self.channel3.level == 0 {
-            self.channel3.on = false;
+        if self.chan3.level == 0 {
+            self.chan3.on = false;
         }
     }
 
@@ -617,39 +592,38 @@ impl SoundController {
         if !self.enabled {
             return;
         }
-        self.channel3.freq = (self.channel3.freq & 0x700) | (v as u16);
+        self.chan3.freq = (self.chan3.freq & 0x700) | (v as u16);
     }
 
     pub fn read_nr34(&self) -> u8 {
-        0b1011_1111 // Unreadable bits
-            | (if self.channel3.counter { 0b0100_0000 } else { 0 })
+        /* Unreadable bits */ 0b1011_1111 | (if self.chan3.counter { 0b0100_0000 } else { 0 })
     }
 
     pub fn write_nr34(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        self.channel3.freq = (self.channel3.freq & 0xFF) | (((v & 7) as u16) << 8);
-        let prev_counter = self.channel3.counter;
-        self.channel3.counter = v & 0b0100_0000 > 0;
+        self.chan3.freq = (self.chan3.freq & 0xFF) | (((v & 7) as u16) << 8);
+        let prev_counter = self.chan3.counter;
+        self.chan3.counter = v & 0b0100_0000 > 0;
 
         // If length counter was previously disabled and is now being enabled, we force an extra
         // clock of the length immediately. This is a hardware quirk.
-        if self.frame_seq_timer % 2 == 1 && !prev_counter && self.channel3.counter {
-            self.channel3.length = (self.channel3.length + 1).min(256);
-            if self.channel3.length == 256 {
-                self.channel3.on = false;
+        if self.frame_seq_timer % 2 == 1 && !prev_counter && self.chan3.counter {
+            self.chan3.length = (self.chan3.length + 1).min(256);
+            if self.chan3.length == 256 {
+                self.chan3.on = false;
             }
         }
 
         if v & 0b1000_0000 > 0 {
-            if self.channel3.enabled {
-                self.channel3.on = true;
-                self.channel3.pos = 0;
+            if self.chan3.enabled {
+                self.chan3.on = true;
+                self.chan3.pos = 0;
             }
 
-            if self.channel3.length == 256 {
-                self.channel3.length = if self.channel3.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
+            if self.chan3.length == 256 {
+                self.chan3.length = if self.chan3.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
             }
         }
     }
@@ -659,71 +633,70 @@ impl SoundController {
     }
 
     pub fn write_nr41(&mut self, v: u8) {
-        self.channel4.length = v & 0b0011_1111;
+        self.chan4.length = v as u16 & 0b0011_1111;
     }
 
     pub fn read_nr42(&self) -> u8 {
-        self.channel4.vol_env.to_u8()
+        self.chan4.vol_env.pack()
     }
 
     pub fn write_nr42(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        self.channel4.vol_env.from_u8(v);
-        if self.channel4.vol_env.is_zero() {
-            self.channel4.on = false;
+        self.chan4.vol_env.unpack(v);
+        if self.chan4.vol_env.is_zero() {
+            self.chan4.on = false;
         }
     }
 
     pub fn read_nr43(&self) -> u8 {
         0
-            | self.channel4.div_ratio
-            | if self.channel4.poly_7bit { 0b0000_1000 } else { 0 }
-            | (self.channel4.poly_freq << 4)
+            | self.chan4.div_ratio
+            | if self.chan4.poly_7bit { 0b0000_1000 } else { 0 }
+            | (self.chan4.poly_freq << 4)
     }
 
     pub fn write_nr43(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        self.channel4.div_ratio  = v & 0b0000_0111;
-        self.channel4.poly_7bit  = v & 0b0000_1000 > 0;
-        self.channel4.poly_freq = (v & 0b1111_0000) >> 4;
+        self.chan4.div_ratio  = v & 0b0000_0111;
+        self.chan4.poly_7bit  = v & 0b0000_1000 > 0;
+        self.chan4.poly_freq = (v & 0b1111_0000) >> 4;
     }
 
     pub fn read_nr44(&self) -> u8 {
-        0b1011_1111 // Unreadable bits
-            | (if self.channel4.counter { 0b0100_0000 } else { 0 })
+        /* Unreadable bits */ 0b1011_1111 | (if self.chan4.counter { 0b0100_0000 } else { 0 })
     }
 
     pub fn write_nr44(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        let prev_counter = self.channel4.counter;
-        self.channel4.counter = v & 0b0100_0000 > 0;
+        let prev_counter = self.chan4.counter;
+        self.chan4.counter = v & 0b0100_0000 > 0;
 
         // If length counter was previously disabled and is now being enabled, we force an extra
         // clock of the length immediately. This is a hardware quirk.
-        if self.frame_seq_timer % 2 == 1 && !prev_counter && self.channel4.counter {
-            self.channel4.length = (self.channel4.length + 1).min(64);
-            if self.channel4.length == 64 {
-                self.channel4.on = false;
+        if self.frame_seq_timer % 2 == 1 && !prev_counter && self.chan4.counter {
+            self.chan4.length = (self.chan4.length + 1).min(64);
+            if self.chan4.length == 64 {
+                self.chan4.on = false;
             }
         }
 
         if v & 0b1000_0000 > 0 {
-            self.channel4.on = true;
-            self.channel4.lfsr = 0b0111_1111_1111_1111;
+            self.chan4.on = true;
+            self.chan4.lfsr = 0b0111_1111_1111_1111;
 
-            self.channel4.vol_env.reload();
-            if self.channel4.vol_env.is_zero() {
-                self.channel4.on = false;
+            self.chan4.vol_env.reload();
+            if self.chan4.vol_env.is_zero() {
+                self.chan4.on = false;
             }
 
-            if self.channel4.length == 64 {
-                self.channel4.length = if self.channel4.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
+            if self.chan4.length == 64 {
+                self.chan4.length = if self.chan4.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
             }
         }
     }
@@ -748,36 +721,35 @@ impl SoundController {
 
     pub fn read_nr51(&self) -> u8 {
         0
-            | if self.channel1.right { 0b0000_0001 } else { 0 }
-            | if self.channel2.right { 0b0000_0010 } else { 0 }
-            | if self.channel3.right { 0b0000_0100 } else { 0 }
-            | if self.channel4.right { 0b0000_1000 } else { 0 }
-            | if self.channel1.left  { 0b0001_0000 } else { 0 }
-            | if self.channel2.left  { 0b0010_0000 } else { 0 }
-            | if self.channel3.left  { 0b0100_0000 } else { 0 }
-            | if self.channel4.left  { 0b1000_0000 } else { 0 }
+            | if self.chan1.right { 0b0000_0001 } else { 0 }
+            | if self.chan2.right { 0b0000_0010 } else { 0 }
+            | if self.chan3.right { 0b0000_0100 } else { 0 }
+            | if self.chan4.right { 0b0000_1000 } else { 0 }
+            | if self.chan1.left  { 0b0001_0000 } else { 0 }
+            | if self.chan2.left  { 0b0010_0000 } else { 0 }
+            | if self.chan3.left  { 0b0100_0000 } else { 0 }
+            | if self.chan4.left  { 0b1000_0000 } else { 0 }
     }
 
     pub fn write_nr51(&mut self, v: u8) {
-        if !self.enabled {
-            return;
+        if self.enabled {
+            self.chan1.right = v & 0b0000_0001 > 0;
+            self.chan2.right = v & 0b0000_0010 > 0;
+            self.chan3.right = v & 0b0000_0100 > 0;
+            self.chan4.right = v & 0b0000_1000 > 0;
+            self.chan1.left  = v & 0b0001_0000 > 0;
+            self.chan2.left  = v & 0b0010_0000 > 0;
+            self.chan3.left  = v & 0b0100_0000 > 0;
+            self.chan4.left  = v & 0b1000_0000 > 0;
         }
-        self.channel1.right = v & 0b0000_0001 > 0;
-        self.channel2.right = v & 0b0000_0010 > 0;
-        self.channel3.right = v & 0b0000_0100 > 0;
-        self.channel4.right = v & 0b0000_1000 > 0;
-        self.channel1.left  = v & 0b0001_0000 > 0;
-        self.channel2.left  = v & 0b0010_0000 > 0;
-        self.channel3.left  = v & 0b0100_0000 > 0;
-        self.channel4.left  = v & 0b1000_0000 > 0;
     }
 
     pub fn read_nr52(&self) -> u8 {
         0b0111_0000 // Unreadable bits
-            | if self.channel1.on { 0b0000_0001 } else { 0 }
-            | if self.channel2.on { 0b0000_0010 } else { 0 }
-            | if self.channel3.on { 0b0000_0100 } else { 0 }
-            | if self.channel4.on { 0b0000_1000 } else { 0 }
+            | if self.chan1.on { 0b0000_0001 } else { 0 }
+            | if self.chan2.on { 0b0000_0010 } else { 0 }
+            | if self.chan3.on { 0b0000_0100 } else { 0 }
+            | if self.chan4.on { 0b0000_1000 } else { 0 }
             | if self.enabled     { 0b1000_0000 } else { 0 }
     }
 
@@ -786,22 +758,11 @@ impl SoundController {
         // Turning off sound controller turns off all voices.
         if !self.enabled {
             self.sample_cycles = 0.0;
-            self.channel1 = Channel1{
-                length: self.channel1.length,
-                ..Default::default()
-            };
-            self.channel2 = Channel2{
-                length: self.channel2.length,
-                ..Default::default()
-            };
-            self.channel3 = Channel3{
-                length: self.channel3.length,
-                ..Default::default()
-            };
-            self.channel4 = Channel4{
-                length: self.channel4.length,
-                ..Default::default()
-            };
+            // When resetting the channels, we preserve the length field only.
+            self.chan1 = Channel1{ length: self.chan1.length, ..Default::default() };
+            self.chan2 = Channel2{ length: self.chan2.length, ..Default::default() };
+            self.chan3 = Channel3{ length: self.chan3.length, ..Default::default() };
+            self.chan4 = Channel4{ length: self.chan4.length, ..Default::default() };
             self.left_vol = 0;
             self.left_vin = false;
             self.right_vol = 0;
@@ -812,7 +773,7 @@ impl SoundController {
     }
 
     pub fn wave_read(&self, addr: u16) -> u8 {
-        if self.channel3.on {
+        if self.chan3.on {
         }
 
         let base = (addr as usize)*2;
