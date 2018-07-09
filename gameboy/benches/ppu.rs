@@ -7,8 +7,7 @@ use test::Bencher;
 
 #[bench]
 fn bench_oam_search(b: &mut Bencher) {
-    let cb = &mut |_: &[u32]| {};
-    let mut ppu = gameboy::ppu::PPU::new(cb);
+    let mut ppu = gameboy::ppu::PPU::new();
     ppu.enabled = true;
     ppu.obj_enabled = true;
 
@@ -20,8 +19,7 @@ fn bench_oam_search(b: &mut Bencher) {
 
 #[bench]
 fn bench_scanline(b: &mut Bencher) {
-    let cb = &mut |_: &[u32]| {};
-    let mut ppu = gameboy::ppu::PPU::new(cb);
+    let mut ppu = gameboy::ppu::PPU::new();
     ppu.enabled = true;
     ppu.obj_enabled = true;
 
