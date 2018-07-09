@@ -291,7 +291,7 @@ impl SoundController {
             if self.frame_seq_timer % 2 == 1 {
                 if self.chan1.counter { Self::length_clock(64,  &mut self.chan1.length, &mut self.chan1.on); }
                 if self.chan2.counter { Self::length_clock(64,  &mut self.chan2.length, &mut self.chan2.on); }
-                if self.chan3.counter { Self::length_clock(255, &mut self.chan3.length, &mut self.chan3.on); }
+                if self.chan3.counter { Self::length_clock(256, &mut self.chan3.length, &mut self.chan3.on); }
                 if self.chan4.counter { Self::length_clock(64,  &mut self.chan4.length, &mut self.chan4.on); }
             }
             if self.frame_seq_timer % 4 == 3 {
