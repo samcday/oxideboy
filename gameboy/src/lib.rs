@@ -1,3 +1,4 @@
+
 // TODO: how efficient is match expr in decode methods? Should we be using rust-phf instead?
 // TODO: how efficient is the mem addr matching in mem_read/mem_write functions?
 
@@ -29,7 +30,7 @@ impl CpuFlags {
         self
     }
 
-    fn to_u8(&self) -> u8 {
+    fn pack(&self) -> u8 {
         0
             | if self.z { 0b1000_0000 } else { 0 }
             | if self.n { 0b0100_0000 } else { 0 }
@@ -37,7 +38,7 @@ impl CpuFlags {
             | if self.c { 0b0001_0000 } else { 0 }
     }
 
-    fn from_u8(&mut self, v: u8) {
+    fn unpack(&mut self, v: u8) {
         self.z = v & 0b1000_0000 > 0;
         self.n = v & 0b0100_0000 > 0;
         self.h = v & 0b0010_0000 > 0;
@@ -860,9 +861,9 @@ impl CPU {
             0xFF44            => self.ppu.ly as u8,
             0xFF45            => self.ppu.lyc as u8,
             0xFF46            => self.dma_reg,
-            0xFF47            => self.ppu.bgp.to_u8(),
-            0xFF48            => self.ppu.obp0.to_u8(),
-            0xFF49            => self.ppu.obp1.to_u8(),
+            0xFF47            => self.ppu.bgp.pack(),
+            0xFF48            => self.ppu.obp0.pack(),
+            0xFF49            => self.ppu.obp1.pack(),
             0xFF4A            => self.ppu.wy as u8,
             0xFF4B            => self.ppu.wx as u8,
 
@@ -952,9 +953,9 @@ impl CPU {
             0xFF44            => { }                   // LY is readonly.
             0xFF45            => { self.ppu.lyc = v.into() }
             0xFF46            => { self.dma(v) }
-            0xFF47            => { self.ppu.bgp.from_u8(v) }
-            0xFF48            => { self.ppu.obp0.from_u8(v) }
-            0xFF49            => { self.ppu.obp1.from_u8(v) }
+            0xFF47            => { self.ppu.bgp.unpack(v) }
+            0xFF48            => { self.ppu.obp0.unpack(v) }
+            0xFF49            => { self.ppu.obp1.unpack(v) }
             0xFF50 if self.bootrom_enabled && v == 1 => { self.bootrom_enabled = false; }
 
             0xFF4A            => { self.ppu.wy = v.into() },
@@ -1625,7 +1626,7 @@ impl CPU {
 
     fn get_reg16(&self, reg: Reg16) -> u16 {
         let (hi, lo) = match reg {
-            AF => { (self.a, self.f.to_u8()) },
+            AF => { (self.a, self.f.pack()) },
             BC => { (self.b, self.c) },
             DE => { (self.d, self.e) },
             HL => { (self.h, self.l) },
@@ -1639,7 +1640,7 @@ impl CPU {
         let (hi, lo) = match reg {
             AF => {
                 self.a = ((v & 0xFF00) >> 8) as u8;
-                self.f.from_u8(v as u8);
+                self.f.unpack(v as u8);
                 return;
             },
             BC => { (&mut self.b, &mut self.c) },
@@ -2094,7 +2095,7 @@ impl CPU {
     }
 
     fn core_panic(&self, msg: String) -> ! {
-        panic!("{}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}", msg, self.a, self.b, self.c, self.d, self.e, self.f.to_u8(), self.h, self.l, self.sp, self.pc);
+        panic!("{}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}", msg, self.a, self.b, self.c, self.d, self.e, self.f.pack(), self.h, self.l, self.sp, self.pc);
     }
 }
 

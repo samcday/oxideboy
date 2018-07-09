@@ -1,102 +1,13 @@
 use std::slice;
 
-// Models the 4 states the PPU can be in when it is active.
-#[derive(Clone, Debug, PartialEq)]
-pub enum PPUState {
-    OAMSearch,
-    PixelTransfer,
-    HBlank(u16),     // Number of cycles to remain in HBlank for.
-    VBlank,
-}
-use self::PPUState::{*};
-
+// The default palette colors, in ARGB8888 format.
 const COLOR_MAPPING: [u32; 4] = [
     0xFFE0F8D0,
     0xFF88C070,
     0xFF346856,
     0xFF081820,
 ];
-
-struct PixelTransferState {
-    ppu_cycles: u16,
-    cycle_budget: u16,
-    cycle_countdown: u8,
-    scanline: [u8; 176],
-    scanline_prio: [bool; 176],
-    x: u8,
-    tilemap_addr: usize,
-    fetch_obj: bool,
-    tile_y: usize,
-    in_win: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-#[repr(C)]
-pub struct OAMEntry {
-    y: u8,
-    x: u8,
-    code: u8,
-    attrs: u8,
-}
-
-#[derive(Copy, Clone)]
-pub struct TileEntry {
-    data: [[u8; 8]; 8]
-}
-impl TileEntry {
-    fn write(&self, dst: &mut [u8], dst_prio: &mut[bool], y: usize, sprite: bool, prio: bool, flip: bool, pal: &Palette) {
-        let mut tile_pos = if flip { 7 } else { 0 };
-        for i in 0..dst.len().min(8) {
-            let pix = self.data[y][tile_pos];
-            tile_pos = if flip { tile_pos - 1 } else { tile_pos + 1 };
-            if sprite {
-                if pix == 0 || dst_prio[i] || (!prio && dst[i] > 0) {
-                    continue;
-                }
-                dst_prio[i] = true;
-            } else {
-                dst_prio[i] = false;
-            }
-            dst[i] = pal.entries[pix as usize];
-        }
-    }
-    fn write_byte(&mut self, pos: u16, mut v: u8) {
-        let lo = pos % 2 == 0;
-        for (_, pix) in self.data[(pos / 2) as usize].iter_mut().rev().enumerate() {
-            *pix &= if lo { !1 } else { !2 };
-            *pix |= if lo { v & 1 } else { (v & 1) << 1};
-            v >>= 1;
-        }
-    }
-    fn get_byte(&self, pos: u16) -> u8 {
-        let lo = pos % 2 == 0;
-        let mut byte = 0;
-        for (idx, pix) in self.data[(pos / 2) as usize].iter().enumerate() {
-            byte |= if lo { pix & 1 } else { (pix & 2) >> 1 } << (7-idx);
-        }
-        byte
-    }
-}
-
 const EMPTY_TILE: TileEntry = TileEntry{data: [[0; 8]; 8]};
-
-impl OAMEntry {
-    fn priority(&self) -> bool {
-        self.attrs & 0x80 > 0
-    }
-
-    fn vert_flip(&self) -> bool {
-        self.attrs & 0x40 > 0
-    }
-
-    fn horz_flip(&self) -> bool {
-        self.attrs & 0x20 > 0
-    }
-
-    fn palette(&self) -> bool {
-        self.attrs & 0x10 > 0
-    }
-}
 
 pub struct PPU {
     pub enabled: bool,          // Master switch to turn LCD on/off.
@@ -183,7 +94,7 @@ impl PPU {
     fn clear_framebuffers(&mut self) {
         for framebuffer in self.framebuffers.iter_mut() {
             for pix in framebuffer.iter_mut() {
-                *pix = 0xFFE0F8D0;
+                *pix = COLOR_MAPPING[0];
             }
         }
     }
@@ -540,13 +451,101 @@ impl PPU {
     }
 }
 
+// Models the 4 states the PPU can be in when it is active.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PPUState {
+    OAMSearch,
+    PixelTransfer,
+    HBlank(u16),     // Number of cycles to remain in HBlank for.
+    VBlank,
+}
+use self::PPUState::{*};
+
+struct PixelTransferState {
+    ppu_cycles: u16,
+    cycle_budget: u16,
+    cycle_countdown: u8,
+    scanline: [u8; 176],
+    scanline_prio: [bool; 176],
+    x: u8,
+    tilemap_addr: usize,
+    fetch_obj: bool,
+    tile_y: usize,
+    in_win: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct OAMEntry {
+    y: u8,
+    x: u8,
+    code: u8,
+    attrs: u8,
+}
+impl OAMEntry {
+    fn priority(&self) -> bool {
+        self.attrs & 0x80 > 0
+    }
+
+    fn vert_flip(&self) -> bool {
+        self.attrs & 0x40 > 0
+    }
+
+    fn horz_flip(&self) -> bool {
+        self.attrs & 0x20 > 0
+    }
+
+    fn palette(&self) -> bool {
+        self.attrs & 0x10 > 0
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct TileEntry {
+    data: [[u8; 8]; 8]
+}
+impl TileEntry {
+    fn write(&self, dst: &mut [u8], dst_prio: &mut[bool], y: usize, sprite: bool, prio: bool, flip: bool, pal: &Palette) {
+        let mut tile_pos = if flip { 7 } else { 0 };
+        for i in 0..dst.len().min(8) {
+            let pix = self.data[y][tile_pos];
+            tile_pos = if flip { tile_pos - 1 } else { tile_pos + 1 };
+            if sprite {
+                if pix == 0 || dst_prio[i] || (!prio && dst[i] > 0) {
+                    continue;
+                }
+                dst_prio[i] = true;
+            } else {
+                dst_prio[i] = false;
+            }
+            dst[i] = pal.entries[pix as usize];
+        }
+    }
+    fn write_byte(&mut self, pos: u16, mut v: u8) {
+        let lo = pos % 2 == 0;
+        for (_, pix) in self.data[(pos / 2) as usize].iter_mut().rev().enumerate() {
+            *pix &= if lo { !1 } else { !2 };
+            *pix |= if lo { v & 1 } else { (v & 1) << 1};
+            v >>= 1;
+        }
+    }
+    fn get_byte(&self, pos: u16) -> u8 {
+        let lo = pos % 2 == 0;
+        let mut byte = 0;
+        for (idx, pix) in self.data[(pos / 2) as usize].iter().enumerate() {
+            byte |= if lo { pix & 1 } else { (pix & 2) >> 1 } << (7-idx);
+        }
+        byte
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct Palette { entries: [u8; 4] }
 impl Palette {
-    pub fn to_u8(&self) -> u8 {
+    pub fn pack(&self) -> u8 {
         self.entries[0] | self.entries[1] << 2 | self.entries[2] << 4 | self.entries[3] << 6
     }
-    pub fn from_u8(&mut self, v: u8) {
+    pub fn unpack(&mut self, v: u8) {
         self.entries[0] =  v & 0b00000011;
         self.entries[1] = (v & 0b00001100) >> 2;
         self.entries[2] = (v & 0b00110000) >> 4;
