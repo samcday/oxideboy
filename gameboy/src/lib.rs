@@ -457,8 +457,6 @@ pub struct CPU {
 
     // Debugging stuff.
     instr_addr: u16,            // Address of the current instruction
-    pub breakpoint: u16,
-    pub breakpoint_hit: bool,
     mooneye_breakpoint: bool,
 }
 
@@ -479,8 +477,6 @@ impl CPU {
             cart: Cartridge::from_rom(rom),
             cycle_count: 0,
             instr_addr: 0,
-            breakpoint: 0,
-            breakpoint_hit: false,
             mooneye_breakpoint: false,
         }
     }
@@ -2261,58 +2257,38 @@ mod tests {
     #[test] fn mooneye_acceptance_reti_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/reti_timing.gb"), false); }
     #[test] fn mooneye_acceptance_rst_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/rst_timing.gb"), false); }
 
-    #[test]
-    fn cpu_instructions() {
-        let rom = include_bytes!("../test/cpu_instrs.gb");
+    fn run_blargg_test(rom: &[u8]) {
         let mut serial_output = String::new();
         let mut cpu = CPU::new(rom.to_vec());
         cpu.skip_bootrom();
 
-        while cpu.pc() != 0x681 {
-            cpu.run();
-            let sb = cpu.sb.take();
-            if sb.is_some() {
-            serial_output.push(sb.unwrap() as char);
-            }
-        }
-
-        assert_eq!(serial_output, "cpu_instrs\n\n01:ok  02:ok  03:ok  04:ok  05:ok  06:ok  07:ok  08:ok  09:ok  10:ok  11:ok  ");
-    }
-
-    #[test]
-    fn instruction_timing() {
-        let rom = include_bytes!("../test/instr_timing.gb");
-        let mut serial_output = String::new();
-        let mut cpu = CPU::new(rom.to_vec());
-        cpu.skip_bootrom();
-
-        while cpu.pc() != 0xC8A6 {
+        loop {
             cpu.run();
             let sb = cpu.sb.take();
             if sb.is_some() {
                 serial_output.push(sb.unwrap() as char);
             }
-        }
 
-        assert_eq!(serial_output, "instr_timing\n\n\nPassed\n");
-    }
-
-    #[test]
-    fn mem_timing() {
-        let rom = include_bytes!("../test/mem_timing.gb");
-        let mut serial_output = String::new();
-        let mut cpu = CPU::new(rom.to_vec());
-        cpu.skip_bootrom();
-
-        while cpu.pc() != 0x06A1 {
-            cpu.run();
-            let sb = cpu.sb.take();
-            if sb.is_some() {
-                serial_output.push(sb.unwrap() as char);
+            if cpu.pc == 0xC18B {
+                return;
+            }
+            if cpu.pc == 0xC1B9 {
+                panic!("Tests failed.\n{}", serial_output);
             }
         }
-
-        assert_eq!(serial_output, "mem_timing\n\n01:ok  02:ok  03:ok  \n\nPassed all tests");
     }
+
+    #[test] fn blargg_cpu_instrs_01() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/01-special.gb")); }
+    #[test] fn blargg_cpu_instrs_02() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/02-interrupts.gb")); }
+    #[test] fn blargg_cpu_instrs_03() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/03-op sp,hl.gb")); }
+    #[test] fn blargg_cpu_instrs_04() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/04-op r,imm.gb")); }
+    #[test] fn blargg_cpu_instrs_05() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/05-op rp.gb")); }
+    #[test] fn blargg_cpu_instrs_06() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/06-ld r,r.gb")); }
+    #[test] fn blargg_cpu_instrs_07() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/07-jr,jp,call,ret,rst.gb")); }
+    #[test] fn blargg_cpu_instrs_08() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/08-misc instrs.gb")); }
+    #[test] fn blargg_cpu_instrs_09() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/09-op r,r.gb")); }
+    #[test] fn blargg_cpu_instrs_10() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/10-bit ops.gb")); }
+    #[test] fn blargg_cpu_instrs_11() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/11-op a,(hl).gb")); }
+    #[test] fn blargg_instr_timing() { run_blargg_test(include_bytes!("../test/blargg/instr_timing.gb")); }
+    #[test] fn blargg_mem_timing() { run_blargg_test(include_bytes!("../test/blargg/mem_timing.gb")); }
 }
-

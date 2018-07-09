@@ -55,8 +55,6 @@ fn main() -> Result<()> {
 
     audio_device.resume();
 
-    // gameboy.breakpoint = 0x681;
-
     let mut delta = 0;
     let start = Instant::now();
     let mut next_frame = FRAME_TIME;
@@ -146,10 +144,6 @@ fn main() -> Result<()> {
                 audio_device.queue(samples);
             }
             delta = new_delta;
-        }
-
-        if gameboy.breakpoint_hit {
-            break 'running;
         }
 
         if limit {
