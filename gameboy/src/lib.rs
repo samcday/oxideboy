@@ -2291,4 +2291,9 @@ mod tests {
     #[test] fn blargg_cpu_instrs_11() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/11-op a,(hl).gb")); }
     #[test] fn blargg_instr_timing() { run_blargg_test(include_bytes!("../test/blargg/instr_timing.gb")); }
     #[test] fn blargg_mem_timing() { run_blargg_test(include_bytes!("../test/blargg/mem_timing.gb")); }
+    #[test] fn blargg_dmg_sound_01() { run_blargg_test(include_bytes!("../test/blargg/dmg_sound/01-registers.gb")); }
+    // #[test] fn blargg_dmg_sound_02() { run_blargg_test(include_bytes!("../test/blargg/dmg_sound/02-len ctr.gb")); }
+    // #[test] fn blargg_dmg_sound_03() { run_blargg_test(include_bytes!("../test/blargg/dmg_sound/03-trigger.gb")); }
+    // #[test] fn blargg_dmg_sound_04() { run_blargg_test(include_bytes!("../test/blargg/dmg_sound/04-sweep.gb")); }
+    // #[test] fn blargg_dmg_sound_05() { run_blargg_test(include_bytes!("../test/blargg/dmg_sound/05-sweep details.gb")); }
 }

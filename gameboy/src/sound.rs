@@ -68,7 +68,7 @@ impl VolumeEnvelope {
 
     fn clock(&mut self) {
         if self.val > 0 {
-            self.timer -= 1;
+            self.timer = self.timer.saturating_sub(1);
             if self.timer == 0 {
                 self.val = if self.inc {
                      (self.val + 1).min(15)
@@ -328,7 +328,7 @@ impl SoundController {
         }
 
         if self.chan4.on {
-            self.chan4.freq_timer += 4;
+            self.chan4.freq_timer = self.chan4.freq_timer.saturating_add(4);
             let freq = NOISE_DIVISORS[self.chan4.div_ratio as usize] << self.chan4.poly_freq;
             if (self.chan4.freq_timer / 8) >= freq {
                 self.chan4.noise_clock();
