@@ -2257,7 +2257,7 @@ mod tests {
     #[test] fn mooneye_acceptance_reti_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/reti_timing.gb"), false); }
     #[test] fn mooneye_acceptance_rst_timing() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/rst_timing.gb"), false); }
 
-    fn run_blargg_test(rom: &[u8]) {
+    fn run_blargg_serial_test(rom: &[u8]) {
         let mut serial_output = String::new();
         let mut cpu = CPU::new(rom.to_vec());
         cpu.skip_bootrom();
@@ -2278,7 +2278,7 @@ mod tests {
         }
     }
 
-    fn run_blargg_dmg_sound_test(rom: &[u8]) {
+    fn run_blargg_harness_test(rom: &[u8]) {
         let mut cpu = CPU::new(rom.to_vec());
         cpu.skip_bootrom();
 
@@ -2307,29 +2307,30 @@ mod tests {
         }
     }
 
-    #[test] fn blargg_cpu_instrs_01() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/01-special.gb")); }
-    #[test] fn blargg_cpu_instrs_02() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/02-interrupts.gb")); }
-    #[test] fn blargg_cpu_instrs_03() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/03-op sp,hl.gb")); }
-    #[test] fn blargg_cpu_instrs_04() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/04-op r,imm.gb")); }
-    #[test] fn blargg_cpu_instrs_05() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/05-op rp.gb")); }
-    #[test] fn blargg_cpu_instrs_06() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/06-ld r,r.gb")); }
-    #[test] fn blargg_cpu_instrs_07() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/07-jr,jp,call,ret,rst.gb")); }
-    #[test] fn blargg_cpu_instrs_08() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/08-misc instrs.gb")); }
-    #[test] fn blargg_cpu_instrs_09() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/09-op r,r.gb")); }
-    #[test] fn blargg_cpu_instrs_10() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/10-bit ops.gb")); }
-    #[test] fn blargg_cpu_instrs_11() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/11-op a,(hl).gb")); }
-    #[test] fn blargg_instr_timing() { run_blargg_test(include_bytes!("../test/blargg/instr_timing.gb")); }
-    #[test] fn blargg_mem_timing() { run_blargg_test(include_bytes!("../test/blargg/mem_timing.gb")); }
-    #[test] fn blargg_dmg_sound_01() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/01-registers.gb")); }
-    #[test] fn blargg_dmg_sound_02() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/02-len ctr.gb")); }
-    #[test] fn blargg_dmg_sound_03() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/03-trigger.gb")); }
-    #[test] fn blargg_dmg_sound_04() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/04-sweep.gb")); }
-    #[test] fn blargg_dmg_sound_05() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/05-sweep details.gb")); }
-    #[test] fn blargg_dmg_sound_06() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/06-overflow on trigger.gb")); }
-    // #[test] fn blargg_dmg_sound_07() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/07-len sweep period sync.gb")); }
-    #[test] fn blargg_dmg_sound_08() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/08-len ctr during power.gb")); }
-    // #[test] fn blargg_dmg_sound_09() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/09-wave read while on.gb")); }
-    // #[test] fn blargg_dmg_sound_10() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/10-wave trigger while on.gb")); }
-    #[test] fn blargg_dmg_sound_11() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/11-regs after power.gb")); }
-    // #[test] fn blargg_dmg_sound_12() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/12-wave write while on.gb")); }
+    #[test] fn blargg_cpu_instrs_01() { run_blargg_serial_test(include_bytes!("../test/blargg/cpu_instrs/01-special.gb")); }
+    #[test] fn blargg_cpu_instrs_02() { run_blargg_serial_test(include_bytes!("../test/blargg/cpu_instrs/02-interrupts.gb")); }
+    #[test] fn blargg_cpu_instrs_03() { run_blargg_serial_test(include_bytes!("../test/blargg/cpu_instrs/03-op sp,hl.gb")); }
+    #[test] fn blargg_cpu_instrs_04() { run_blargg_serial_test(include_bytes!("../test/blargg/cpu_instrs/04-op r,imm.gb")); }
+    #[test] fn blargg_cpu_instrs_05() { run_blargg_serial_test(include_bytes!("../test/blargg/cpu_instrs/05-op rp.gb")); }
+    #[test] fn blargg_cpu_instrs_06() { run_blargg_serial_test(include_bytes!("../test/blargg/cpu_instrs/06-ld r,r.gb")); }
+    #[test] fn blargg_cpu_instrs_07() { run_blargg_serial_test(include_bytes!("../test/blargg/cpu_instrs/07-jr,jp,call,ret,rst.gb")); }
+    #[test] fn blargg_cpu_instrs_08() { run_blargg_serial_test(include_bytes!("../test/blargg/cpu_instrs/08-misc instrs.gb")); }
+    #[test] fn blargg_cpu_instrs_09() { run_blargg_serial_test(include_bytes!("../test/blargg/cpu_instrs/09-op r,r.gb")); }
+    #[test] fn blargg_cpu_instrs_10() { run_blargg_serial_test(include_bytes!("../test/blargg/cpu_instrs/10-bit ops.gb")); }
+    #[test] fn blargg_cpu_instrs_11() { run_blargg_serial_test(include_bytes!("../test/blargg/cpu_instrs/11-op a,(hl).gb")); }
+    #[test] fn blargg_instr_timing()  { run_blargg_serial_test(include_bytes!("../test/blargg/instr_timing.gb")); }
+    #[test] fn blargg_mem_timing()    { run_blargg_serial_test(include_bytes!("../test/blargg/mem_timing.gb")); }
+    #[test] fn blargg_dmg_sound_01() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/01-registers.gb")); }
+    #[test] fn blargg_dmg_sound_02() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/02-len ctr.gb")); }
+    #[test] fn blargg_dmg_sound_03() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/03-trigger.gb")); }
+    #[test] fn blargg_dmg_sound_04() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/04-sweep.gb")); }
+    #[test] fn blargg_dmg_sound_05() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/05-sweep details.gb")); }
+    #[test] fn blargg_dmg_sound_06() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/06-overflow on trigger.gb")); }
+    // #[test] fn blargg_dmg_sound_07() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/07-len sweep period sync.gb")); }
+    #[test] fn blargg_dmg_sound_08() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/08-len ctr during power.gb")); }
+    // #[test] fn blargg_dmg_sound_09() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/09-wave read while on.gb")); }
+    // #[test] fn blargg_dmg_sound_10() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/10-wave trigger while on.gb")); }
+    #[test] fn blargg_dmg_sound_11() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/11-regs after power.gb")); }
+    #[test] fn blargg_dmg_sound_12() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/12-wave write while on.gb")); }
+    #[test] fn blargg_oam_bug_01() { run_blargg_harness_test(include_bytes!("../test/blargg/oam_bug/1-lcd_sync.gb")); }
 }

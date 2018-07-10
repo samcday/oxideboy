@@ -49,6 +49,8 @@ pub struct PPU {
 
     pt_state: PixelTransferState,
 
+    lcd_just_enabled: bool,
+
     framebuffers: [[u32; ::SCREEN_SIZE]; 2],
     cur_framebuffer: usize,
 
@@ -82,6 +84,7 @@ impl PPU {
             framebuffers: [[0; 160*144]; 2],
             cur_framebuffer: 0,
             if_: 0,
+            lcd_just_enabled: false,
         };
         ppu.clear_framebuffers();
         ppu
@@ -332,7 +335,12 @@ impl PPU {
                 fb_pos += 1;
             }
 
-            let hblank_cycles = 51+43 - self.cycles;
+            let mut hblank_cycles = 51+43 - self.cycles;
+            if self.lcd_just_enabled {
+                // The first scanline after LCD is enabled is 1 cycle shorter.
+                self.lcd_just_enabled = false;
+                hblank_cycles -= 1;
+            }
             self.next_state(HBlank(hblank_cycles));
 
             // If HBlank STAT interrupt is enabled, we send it now.
@@ -400,6 +408,7 @@ impl PPU {
         // Are we enabling LCD from a previously disabled state?
         if enabled && !self.enabled {
             self.enabled = true;
+            self.lcd_just_enabled = true;
             self.next_state(OAMSearch);
             self.ly = 0;
         } else if !enabled && self.enabled {
