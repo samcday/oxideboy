@@ -170,11 +170,17 @@ impl Operand8 {
             Operand8::Addr(rr) => { let addr = cpu.get_reg16(rr); cpu.mem_read8(addr) },
             Operand8::AddrInc(rr) => {
                 let addr = cpu.get_reg16(rr);
+                if addr >= 0xFE00 && addr <= 0xFEFF {
+                    cpu.ppu.maybe_trash_oam();
+                }
                 cpu.set_reg16(rr, addr.wrapping_add(1));
                 cpu.mem_read8(addr)
             },
             Operand8::AddrDec(rr) => {
                 let addr = cpu.get_reg16(rr);
+                if addr >= 0xFE00 && addr <= 0xFEFF {
+                    cpu.ppu.maybe_trash_oam();
+                }
                 cpu.set_reg16(rr, addr.wrapping_sub(1));
                 cpu.mem_read8(addr)
             },
@@ -1723,15 +1729,24 @@ impl CPU {
     }
 
     fn stack_push(&mut self, v: u16) {
+        if self.sp >= 0xFE00 && self.sp <= 0xFEFF {
+            self.ppu.maybe_trash_oam();
+        }
+
         self.sp = self.sp.wrapping_sub(2);
         let sp = self.sp;
         self.mem_write16(sp, v);
     }
 
     fn stack_pop(&mut self) -> u16 {
+        if self.sp >= 0xFDFF && self.sp <= 0xFEFE {
+            self.ppu.maybe_trash_oam();
+        }
+
         let addr = self.sp;
         let v = self.mem_read16(addr);
-        self.sp  = self.sp.wrapping_add(2);
+        self.sp = self.sp.wrapping_add(2);
+
         v
     }
 
@@ -1790,16 +1805,22 @@ impl CPU {
     // INC rr
     // Flags = Z:- N:- H:- C:-
     fn inc16(&mut self, r: Reg16) {
-        let v = self.get_reg16(r).wrapping_add(1);
-        self.set_reg16(r, v);
+        let v = self.get_reg16(r);
+        if v >= 0xFE00 && v <= 0xFEFF {
+            self.ppu.maybe_trash_oam();
+        }
+        self.set_reg16(r, v.wrapping_add(1));
         self.advance_clock();
     }
 
     // DEC rr
     // Flags = Z:- N:- H:- C:-
     fn dec16(&mut self, r: Reg16) {
-        let v = self.get_reg16(r).wrapping_sub(1);
-        self.set_reg16(r, v);
+        let v = self.get_reg16(r);
+        if v >= 0xFE00 && v <= 0xFEFF {
+            self.ppu.maybe_trash_oam();
+        }
+        self.set_reg16(r, v.wrapping_sub(1));
         self.advance_clock();
     }
 
@@ -2294,7 +2315,7 @@ mod tests {
                 let exit_code = cpu.cart.ram[0];
                 if exit_code != 0x80 {
                     let mut end = 0x04;
-                    while cpu.cart.ram[end] != 0 {
+                    while cpu.cart.ram[end] != 0 && end < 0x1FFF {
                         end += 1;
                     }
                     let output = std::str::from_utf8(&cpu.cart.ram[0x04..end]).unwrap();
@@ -2333,4 +2354,9 @@ mod tests {
     #[test] fn blargg_dmg_sound_11() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/11-regs after power.gb")); }
     #[test] fn blargg_dmg_sound_12() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/12-wave write while on.gb")); }
     #[test] fn blargg_oam_bug_01() { run_blargg_harness_test(include_bytes!("../test/blargg/oam_bug/1-lcd_sync.gb")); }
+    #[test] fn blargg_oam_bug_02() { run_blargg_harness_test(include_bytes!("../test/blargg/oam_bug/2-causes.gb")); }
+    #[test] fn blargg_oam_bug_03() { run_blargg_harness_test(include_bytes!("../test/blargg/oam_bug/3-non_causes.gb")); }
+    #[test] fn blargg_oam_bug_04() { run_blargg_harness_test(include_bytes!("../test/blargg/oam_bug/4-scanline_timing.gb")); }
+    #[test] fn blargg_oam_bug_05() { run_blargg_harness_test(include_bytes!("../test/blargg/oam_bug/5-timing_bug.gb")); }
+    #[test] fn blargg_oam_bug_06() { run_blargg_harness_test(include_bytes!("../test/blargg/oam_bug/6-timing_no_bug.gb")); }
 }
