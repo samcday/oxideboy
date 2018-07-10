@@ -62,7 +62,7 @@ pub struct Cartridge {
 
 impl Cartridge {
     fn from_rom(rom: Vec<u8>) -> Self {
-        let cart_type = match rom[0x148] {
+        let cart_type = match rom[0x147] {
             0 => CartridgeType::ROMOnly,
             1|2|3 => CartridgeType::MBC1,
             v => panic!("Unsupported cartridge type: {:X}", v)
@@ -2278,6 +2278,35 @@ mod tests {
         }
     }
 
+    fn run_blargg_dmg_sound_test(rom: &[u8]) {
+        let mut cpu = CPU::new(rom.to_vec());
+        cpu.skip_bootrom();
+
+        // The test runner writes the magic value to RAM before specifying that tests are in progress.
+        // Which is kinda dumb. Anyway, we force that value now so we know when tests are *actually* done.
+        cpu.cart.ram[0] = 0x80;
+
+        loop {
+            cpu.run();
+
+            // Wait until the magic value is present in RAM and the test is signalled as complete.
+            if cpu.cart.ram[1] == 0xDE && cpu.cart.ram[2] == 0xB0 && cpu.cart.ram[3] == 0x61 {
+                let exit_code = cpu.cart.ram[0];
+                if exit_code != 0x80 {
+                    let mut end = 0x04;
+                    while cpu.cart.ram[end] != 0 {
+                        end += 1;
+                    }
+                    let output = std::str::from_utf8(&cpu.cart.ram[0x04..end]).unwrap();
+                    if exit_code != 0 {
+                        panic!("Test failed. Output: {}", output);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
     #[test] fn blargg_cpu_instrs_01() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/01-special.gb")); }
     #[test] fn blargg_cpu_instrs_02() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/02-interrupts.gb")); }
     #[test] fn blargg_cpu_instrs_03() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/03-op sp,hl.gb")); }
@@ -2291,9 +2320,16 @@ mod tests {
     #[test] fn blargg_cpu_instrs_11() { run_blargg_test(include_bytes!("../test/blargg/cpu_instrs/11-op a,(hl).gb")); }
     #[test] fn blargg_instr_timing() { run_blargg_test(include_bytes!("../test/blargg/instr_timing.gb")); }
     #[test] fn blargg_mem_timing() { run_blargg_test(include_bytes!("../test/blargg/mem_timing.gb")); }
-    #[test] fn blargg_dmg_sound_01() { run_blargg_test(include_bytes!("../test/blargg/dmg_sound/01-registers.gb")); }
-    // #[test] fn blargg_dmg_sound_02() { run_blargg_test(include_bytes!("../test/blargg/dmg_sound/02-len ctr.gb")); }
-    // #[test] fn blargg_dmg_sound_03() { run_blargg_test(include_bytes!("../test/blargg/dmg_sound/03-trigger.gb")); }
-    // #[test] fn blargg_dmg_sound_04() { run_blargg_test(include_bytes!("../test/blargg/dmg_sound/04-sweep.gb")); }
-    // #[test] fn blargg_dmg_sound_05() { run_blargg_test(include_bytes!("../test/blargg/dmg_sound/05-sweep details.gb")); }
+    #[test] fn blargg_dmg_sound_01() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/01-registers.gb")); }
+    #[test] fn blargg_dmg_sound_02() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/02-len ctr.gb")); }
+    #[test] fn blargg_dmg_sound_03() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/03-trigger.gb")); }
+    #[test] fn blargg_dmg_sound_04() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/04-sweep.gb")); }
+    #[test] fn blargg_dmg_sound_05() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/05-sweep details.gb")); }
+    #[test] fn blargg_dmg_sound_06() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/06-overflow on trigger.gb")); }
+    // #[test] fn blargg_dmg_sound_07() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/07-len sweep period sync.gb")); }
+    #[test] fn blargg_dmg_sound_08() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/08-len ctr during power.gb")); }
+    // #[test] fn blargg_dmg_sound_09() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/09-wave read while on.gb")); }
+    // #[test] fn blargg_dmg_sound_10() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/10-wave trigger while on.gb")); }
+    #[test] fn blargg_dmg_sound_11() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/11-regs after power.gb")); }
+    // #[test] fn blargg_dmg_sound_12() { run_blargg_dmg_sound_test(include_bytes!("../test/blargg/dmg_sound/12-wave write while on.gb")); }
 }
