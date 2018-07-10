@@ -274,14 +274,19 @@ impl PPU {
             if self.pt_state.fetch_obj {
                 let (obj_idx, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
                 let obj = self.oam[obj_idx as usize];
-                let obj_y = if obj.vert_flip() {
+                let mut obj_code = obj.code as usize;
+                let mut obj_y = if obj.vert_flip() {
                     (if self.obj_tall { 15 } else { 7 }) - (self.ly + 16 - obj.y) as usize
                 } else {
                     (self.ly + 16 - obj.y) as usize
                 };
+                if obj_y >= 8 {
+                    obj_y -= 8;
+                    obj_code += 1;
+                }
                 let palette = if obj.palette() { &self.obp1 } else { &self.obp0 };
                 let obj_x = obj_x as usize;
-                self.tiles[obj.code as usize].write(
+                self.tiles[obj_code].write(
                     &mut self.pt_state.scanline[obj_x..], &mut self.pt_state.scanline_prio[obj_x..], obj_y, true, !obj.priority(), obj.horz_flip(), palette
                 );
                 self.scanline_objs.pop();
@@ -527,7 +532,8 @@ impl TileEntry {
     fn write(&self, dst: &mut [u8], dst_prio: &mut[bool], y: usize, sprite: bool, prio: bool, flip: bool, pal: &Palette) {
         let mut tile_pos = if flip { 7 } else { 0 };
         for i in 0..dst.len().min(8) {
-            let pix = self.data[y][tile_pos];
+            let pix = self.data[y];
+            let pix = pix[tile_pos];
             tile_pos = if flip { tile_pos - 1 } else { tile_pos + 1 };
             if sprite {
                 if pix == 0 || dst_prio[i] || (!prio && dst[i] > 0) {
