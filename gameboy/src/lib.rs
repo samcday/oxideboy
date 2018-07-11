@@ -1039,7 +1039,7 @@ impl CPU {
             0xFF4D            => { }      // KEY1 for CGB.
             0xFF7F            => { }      // No idea what this is.
             0xFF80 ... 0xFFFE => { self.hram[(addr - 0xFF80) as usize] = v }
-            0xFFFF            => { self.ie = v & 0x1F }
+            0xFFFF            => { self.ie = v }
 
             // TODO:
             _                 => {
@@ -2218,6 +2218,7 @@ mod tests {
 
     #[test] fn mooneye_acceptance_bits_mem_oam() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/mem_oam.gb"), false); }
     #[test] fn mooneye_acceptance_bits_reg_f() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/reg_f.gb"), false); }
+    #[test] fn mooneye_acceptance_bits_unused_hwio_gs() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/bits/unused_hwio-GS.gb"), false); }
 
     #[test] fn mooneye_acceptance_interrupts_ie_push() { run_mooneye_test(include_bytes!("../../mooneye-gb-tests/build/acceptance/interrupts/ie_push.gb"), false); }
 
