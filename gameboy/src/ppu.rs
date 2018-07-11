@@ -467,10 +467,10 @@ impl PPU {
 
     pub fn maybe_trash_oam(&mut self) {
         if self.state == PPUState::OAMSearch && self.cycles < 19 {
-            let oam_buf = unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u32, 40) };
-            for i in 2..40 {
-                oam_buf[i] = 0xFF;
-            }
+            // Corruption of OAM is duplicating the current 8 bytes being searched into the next 8 bytes.
+            let pos = (self.cycles as usize) * 2;
+            self.oam[pos + 2] = self.oam[pos];
+            self.oam[pos + 3] = self.oam[pos + 1];
         }
     }
 }
