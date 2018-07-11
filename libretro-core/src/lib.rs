@@ -30,7 +30,7 @@ impl Core for OxideboyCore {
             return LoadGameResult::Failed(game_data);
         }
 
-        self.cpu = Some(if let Some(data) = game_data.data() {
+        let mut cpu = if let Some(data) = game_data.data() {
             let mut rom = Vec::new();
             rom.extend_from_slice(data);
             gameboy::CPU::new(rom)
@@ -41,7 +41,10 @@ impl Core for OxideboyCore {
             gameboy::CPU::new(rom)
         } else {
             unreachable!();
-        });
+        };
+
+        cpu.skip_bootrom();
+        self.cpu = Some(cpu);
 
         self.game_data = Some(game_data);
 
