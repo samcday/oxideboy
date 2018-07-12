@@ -274,20 +274,15 @@ impl SoundController {
     }
 
     pub fn advance(&mut self) {
-        self.timer += 1;
-        let frame_seq_clock = if self.timer == 2048 {
-            self.timer = 0;
-            self.frame_seq_timer = self.frame_seq_timer.wrapping_add(1);
-            true
-        } else {
-            false
-        };
-
         if !self.enabled {
             return;
         }
 
-        if frame_seq_clock {
+        self.timer += 1;
+        if self.timer == 2048 {
+            self.timer = 0;
+            self.frame_seq_timer = self.frame_seq_timer.wrapping_add(1);
+
             if self.frame_seq_timer % 2 == 1 {
                 if self.chan1.counter { Self::length_clock(64,  &mut self.chan1.length, &mut self.chan1.on); }
                 if self.chan2.counter { Self::length_clock(64,  &mut self.chan2.length, &mut self.chan2.on); }
@@ -757,6 +752,7 @@ impl SoundController {
         self.enabled = v & 0b1000_0000 > 0;
         // Turning off sound controller turns off all voices.
         if !self.enabled {
+            self.frame_seq_timer = 0;
             self.sample_cycles = 0.0;
             // When resetting the channels, we preserve the length field only.
             self.chan1 = Channel1{ length: self.chan1.length, ..Default::default() };
@@ -767,8 +763,6 @@ impl SoundController {
             self.left_vin = false;
             self.right_vol = 0;
             self.right_vin = false;
-        } else {
-            self.frame_seq_timer = 0;
         }
     }
 

@@ -2376,7 +2376,7 @@ mod tests {
     #[test] fn blargg_dmg_sound_04() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/04-sweep.gb")); }
     #[test] fn blargg_dmg_sound_05() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/05-sweep details.gb")); }
     #[test] fn blargg_dmg_sound_06() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/06-overflow on trigger.gb")); }
-    // #[test] fn blargg_dmg_sound_07() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/07-len sweep period sync.gb")); }
+    #[test] fn blargg_dmg_sound_07() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/07-len sweep period sync.gb")); }
     #[test] fn blargg_dmg_sound_08() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/08-len ctr during power.gb")); }
     // #[test] fn blargg_dmg_sound_09() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/09-wave read while on.gb")); }
     // #[test] fn blargg_dmg_sound_10() { run_blargg_harness_test(include_bytes!("../test/blargg/dmg_sound/10-wave trigger while on.gb")); }
