@@ -355,47 +355,46 @@ impl PPU {
         }
     }
 
-    pub fn read_oam(&self, addr: usize) -> u8 {
-        match self.prev_state {
-            HBlank(_) | VBlank => (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr],
-            OAMSearch | PixelTransfer => 0xFF,
+    pub fn oam_read(&self, addr: usize) -> u8 {
+        if self.prev_state == OAMSearch || self.prev_state == PixelTransfer {
+            return 0xFF; // Reading OAM memory during Mode2 & Mode3 is not permitted.
+        }
+        (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr]
+    }
+
+    pub fn oam_write(&mut self, addr: usize, v: u8) {
+        if self.state == OAMSearch || self.state == PixelTransfer {
+            return; // Writing OAM memory during Mode2 & Mode3 is not permitted.
+        }
+        (unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) })[addr] = v
+    }
+
+    pub fn vram_read(&self, addr: u16) -> u8 {
+        if self.state == PixelTransfer {
+            return 0xFF; // Reading VRAM during Mode3 is not permitted.
+        }
+
+        if addr >= 0x1800 {
+            self.tilemap[(addr - 0x1800) as usize]
+        } else {
+            self.tiles[(addr / 16) as usize].get_byte(addr % 16)
         }
     }
 
-    pub fn write_oam(&mut self, addr: usize, v: u8) {
-        match self.state {
-            HBlank(_) | VBlank => { (unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) })[addr] = v },
-            OAMSearch | PixelTransfer => { },
+    pub fn vram_write(&mut self, addr: u16, v: u8) {
+        if self.state == PixelTransfer {
+            return; // Writing VRAM during Mode3 is not permitted.
         }
-    }
 
-    pub fn read_vram(&self, addr: u16) -> u8 {
-        match self.state {
-            OAMSearch | HBlank(_) | VBlank => {
-                if addr >= 0x1800 {
-                    self.tilemap[(addr - 0x1800) as usize]
-                } else {
-                    self.tiles[(addr / 16) as usize].get_byte(addr % 16)
-                }
-            }
-            PixelTransfer => 0xFF,
-        }
-    }
-
-    pub fn write_vram(&mut self, addr: u16, v: u8) {
-        match self.state {
-            OAMSearch | HBlank(_) | VBlank => {
-                if addr >= 0x1800 {
-                    self.tilemap[(addr - 0x1800) as usize] = v;
-                } else {
-                    self.tiles[(addr / 16) as usize].write_byte(addr % 16, v) }
-                }
-            PixelTransfer => {},
+        if addr >= 0x1800 {
+            self.tilemap[(addr - 0x1800) as usize] = v;
+        } else {
+            self.tiles[(addr / 16) as usize].write_byte(addr % 16, v);
         }
     }
 
     // Compute value of the LCDC register.
-    pub fn read_lcdc(&self) -> u8 {
+    pub fn reg_lcdc_read(&self) -> u8 {
         0
             | if self.enabled     { 0b1000_0000 } else { 0 }
             | if self.win_code_hi { 0b0100_0000 } else { 0 }
@@ -408,8 +407,9 @@ impl PPU {
     }
 
     // Update PPU state based on new LCDC value.
-    pub fn write_lcdc(&mut self, v: u8) {
+    pub fn reg_lcdc_write(&mut self, v: u8) {
         let enabled = v & 0b1000_0000 > 0;
+
         // Are we enabling LCD from a previously disabled state?
         if enabled && !self.enabled {
             self.enabled = true;
@@ -417,13 +417,14 @@ impl PPU {
             self.next_state(OAMSearch);
             self.ly = 0;
         } else if !enabled && self.enabled {
-            if let VBlank = self.state {
-                self.enabled = false;
-                // Clear the framebuffers.
-                self.clear_framebuffers();
-            } else {
-                panic!("Tried to disable LCD outside of VBlank");
+            if self.state != VBlank {
+                // TODO: games are not supposed to disable LCD outside of VBlank.
+                // When this happens I think we're supposed to draw a single line in the middle of the screen.
             }
+
+            self.enabled = false;
+            // Clear the framebuffers.
+            self.clear_framebuffers();
         }
 
         self.win_code_hi = v & 0b0100_0000 > 0;
@@ -436,7 +437,7 @@ impl PPU {
     }
 
     // Compute value of the STAT register.
-    pub fn read_stat(&self) -> u8 {
+    pub fn reg_stat_read(&self) -> u8 {
         0b1000_0000 // Unused bits
             | match self.prev_state {
                 HBlank(_)             => 0b0000_0000,
@@ -451,7 +452,7 @@ impl PPU {
     }
 
     // Update PPU state based on new STAT value.
-    pub fn write_stat(&mut self, v: u8) {
+    pub fn reg_stat_write(&mut self, v: u8) {
         self.interrupt_hblank = v & 0b0000_1000 > 0;
         self.interrupt_vblank = v & 0b0001_0000 > 0;
         self.interrupt_oam    = v & 0b0010_0000 > 0;
@@ -498,6 +499,8 @@ struct PixelTransferState {
     in_win: bool,
 }
 
+// The OAMEntry struct is packed in C representation (no padding) so that we can view it as a contiguous byte array
+// when performing DMA copies and OAM memory writes from the CPU.
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct OAMEntry {

@@ -1,5 +1,3 @@
-// TODO: how efficient is match expr in decode methods? Should we be using rust-phf instead?
-// TODO: how efficient is the mem addr matching in mem_read/mem_write functions?
 pub mod ppu;
 mod sound;
 
@@ -502,7 +500,7 @@ impl CPU {
         self.l = 0x03;
 
         // Ensure PPU has correct state (enabled, BG enabled, etc)
-        self.ppu.write_lcdc(0x91);
+        self.ppu.reg_lcdc_write(0x91);
         // PPU should be in the middle of a VBlank.
         self.ppu.state = ppu::PPUState::VBlank;
         self.ppu.prev_state = ppu::PPUState::VBlank;
@@ -511,14 +509,14 @@ impl CPU {
         // Setup Nintendo logo in tilemap.
         let mut addr = 0x1904;
         for v in 1..=12 {
-            self.ppu.write_vram(addr, v);
+            self.ppu.vram_write(addr, v);
             addr += 1;
         }
         // TODO: not in DMG0.
-        // self.ppu.write_vram(addr, 0x19);
+        // self.ppu.vram_write(addr, 0x19);
         addr = 0x1924;
         for v in 13..=24 {
-            self.ppu.write_vram(addr, v);
+            self.ppu.vram_write(addr, v);
             addr += 1;
         }
         // Copy Nintendo logo data from cart.
@@ -531,17 +529,17 @@ impl CPU {
             // The best kind of sorcery too: copy/pasted from the interwebz.
             let z = (((b as u64).wrapping_mul(0x0101010101010101) & 0x8040201008040201).wrapping_mul(0x0102040810204081) >> 49) & 0x5555 |
                     (((b as u64).wrapping_mul(0x0101010101010101) & 0x8040201008040201).wrapping_mul(0x0102040810204081) >> 48) & 0xAAAAu64;
-            self.ppu.write_vram(vram_addr, (z >> 8) as u8); vram_addr += 2;
-            self.ppu.write_vram(vram_addr, (z >> 8) as u8); vram_addr += 2;
-            self.ppu.write_vram(vram_addr, z as u8); vram_addr += 2;
-            self.ppu.write_vram(vram_addr, z as u8); vram_addr += 2;
+            self.ppu.vram_write(vram_addr, (z >> 8) as u8); vram_addr += 2;
+            self.ppu.vram_write(vram_addr, (z >> 8) as u8); vram_addr += 2;
+            self.ppu.vram_write(vram_addr, z as u8); vram_addr += 2;
+            self.ppu.vram_write(vram_addr, z as u8); vram_addr += 2;
         }
 
         // TODO: not in DMG0 mode.
         // let mut src_addr = 0xD8;
         // for _ in 0..8 {
         //     let v = self.mem_get8(src_addr);
-        //     self.ppu.write_vram(vram_addr, v);
+        //     self.ppu.vram_write(vram_addr, v);
         //     src_addr += 1;
         //     vram_addr += 2;
         // }
@@ -653,7 +651,7 @@ impl CPU {
 
         let addr = self.dma_from + (self.dma_idx as u16);
         let v = self.mem_get8(addr);
-        self.ppu.write_oam(self.dma_idx, v);
+        self.ppu.oam_write(self.dma_idx, v);
         self.dma_idx += 1;
         if self.dma_idx == 160 {
             self.dma_active = false;
@@ -883,11 +881,11 @@ impl CPU {
 
             0x0000 ... 0x3FFF => self.cart.rom_lo()[addr as usize],
             0x4000 ... 0x7FFF => self.cart.rom_hi()[(addr - 0x4000) as usize],
-            0x8000 ... 0x9FFF => self.ppu.read_vram(addr - 0x8000),
+            0x8000 ... 0x9FFF => self.ppu.vram_read(addr - 0x8000),
             0xA000 ... 0xBFFF => self.cart.ram()[(addr - 0xA000) as usize],
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
-            0xFE00 ... 0xFE9F => self.ppu.read_oam((addr - 0xFE00) as usize),
+            0xFE00 ... 0xFE9F => self.ppu.oam_read((addr - 0xFE00) as usize),
             0xFEA0 ... 0xFEFF => 0x00,
 
             0xFF00            => self.read_joypad(),
@@ -930,8 +928,8 @@ impl CPU {
             0xFF30 ... 0xFF3F => self.sound.wave_read(addr - 0xFF30),
 
             // PPU
-            0xFF40            => self.ppu.read_lcdc(),
-            0xFF41            => self.ppu.read_stat(),
+            0xFF40            => self.ppu.reg_lcdc_read(),
+            0xFF41            => self.ppu.reg_stat_read(),
             0xFF42            => self.ppu.scy as u8,
             0xFF43            => self.ppu.scx as u8,
             0xFF44            => self.ppu.ly as u8,
@@ -959,11 +957,11 @@ impl CPU {
         self.advance_clock();
         match addr {
             0x0000 ... 0x7FFF => { self.cart.write(addr, v); }
-            0x8000 ... 0x9FFF => { self.ppu.write_vram(addr - 0x8000, v) }
+            0x8000 ... 0x9FFF => { self.ppu.vram_write(addr - 0x8000, v) }
             0xA000 ... 0xBFFF => { self.cart.write(addr, v); }
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v }
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v }
-            0xFE00 ... 0xFE9F => { self.ppu.write_oam((addr - 0xFE00) as usize, v) }
+            0xFE00 ... 0xFE9F => { self.ppu.oam_write((addr - 0xFE00) as usize, v) }
             0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
             0xFF01            => { self.sb = Some(v) }
             0xFF02            => { self.write_sc(v) }
@@ -1019,8 +1017,8 @@ impl CPU {
             0xFF30 ... 0xFF3F => { self.sound.wave_write(addr - 0xFF30, v) }
 
             // PPU
-            0xFF40            => { self.ppu.write_lcdc(v) }
-            0xFF41            => { self.ppu.write_stat(v) }
+            0xFF40            => { self.ppu.reg_lcdc_write(v) }
+            0xFF41            => { self.ppu.reg_stat_write(v) }
             0xFF42            => { self.ppu.scy = v.into() }
             0xFF43            => { self.ppu.scx = v.into() }
             0xFF44            => { }                   // LY is readonly.
