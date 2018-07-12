@@ -286,7 +286,7 @@ impl PPU {
                 }
                 let palette = if obj.palette() { &self.obp1 } else { &self.obp0 };
                 let obj_x = obj_x as usize;
-                self.tiles[obj_code].write(
+                self.tiles[obj_code].draw(
                     &mut self.pt_state.scanline[obj_x..], &mut self.pt_state.scanline_prio[obj_x..], obj_y, true, !obj.priority(), obj.horz_flip(), palette
                 );
                 self.scanline_objs.pop();
@@ -301,9 +301,9 @@ impl PPU {
                     } else {
                         (tile as usize)
                     };
-                    self.tiles[tile].write(&mut self.pt_state.scanline[x..], &mut self.pt_state.scanline_prio[x..], self.pt_state.tile_y, false, false, false, &self.bgp);
+                    self.tiles[tile].draw(&mut self.pt_state.scanline[x..], &mut self.pt_state.scanline_prio[x..], self.pt_state.tile_y, false, false, false, &self.bgp);
                 } else {
-                    EMPTY_TILE.write(&mut self.pt_state.scanline[x..], &mut self.pt_state.scanline_prio[x..], self.pt_state.tile_y, false, false, false, &self.bgp);
+                    EMPTY_TILE.draw(&mut self.pt_state.scanline[x..], &mut self.pt_state.scanline_prio[x..], self.pt_state.tile_y, false, false, false, &self.bgp);
                 }
                 self.pt_state.x = (self.pt_state.x + 8).min(176);
                 self.pt_state.tilemap_addr = (self.pt_state.tilemap_addr&!0x1F)|(((self.pt_state.tilemap_addr+1)&0x1F));
@@ -529,12 +529,12 @@ pub struct TileEntry {
     data: [[u8; 8]; 8]
 }
 impl TileEntry {
-    fn write(&self, dst: &mut [u8], dst_prio: &mut[bool], y: usize, sprite: bool, prio: bool, flip: bool, pal: &Palette) {
+    fn draw(&self, dst: &mut [u8], dst_prio: &mut[bool], y: usize, sprite: bool, prio: bool, flip: bool, pal: &Palette) {
         let mut tile_pos = if flip { 7 } else { 0 };
         for i in 0..dst.len().min(8) {
             let pix = self.data[y];
             let pix = pix[tile_pos];
-            tile_pos = if flip { tile_pos - 1 } else { tile_pos + 1 };
+            tile_pos = if flip { tile_pos.saturating_sub(1) } else { tile_pos + 1 };
             if sprite {
                 if pix == 0 || dst_prio[i] || (!prio && dst[i] > 0) {
                     continue;
