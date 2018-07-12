@@ -583,9 +583,9 @@ impl CPU {
             timer: 0,
         };
         self.sound.chan1.on = true;
-        self.sound.write_nr11(0b1000_0000);
-        self.sound.write_nr50(0x77);
-        self.sound.write_nr51(0xF3);
+        self.sound.reg_nr11_write(0b1000_0000);
+        self.sound.reg_nr50_write(0x77);
+        self.sound.reg_nr51_write(0xF3);
 
         self.bootrom_enabled = false;
     }
@@ -934,27 +934,27 @@ impl CPU {
             0xFF0F            => 0xE0 | self.if_, // Unused IF bits are always 1
 
             // Sound
-            0xFF10            => self.sound.read_nr10(),
-            0xFF11            => self.sound.read_nr11(),
-            0xFF12            => self.sound.read_nr12(),
-            0xFF13            => self.sound.read_nr13(),
-            0xFF14            => self.sound.read_nr14(),
-            0xFF16            => self.sound.read_nr21(),
-            0xFF17            => self.sound.read_nr22(),
-            0xFF18            => self.sound.read_nr23(),
-            0xFF19            => self.sound.read_nr24(),
-            0xFF1A            => self.sound.read_nr30(),
-            0xFF1B            => self.sound.read_nr31(),
-            0xFF1C            => self.sound.read_nr32(),
-            0xFF1D            => self.sound.read_nr33(),
-            0xFF1E            => self.sound.read_nr34(),
-            0xFF20            => self.sound.read_nr41(),
-            0xFF21            => self.sound.read_nr42(),
-            0xFF22            => self.sound.read_nr43(),
-            0xFF23            => self.sound.read_nr44(),
-            0xFF24            => self.sound.read_nr50(),
-            0xFF25            => self.sound.read_nr51(),
-            0xFF26            => self.sound.read_nr52(),
+            0xFF10            => self.sound.reg_nr10_read(),
+            0xFF11            => self.sound.reg_nr11_read(),
+            0xFF12            => self.sound.reg_nr12_read(),
+            0xFF13            => self.sound.reg_nr13_read(),
+            0xFF14            => self.sound.reg_nr14_read(),
+            0xFF16            => self.sound.reg_nr21_read(),
+            0xFF17            => self.sound.reg_nr22_read(),
+            0xFF18            => self.sound.reg_nr23_read(),
+            0xFF19            => self.sound.reg_nr24_read(),
+            0xFF1A            => self.sound.reg_nr30_read(),
+            0xFF1B            => self.sound.reg_nr31_read(),
+            0xFF1C            => self.sound.reg_nr32_read(),
+            0xFF1D            => self.sound.reg_nr33_read(),
+            0xFF1E            => self.sound.reg_nr34_read(),
+            0xFF20            => self.sound.reg_nr41_read(),
+            0xFF21            => self.sound.reg_nr42_read(),
+            0xFF22            => self.sound.reg_nr43_read(),
+            0xFF23            => self.sound.reg_nr44_read(),
+            0xFF24            => self.sound.reg_nr50_read(),
+            0xFF25            => self.sound.reg_nr51_read(),
+            0xFF26            => self.sound.reg_nr52_read(),
             0xFF30 ... 0xFF3F => self.sound.wave_read(addr - 0xFF30),
 
             // PPU
@@ -1023,27 +1023,27 @@ impl CPU {
             0xFF00            => { self.write_joypad(v) }
 
             // Sound
-            0xFF10            => { self.sound.write_nr10(v) }
-            0xFF11            => { self.sound.write_nr11(v) }
-            0xFF12            => { self.sound.write_nr12(v) }
-            0xFF13            => { self.sound.write_nr13(v) }
-            0xFF14            => { self.sound.write_nr14(v) }
-            0xFF16            => { self.sound.write_nr21(v) }
-            0xFF17            => { self.sound.write_nr22(v) }
-            0xFF18            => { self.sound.write_nr23(v) }
-            0xFF19            => { self.sound.write_nr24(v) }
-            0xFF1A            => { self.sound.write_nr30(v) }
-            0xFF1B            => { self.sound.write_nr31(v) }
-            0xFF1C            => { self.sound.write_nr32(v) }
-            0xFF1D            => { self.sound.write_nr33(v) }
-            0xFF1E            => { self.sound.write_nr34(v) }
-            0xFF20            => { self.sound.write_nr41(v) }
-            0xFF21            => { self.sound.write_nr42(v) }
-            0xFF22            => { self.sound.write_nr43(v) }
-            0xFF23            => { self.sound.write_nr44(v) }
-            0xFF24            => { self.sound.write_nr50(v) }
-            0xFF25            => { self.sound.write_nr51(v) }
-            0xFF26            => { self.sound.write_nr52(v) }
+            0xFF10            => { self.sound.reg_nr10_write(v) }
+            0xFF11            => { self.sound.reg_nr11_write(v) }
+            0xFF12            => { self.sound.reg_nr12_write(v) }
+            0xFF13            => { self.sound.reg_nr13_write(v) }
+            0xFF14            => { self.sound.reg_nr14_write(v) }
+            0xFF16            => { self.sound.reg_nr21_write(v) }
+            0xFF17            => { self.sound.reg_nr22_write(v) }
+            0xFF18            => { self.sound.reg_nr23_write(v) }
+            0xFF19            => { self.sound.reg_nr24_write(v) }
+            0xFF1A            => { self.sound.reg_nr30_write(v) }
+            0xFF1B            => { self.sound.reg_nr31_write(v) }
+            0xFF1C            => { self.sound.reg_nr32_write(v) }
+            0xFF1D            => { self.sound.reg_nr33_write(v) }
+            0xFF1E            => { self.sound.reg_nr34_write(v) }
+            0xFF20            => { self.sound.reg_nr41_write(v) }
+            0xFF21            => { self.sound.reg_nr42_write(v) }
+            0xFF22            => { self.sound.reg_nr43_write(v) }
+            0xFF23            => { self.sound.reg_nr44_write(v) }
+            0xFF24            => { self.sound.reg_nr50_write(v) }
+            0xFF25            => { self.sound.reg_nr51_write(v) }
+            0xFF26            => { self.sound.reg_nr52_write(v) }
             0xFF30 ... 0xFF3F => { self.sound.wave_write(addr - 0xFF30, v) }
 
             // PPU

@@ -387,14 +387,14 @@ impl SoundController {
         self.chan4.vol_env.clock();
     }
 
-    pub fn read_nr10(&self) -> u8 {
+    pub fn reg_nr10_read(&self) -> u8 {
         0b1000_0000 // Unreadable bits
             | self.chan1.sweep_shift
             | if self.chan1.sweep_sub { 0b0000_1000 } else { 0 }
             | (self.chan1.sweep_period << 4)
     }
 
-    pub fn write_nr10(&mut self, v: u8) {
+    pub fn reg_nr10_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
@@ -410,22 +410,22 @@ impl SoundController {
         }
     }
 
-    pub fn read_nr11(&self) -> u8 {
+    pub fn reg_nr11_read(&self) -> u8 {
         /* Unreadable bits */ 0b0011_1111 | (self.chan1.duty << 6)
     }
 
-    pub fn write_nr11(&mut self, v: u8) {
+    pub fn reg_nr11_write(&mut self, v: u8) {
         self.chan1.length = v as u16 & 0b0011_1111;
         if self.enabled {
             self.chan1.duty = (v & 0b1100_0000) >> 6;
         }
     }
 
-    pub fn read_nr12(&self) -> u8 {
+    pub fn reg_nr12_read(&self) -> u8 {
         self.chan1.vol_env.pack()
     }
 
-    pub fn write_nr12(&mut self, v: u8) {
+    pub fn reg_nr12_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
@@ -435,19 +435,19 @@ impl SoundController {
         }
     }
 
-    pub fn read_nr13(&self) -> u8 {
+    pub fn reg_nr13_read(&self) -> u8 {
         0b1111_1111 // NR13 has no readable bits
     }
 
-    pub fn write_nr13(&mut self, v: u8) {
+    pub fn reg_nr13_write(&mut self, v: u8) {
         self.chan1.freq = (self.chan1.freq & 0x700) | (v as u16);
     }
 
-    pub fn read_nr14(&self) -> u8 {
+    pub fn reg_nr14_read(&self) -> u8 {
         /* Unreadable bits */ 0b1011_1111 | (if self.chan1.counter { 0b0100_0000 } else { 0 })
     }
 
-    pub fn write_nr14(&mut self, v: u8) {
+    pub fn reg_nr14_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
@@ -482,22 +482,22 @@ impl SoundController {
         }
     }
 
-    pub fn read_nr21(&self) -> u8 {
+    pub fn reg_nr21_read(&self) -> u8 {
         /* Unreadable bits */ 0b0011_1111 | (self.chan2.duty << 6)
     }
 
-    pub fn write_nr21(&mut self, v: u8) {
+    pub fn reg_nr21_write(&mut self, v: u8) {
         self.chan2.length = v as u16 & 0b0011_1111;
         if self.enabled {
             self.chan2.duty = (v & 0b1100_0000) >> 6;
         }
     }
 
-    pub fn read_nr22(&self) -> u8 {
+    pub fn reg_nr22_read(&self) -> u8 {
         self.chan2.vol_env.pack()
     }
 
-    pub fn write_nr22(&mut self, v: u8) {
+    pub fn reg_nr22_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
@@ -507,19 +507,19 @@ impl SoundController {
         }
     }
 
-    pub fn read_nr23(&self) -> u8 {
+    pub fn reg_nr23_read(&self) -> u8 {
         0b1111_1111 // NR23 has no readable bits
     }
 
-    pub fn write_nr23(&mut self, v: u8) {
+    pub fn reg_nr23_write(&mut self, v: u8) {
         self.chan2.freq = (self.chan2.freq & 0x700) | (v as u16);
     }
 
-    pub fn read_nr24(&self) -> u8 {
+    pub fn reg_nr24_read(&self) -> u8 {
         /* Unreadable bits */ 0b1011_1111 | (if self.chan2.counter { 0b0100_0000 } else { 0 })
     }
 
-    pub fn write_nr24(&mut self, v: u8) {
+    pub fn reg_nr24_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
@@ -547,11 +547,11 @@ impl SoundController {
         }
     }
 
-    pub fn read_nr30(&self) -> u8 {
+    pub fn reg_nr30_read(&self) -> u8 {
         /* Unreadable bits */ 0b0111_1111 | (if self.chan3.enabled { 0b1000_0000 } else { 0 })
     }
 
-    pub fn write_nr30(&mut self, v: u8) {
+    pub fn reg_nr30_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
@@ -561,19 +561,19 @@ impl SoundController {
         }
     }
 
-    pub fn read_nr31(&self) -> u8 {
+    pub fn reg_nr31_read(&self) -> u8 {
         0b1111_1111 // NR31 has no readable bits
     }
 
-    pub fn write_nr31(&mut self, v: u8) {
+    pub fn reg_nr31_write(&mut self, v: u8) {
         self.chan3.length = v as u16;
     }
 
-    pub fn read_nr32(&self) -> u8 {
+    pub fn reg_nr32_read(&self) -> u8 {
         /* Unreadable bits */ 0b1001_1111 | (self.chan3.level << 5)
     }
 
-    pub fn write_nr32(&mut self, v: u8) {
+    pub fn reg_nr32_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
@@ -584,22 +584,22 @@ impl SoundController {
         }
     }
 
-    pub fn read_nr33(&self) -> u8 {
+    pub fn reg_nr33_read(&self) -> u8 {
         0b1111_1111 // NR33 has no readable bits
     }
 
-    pub fn write_nr33(&mut self, v: u8) {
+    pub fn reg_nr33_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
         self.chan3.freq = (self.chan3.freq & 0x700) | (v as u16);
     }
 
-    pub fn read_nr34(&self) -> u8 {
+    pub fn reg_nr34_read(&self) -> u8 {
         /* Unreadable bits */ 0b1011_1111 | (if self.chan3.counter { 0b0100_0000 } else { 0 })
     }
 
-    pub fn write_nr34(&mut self, v: u8) {
+    pub fn reg_nr34_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
@@ -628,19 +628,19 @@ impl SoundController {
         }
     }
 
-    pub fn read_nr41(&self) -> u8 {
+    pub fn reg_nr41_read(&self) -> u8 {
         0b1111_1111 // NR41 has no readable bits
     }
 
-    pub fn write_nr41(&mut self, v: u8) {
+    pub fn reg_nr41_write(&mut self, v: u8) {
         self.chan4.length = v as u16 & 0b0011_1111;
     }
 
-    pub fn read_nr42(&self) -> u8 {
+    pub fn reg_nr42_read(&self) -> u8 {
         self.chan4.vol_env.pack()
     }
 
-    pub fn write_nr42(&mut self, v: u8) {
+    pub fn reg_nr42_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
@@ -650,14 +650,14 @@ impl SoundController {
         }
     }
 
-    pub fn read_nr43(&self) -> u8 {
+    pub fn reg_nr43_read(&self) -> u8 {
         0
             | self.chan4.div_ratio
             | if self.chan4.poly_7bit { 0b0000_1000 } else { 0 }
             | (self.chan4.poly_freq << 4)
     }
 
-    pub fn write_nr43(&mut self, v: u8) {
+    pub fn reg_nr43_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
@@ -666,11 +666,11 @@ impl SoundController {
         self.chan4.poly_freq = (v & 0b1111_0000) >> 4;
     }
 
-    pub fn read_nr44(&self) -> u8 {
+    pub fn reg_nr44_read(&self) -> u8 {
         /* Unreadable bits */ 0b1011_1111 | (if self.chan4.counter { 0b0100_0000 } else { 0 })
     }
 
-    pub fn write_nr44(&mut self, v: u8) {
+    pub fn reg_nr44_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
@@ -701,7 +701,7 @@ impl SoundController {
         }
     }
 
-    pub fn read_nr50(&self) -> u8 {
+    pub fn reg_nr50_read(&self) -> u8 {
         0
             | self.left_vol
             | if self.left_vin { 0b0000_1000 } else { 0 }
@@ -709,7 +709,7 @@ impl SoundController {
             | if self.right_vin { 0b1000_0000 } else { 0 }
     }
 
-    pub fn write_nr50(&mut self, v: u8) {
+    pub fn reg_nr50_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
@@ -719,7 +719,7 @@ impl SoundController {
         self.right_vin = v & 0b1000_0000 > 0;
     }
 
-    pub fn read_nr51(&self) -> u8 {
+    pub fn reg_nr51_read(&self) -> u8 {
         0
             | if self.chan1.right { 0b0000_0001 } else { 0 }
             | if self.chan2.right { 0b0000_0010 } else { 0 }
@@ -731,7 +731,7 @@ impl SoundController {
             | if self.chan4.left  { 0b1000_0000 } else { 0 }
     }
 
-    pub fn write_nr51(&mut self, v: u8) {
+    pub fn reg_nr51_write(&mut self, v: u8) {
         if self.enabled {
             self.chan1.right = v & 0b0000_0001 > 0;
             self.chan2.right = v & 0b0000_0010 > 0;
@@ -744,7 +744,7 @@ impl SoundController {
         }
     }
 
-    pub fn read_nr52(&self) -> u8 {
+    pub fn reg_nr52_read(&self) -> u8 {
         0b0111_0000 // Unreadable bits
             | if self.chan1.on { 0b0000_0001 } else { 0 }
             | if self.chan2.on { 0b0000_0010 } else { 0 }
@@ -753,7 +753,7 @@ impl SoundController {
             | if self.enabled     { 0b1000_0000 } else { 0 }
     }
 
-    pub fn write_nr52(&mut self, v: u8) {
+    pub fn reg_nr52_write(&mut self, v: u8) {
         self.enabled = v & 0b1000_0000 > 0;
         // Turning off sound controller turns off all voices.
         if !self.enabled {
