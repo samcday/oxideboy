@@ -1,4 +1,5 @@
 use std::slice;
+use ::interrupt::{InterruptState, Interrupt};
 
 // The default palette colors, in ARGB8888 format.
 const COLOR_MAPPING: [u32; 4] = [
@@ -10,10 +11,254 @@ const COLOR_MAPPING: [u32; 4] = [
 const EMPTY_TILE: TileEntry = TileEntry{data: [[0; 8]; 8]};
 const DEFAULT_PALETTE: Palette = Palette{entries: [0, 3, 3, 3]};
 
-pub struct PPU {
+// Advances PPU by a single clock cycle. Basically, all the video magic happens in here.
+// Before you read this code, go and watch this video: https://www.youtube.com/watch?v=HyzD8pNlpwI&t=29m12s
+// Any interrupt codes we return here (STAT / VBlank) are ORd with the main CPU IF register.
+pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
+    if !state.enabled {
+        return;
+    }
+
+    state.prev_mode = state.mode.clone();
+    state.cycles += 1;
+
+    match state.mode {
+        // The first stage of a scanline.
+        // In this stage, we search the OAM table for OBJs that overlap the current scanline (LY).
+        // The actual hardware performs this process over 20 clock cycles. However, since OAM memory
+        // is inaccessible during this stage, there's no need to emulate it in a cycle accurate manner.
+        // Instead we just perform all the work on the first cycle and spin for the remaining 19.
+        OAMSearch => {
+            if state.cycles == 1 {
+                oam_search(state);
+            }
+
+            if state.cycles == 20 {
+                state.next_mode(PixelTransfer);
+                return;
+            }
+        }
+        // The second stage of a scanline, and the most important one. This is where we rasterize
+        // the background map, window map, and OBJs into actual pixels that go into the framebuffer.
+        PixelTransfer => {
+            pixel_transfer(state, interrupts);
+        },
+        // HBlank stage is a variable number of cycles pause between drawing a line and moving on
+        // to the next line. The amount of cycles varies depending on the amount of work that was
+        // done in Pixel Transfer. The more OBJs in the scanline, the less time we pause here.
+        HBlank(n) => {
+            // Otherwise, we wait until we've counted the required number of cycles.
+            if state.cycles == n {
+                // Alright, time to move on to the next line.
+                state.ly += 1;
+
+                // Is the next line off screen? If so, we've reached VBlank.
+                if state.ly == 144 {
+                    // Set the VBlank interrupt request.
+                    interrupts.request(Interrupt::VBlank);
+                    // And also set the STAT interrupt request if VBlank interrupts are enabled in there.
+                    if state.interrupt_vblank {
+                        interrupts.request(Interrupt::Stat);
+                    }
+                    state.next_mode(VBlank);
+                } else {
+                    if state.interrupt_oam {
+                        interrupts.request(Interrupt::Stat);
+                    }
+                    if state.interrupt_lyc && state.ly == state.lyc {
+                        interrupts.request(Interrupt::Stat);
+                    }
+                    state.next_mode(OAMSearch);
+                }
+            }
+        },
+        // The VBlank stage is when we've finished rendering all lines for the current frame.
+        // In this stage we snooze for 10 invisible scanlines.
+        // A whole scanline is ordinarily 114 cycles, so this is essentially 1140 cycles of quiet
+        // time in which the game can update OAM, prepare for the next frame, etc.
+        VBlank => {
+            // Every 114 cycles we advance LY.
+            if state.cycles % 114 == 0 {
+                state.ly += 1;
+            }
+            if state.cycles == 1140 {
+                state.ly = 0;
+
+                if state.interrupt_oam {
+                    interrupts.request(Interrupt::Stat);
+                }
+                if state.interrupt_lyc && state.ly == state.lyc {
+                    interrupts.request(Interrupt::Stat);
+                }
+                state.cur_framebuffer = (state.cur_framebuffer + 1) % 2;
+                state.next_mode(OAMSearch);
+            }
+        }
+    }
+}
+
+// Searches through the OAM table to find any OBJs that overlap the line we're currently drawing.
+pub fn oam_search(state: &mut PPUState) {
+    state.scanline_objs.clear();
+
+    let h = if state.obj_tall { 16 } else { 8 };
+    let ly_bound = state.ly + 16;
+
+    for (idx, obj) in state.oam.iter().enumerate() {
+        if state.scanline_objs.len() == 10 {
+            break;
+        }
+
+        if ly_bound >= obj.y && ly_bound < obj.y + h && obj.x < 168 {
+            state.scanline_objs.push((idx, obj.x));
+        }
+    }
+
+    // Once the list is built, we ensure the elements are ordered by the OBJ x coord.
+    // If two OBJs have the same x coord, then we prioritise the OBJ by its position in OAM table.
+    // This ordering is important, we build the list here once, but then access it many times during
+    // pixel transfer, so this makes things more efficient.
+    // Also, in the name of effiency, the list is ordered with the lowest x co-ord coming last.
+    // This way, once we've drawn an OBJ, we just pop it off the Vec (which simply decrements len).
+    state.scanline_objs.sort_unstable_by(|(a_idx, a_x), (b_idx, b_x)| a_x.cmp(b_x).then(a_idx.cmp(b_idx)));
+    state.scanline_objs.reverse();
+}
+
+/// The second stage of the scanline. Takes 43+ cycles.
+/// This is where we fetch BG/window/OBJ tiles and flush pixels out to the LCD.
+/// Our PPU code is run in lockstep with the CPU at 1Mhz. However the real PPU runs at 4Mhz/2Mhz, so we simulate that
+/// here by running the flusher steps at 4Mhz and the pixel fetching process at 2Mhz.
+fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
+    // On the first cycle of this stage we ensure our state info is clean.
+    if state.cycles == 1 {
+        // TODO: explain this.
+        state.pt_state.cycle_budget = (172 + (state.scx % 8)).into();
+
+        state.pt_state.ppu_cycles = 0;
+        state.pt_state.cycle_countdown = 12;
+        state.pt_state.x = 8 - (state.scx % 8);
+        state.pt_state.fetch_obj = false;
+        state.pt_state.in_win = false;
+
+        // TODO: we're latching the memory addr for BG code map reads here.
+        // If SCX changes mid scanline what is supposed to happen?
+        let code_base_addr = if state.bg_code_hi { 1024 } else { 0 };
+        let ly = state.ly as usize;
+        let scy = state.scy as usize;
+        let scx = state.scx as usize;
+        state.pt_state.tilemap_addr = code_base_addr + (((((ly + scy) / 8) % 32) * 32) + ((scx / 8) % 32));
+        state.pt_state.tile_y = (scy + ly) % 8;
+
+        let mut stall_buckets = [0; 21];
+        let mut extra = 0;
+        for (_, obj_x) in &state.scanline_objs {
+            let idx = (obj_x / 8) as usize;
+            stall_buckets[idx] = (5u16.saturating_sub((*obj_x as u16) % 8)).max(stall_buckets[idx]);
+            extra += 6;
+        }
+        extra += stall_buckets.iter().sum::<u16>();
+        state.pt_state.cycle_budget += extra & !3;
+    }
+
+    for _ in 0..4 {
+        state.pt_state.ppu_cycles += 1;
+        if state.pt_state.ppu_cycles >= state.pt_state.cycle_budget {
+            break;
+        }
+
+        state.pt_state.cycle_countdown -= 1;
+        if state.pt_state.cycle_countdown > 0 {
+            continue;
+        }
+
+        if state.pt_state.fetch_obj {
+            let (obj_idx, obj_x) = state.scanline_objs[state.scanline_objs.len() - 1];
+            let obj = state.oam[obj_idx as usize];
+            let mut obj_code = obj.code as usize;
+            let mut obj_y = if obj.vert_flip() {
+                (if state.obj_tall { 15 } else { 7 }) - (state.ly + 16 - obj.y) as usize
+            } else {
+                (state.ly + 16 - obj.y) as usize
+            };
+            if obj_y >= 8 {
+                obj_y -= 8;
+                obj_code += 1;
+            }
+            let palette = if obj.palette() { &state.obp1 } else { &state.obp0 };
+            let obj_x = obj_x as usize;
+            state.tiles[obj_code].draw(
+                &mut state.pt_state.scanline[obj_x..], &mut state.pt_state.scanline_prio[obj_x..], obj_y, true, !obj.priority(), obj.horz_flip(), palette
+            );
+            state.scanline_objs.pop();
+            state.pt_state.fetch_obj = false;
+        } else if state.pt_state.x < 176 {
+            let x = state.pt_state.x as usize;
+            if state.bg_enabled {
+                // Fetch BG tile and write it into FIFO.
+                let tile = state.tilemap[state.pt_state.tilemap_addr];
+                let tile = if !state.bg_data_lo {
+                    (256 + (tile as u8 as i8 as i16)) as usize
+                } else {
+                    (tile as usize)
+                };
+                state.tiles[tile].draw(&mut state.pt_state.scanline[x..], &mut state.pt_state.scanline_prio[x..], state.pt_state.tile_y, false, false, false, &state.bgp);
+            } else {
+                EMPTY_TILE.draw(&mut state.pt_state.scanline[x..], &mut state.pt_state.scanline_prio[x..], state.pt_state.tile_y, false, false, false, &state.bgp);
+            }
+            state.pt_state.x = (state.pt_state.x + 8).min(176);
+            state.pt_state.tilemap_addr = (state.pt_state.tilemap_addr&!0x1F)|(((state.pt_state.tilemap_addr+1)&0x1F));
+        }
+
+        let mut pending_objs = state.obj_enabled && !state.scanline_objs.is_empty();
+        let mut next_obj_x = if pending_objs {
+            (state.scanline_objs[state.scanline_objs.len() - 1]).1
+        } else { 0 };
+
+        // Did we just cross over window boundary?
+        state.pt_state.cycle_countdown = 8;
+        if state.win_enabled && state.ly >= state.wy && !state.pt_state.in_win && state.pt_state.x >= state.wx + 1 {
+            state.pt_state.cycle_budget += 6;
+            state.pt_state.in_win = true;
+            state.pt_state.x = state.wx + 1;
+            let code_base_addr = if state.win_code_hi { 1024 } else { 0 };
+            // TODO: gotta handle that weird window wrapping thing at 0xa6
+            let ly = state.ly as usize;
+            let wy = state.wy as usize;
+            state.pt_state.tilemap_addr = code_base_addr + (((((ly-wy) / 8) % 32) * 32));
+            state.pt_state.tile_y = ((state.ly-state.wy) % 8) as usize;
+            state.pt_state.cycle_countdown = 6;
+        } else if pending_objs && state.pt_state.x >= next_obj_x + 8 {
+            state.pt_state.fetch_obj = true;
+            state.pt_state.cycle_countdown = 6;
+        }
+    }
+
+    if state.pt_state.ppu_cycles >= state.pt_state.cycle_budget {
+        let mut fb_pos = (state.ly as usize) * 160;
+        for i in 8..168 {
+            state.framebuffers[state.cur_framebuffer as usize][fb_pos] = COLOR_MAPPING[state.pt_state.scanline[i] as usize];
+            fb_pos += 1;
+        }
+
+        let mut hblank_cycles = 51+43 - state.cycles;
+        if state.lcd_just_enabled {
+            // The first scanline after LCD is enabled is 1 cycle shorter.
+            state.lcd_just_enabled = false;
+            hblank_cycles -= 1;
+        }
+        state.next_mode(HBlank(hblank_cycles));
+
+        // If HBlank STAT interrupt is enabled, we send it now.
+        if state.interrupt_hblank {
+            interrupts.request(Interrupt::Stat);
+        }
+    }
+}
+
+pub struct PPUState {
     pub enabled: bool,          // Master switch to turn LCD on/off.
-    pub state: PPUState,
-    pub prev_state: PPUState,   // STAT reports the current mode perpetually 1 cycle late
+    pub mode: Mode,
+    pub prev_mode: Mode,   // STAT reports the current mode perpetually 1 cycle late
     pub cycles: u16,            // Counts how many CPU cycles have elapsed in the current PPU stage.
 
     pub scy: u8,
@@ -53,14 +298,12 @@ pub struct PPU {
 
     framebuffers: [[u32; ::SCREEN_SIZE]; 2],
     cur_framebuffer: usize,
-
-    if_: u8,
 }
 
-impl PPU {
-    pub fn new() -> PPU {
-        let mut ppu = PPU {
-            enabled: false, state: OAMSearch, prev_state: OAMSearch, cycles: 0,
+impl PPUState {
+    pub fn new() -> PPUState {
+        let mut state = PPUState {
+            enabled: false, mode: OAMSearch, prev_mode: OAMSearch, cycles: 0,
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
             wx: 0, wy: 0,
@@ -83,11 +326,10 @@ impl PPU {
             scanline_objs: Vec::new(),
             framebuffers: [[0; 160*144]; 2],
             cur_framebuffer: 0,
-            if_: 0,
             lcd_just_enabled: false,
         };
-        ppu.clear_framebuffers();
-        ppu
+        state.clear_framebuffers();
+        state
     }
 
     // Gets the last drawn framebuffer (i.e the currently *inactive* one).
@@ -103,274 +345,27 @@ impl PPU {
         }
     }
 
-    fn next_state(&mut self, new: PPUState) {
+    fn next_mode(&mut self, new: Mode) {
         self.cycles = 0;
-        self.state = new;
-    }
-
-    // Advances PPU display by a single clock cycle. Basically, all the video magic happens in here.
-    // Before you read this code, go and watch this video: https://www.youtube.com/watch?v=HyzD8pNlpwI&t=29m12s
-    // Any interrupt codes we return here (STAT / VBlank) are ORd with the main CPU IF register.
-    pub fn advance(&mut self) -> u8 {
-        if !self.enabled {
-            return 0;
-        }
-
-        self.prev_state = self.state.clone();
-        self.cycles += 1;
-        self.if_ = 0;
-
-        match self.state {
-            // The first stage of a scanline.
-            // In this stage, we search the OAM table for OBJs that overlap the current scanline (LY).
-            // The actual hardware performs this process over 20 clock cycles. However, since OAM memory
-            // is inaccessible during this stage, there's no need to emulate it in a cycle accurate manner.
-            // Instead we just perform all the work on the first cycle and spin for the remaining 19.
-            OAMSearch => {
-                if self.cycles == 1 {
-                    self.oam_search();
-                }
-
-                if self.cycles == 20 {
-                    self.next_state(PixelTransfer);
-                    return 0;
-                }
-            }
-            // The second stage of a scanline, and the most important one. This is where we rasterize
-            // the background map, window map, and OBJs into actual pixels that go into the framebuffer.
-            PixelTransfer => {
-                self.pixel_transfer();
-            },
-            // HBlank stage is a variable number of cycles pause between drawing a line and moving on
-            // to the next line. The amount of cycles varies depending on the amount of work that was
-            // done in Pixel Transfer. The more OBJs in the scanline, the less time we pause here.
-            HBlank(n) => {
-                // Otherwise, we wait until we've counted the required number of cycles.
-                if self.cycles == n {
-                    // Alright, time to move on to the next line.
-                    self.ly += 1;
-
-                    // Is the next line off screen? If so, we've reached VBlank.
-                    if self.ly == 144 {
-                        // Set the VBlank interrupt request.
-                        self.if_ |= 0x1;
-                        // And also set the STAT interrupt request if VBlank interrupts are enabled in there.
-                        if self.interrupt_vblank {
-                            self.if_ |= 0x2;
-                        }
-                        self.next_state(VBlank);
-                    } else {
-                        if self.interrupt_oam {
-                            self.if_ |= 0x2;
-                        }
-                        if self.interrupt_lyc && self.ly == self.lyc {
-                            self.if_ |= 0x2;
-                        }
-                        self.next_state(OAMSearch);
-                    }
-                }
-            },
-            // The VBlank stage is when we've finished rendering all lines for the current frame.
-            // In this stage we snooze for 10 invisible scanlines.
-            // A whole scanline is ordinarily 114 cycles, so this is essentially 1140 cycles of quiet
-            // time in which the game can update OAM, prepare for the next frame, etc.
-            VBlank => {
-                // Every 114 cycles we advance LY.
-                if self.cycles % 114 == 0 {
-                    self.ly += 1;
-                }
-                if self.cycles == 1140 {
-                    self.ly = 0;
-
-                    if self.interrupt_oam {
-                        self.if_ |= 0x2;
-                    }
-                    if self.interrupt_lyc && self.ly == self.lyc {
-                        self.if_ |= 0x2;
-                    }
-                    self.cur_framebuffer = (self.cur_framebuffer + 1) % 2;
-                    self.next_state(OAMSearch);
-                }
-            }
-        }
-
-        self.if_
-    }
-
-    // Searches through the OAM table to find any OBJs that overlap the line we're currently drawing.
-    pub fn oam_search(&mut self) {
-        self.scanline_objs.clear();
-
-        let h = if self.obj_tall { 16 } else { 8 };
-        let ly_bound = self.ly + 16;
-
-        for (idx, obj) in self.oam.iter().enumerate() {
-            if self.scanline_objs.len() == 10 {
-                break;
-            }
-
-            if ly_bound >= obj.y && ly_bound < obj.y + h && obj.x < 168 {
-                self.scanline_objs.push((idx, obj.x));
-            }
-        }
-
-        // Once the list is built, we ensure the elements are ordered by the OBJ x coord.
-        // If two OBJs have the same x coord, then we prioritise the OBJ by its position in OAM table.
-        // This ordering is important, we build the list here once, but then access it many times during
-        // pixel transfer, so this makes things more efficient.
-        // Also, in the name of effiency, the list is ordered with the lowest x co-ord coming last.
-        // This way, once we've drawn an OBJ, we just pop it off the Vec (which simply decrements len).
-        self.scanline_objs.sort_unstable_by(|(a_idx, a_x), (b_idx, b_x)| a_x.cmp(b_x).then(a_idx.cmp(b_idx)));
-        self.scanline_objs.reverse();
-    }
-
-    /// The second stage of the scanline. Takes 43+ cycles.
-    /// This is where we fetch BG/window/OBJ tiles and flush pixels out to the LCD.
-    /// Our PPU code is run in lockstep with the CPU at 1Mhz. However the real PPU runs at 4Mhz/2Mhz, so we simulate that
-    /// here by running the flusher steps at 4Mhz and the pixel fetching process at 2Mhz.
-    fn pixel_transfer(&mut self) {
-        // On the first cycle of this stage we ensure our state info is clean.
-        if self.cycles == 1 {
-            // TODO: explain this.
-            self.pt_state.cycle_budget = (172 + (self.scx % 8)).into();
-
-            self.pt_state.ppu_cycles = 0;
-            self.pt_state.cycle_countdown = 12;
-            self.pt_state.x = 8 - (self.scx % 8);
-            self.pt_state.fetch_obj = false;
-            self.pt_state.in_win = false;
-
-            // TODO: we're latching the memory addr for BG code map reads here.
-            // If SCX changes mid scanline what is supposed to happen?
-            let code_base_addr = if self.bg_code_hi { 1024 } else { 0 };
-            let ly = self.ly as usize;
-            let scy = self.scy as usize;
-            let scx = self.scx as usize;
-            self.pt_state.tilemap_addr = code_base_addr + (((((ly + scy) / 8) % 32) * 32) + ((scx / 8) % 32));
-            self.pt_state.tile_y = (scy + ly) % 8;
-
-            let mut stall_buckets = [0; 21];
-            let mut extra = 0;
-            for (_, obj_x) in &self.scanline_objs {
-                let idx = (obj_x / 8) as usize;
-                stall_buckets[idx] = (5u16.saturating_sub((*obj_x as u16) % 8)).max(stall_buckets[idx]);
-                extra += 6;
-            }
-            extra += stall_buckets.iter().sum::<u16>();
-            self.pt_state.cycle_budget += extra & !3;
-        }
-
-        for _ in 0..4 {
-            self.pt_state.ppu_cycles += 1;
-            if self.pt_state.ppu_cycles >= self.pt_state.cycle_budget {
-                break;
-            }
-
-            self.pt_state.cycle_countdown -= 1;
-            if self.pt_state.cycle_countdown > 0 {
-                continue;
-            }
-
-            if self.pt_state.fetch_obj {
-                let (obj_idx, obj_x) = self.scanline_objs[self.scanline_objs.len() - 1];
-                let obj = self.oam[obj_idx as usize];
-                let mut obj_code = obj.code as usize;
-                let mut obj_y = if obj.vert_flip() {
-                    (if self.obj_tall { 15 } else { 7 }) - (self.ly + 16 - obj.y) as usize
-                } else {
-                    (self.ly + 16 - obj.y) as usize
-                };
-                if obj_y >= 8 {
-                    obj_y -= 8;
-                    obj_code += 1;
-                }
-                let palette = if obj.palette() { &self.obp1 } else { &self.obp0 };
-                let obj_x = obj_x as usize;
-                self.tiles[obj_code].draw(
-                    &mut self.pt_state.scanline[obj_x..], &mut self.pt_state.scanline_prio[obj_x..], obj_y, true, !obj.priority(), obj.horz_flip(), palette
-                );
-                self.scanline_objs.pop();
-                self.pt_state.fetch_obj = false;
-            } else if self.pt_state.x < 176 {
-                let x = self.pt_state.x as usize;
-                if self.bg_enabled {
-                    // Fetch BG tile and write it into FIFO.
-                    let tile = self.tilemap[self.pt_state.tilemap_addr];
-                    let tile = if !self.bg_data_lo {
-                        (256 + (tile as u8 as i8 as i16)) as usize
-                    } else {
-                        (tile as usize)
-                    };
-                    self.tiles[tile].draw(&mut self.pt_state.scanline[x..], &mut self.pt_state.scanline_prio[x..], self.pt_state.tile_y, false, false, false, &self.bgp);
-                } else {
-                    EMPTY_TILE.draw(&mut self.pt_state.scanline[x..], &mut self.pt_state.scanline_prio[x..], self.pt_state.tile_y, false, false, false, &self.bgp);
-                }
-                self.pt_state.x = (self.pt_state.x + 8).min(176);
-                self.pt_state.tilemap_addr = (self.pt_state.tilemap_addr&!0x1F)|(((self.pt_state.tilemap_addr+1)&0x1F));
-            }
-
-            let mut pending_objs = self.obj_enabled && !self.scanline_objs.is_empty();
-            let mut next_obj_x = if pending_objs {
-                (self.scanline_objs[self.scanline_objs.len() - 1]).1
-            } else { 0 };
-
-            // Did we just cross over window boundary?
-            self.pt_state.cycle_countdown = 8;
-            if self.win_enabled && self.ly >= self.wy && !self.pt_state.in_win && self.pt_state.x >= self.wx + 1 {
-                self.pt_state.cycle_budget += 6;
-                self.pt_state.in_win = true;
-                self.pt_state.x = self.wx + 1;
-                let code_base_addr = if self.win_code_hi { 1024 } else { 0 };
-                // TODO: gotta handle that weird window wrapping thing at 0xa6
-                let ly = self.ly as usize;
-                let wy = self.wy as usize;
-                self.pt_state.tilemap_addr = code_base_addr + (((((ly-wy) / 8) % 32) * 32));
-                self.pt_state.tile_y = ((self.ly-self.wy) % 8) as usize;
-                self.pt_state.cycle_countdown = 6;
-            } else if pending_objs && self.pt_state.x >= next_obj_x + 8 {
-                self.pt_state.fetch_obj = true;
-                self.pt_state.cycle_countdown = 6;
-            }
-        }
-
-        if self.pt_state.ppu_cycles >= self.pt_state.cycle_budget {
-            let mut fb_pos = (self.ly as usize) * 160;
-            for i in 8..168 {
-                self.framebuffers[self.cur_framebuffer as usize][fb_pos] = COLOR_MAPPING[self.pt_state.scanline[i] as usize];
-                fb_pos += 1;
-            }
-
-            let mut hblank_cycles = 51+43 - self.cycles;
-            if self.lcd_just_enabled {
-                // The first scanline after LCD is enabled is 1 cycle shorter.
-                self.lcd_just_enabled = false;
-                hblank_cycles -= 1;
-            }
-            self.next_state(HBlank(hblank_cycles));
-
-            // If HBlank STAT interrupt is enabled, we send it now.
-            if self.interrupt_hblank {
-                self.if_ |= 0x2;
-            }
-        }
+        self.mode = new;
     }
 
     pub fn oam_read(&self, addr: usize) -> u8 {
-        if self.prev_state == OAMSearch || self.prev_state == PixelTransfer {
+        if self.prev_mode == OAMSearch || self.prev_mode == PixelTransfer {
             return 0xFF; // Reading OAM memory during Mode2 & Mode3 is not permitted.
         }
         (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr]
     }
 
     pub fn oam_write(&mut self, addr: usize, v: u8) {
-        if self.state == OAMSearch || self.state == PixelTransfer {
+        if self.mode == OAMSearch || self.mode == PixelTransfer {
             return; // Writing OAM memory during Mode2 & Mode3 is not permitted.
         }
         (unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) })[addr] = v
     }
 
     pub fn vram_read(&self, addr: u16) -> u8 {
-        if self.state == PixelTransfer {
+        if self.mode == PixelTransfer {
             return 0xFF; // Reading VRAM during Mode3 is not permitted.
         }
 
@@ -382,7 +377,7 @@ impl PPU {
     }
 
     pub fn vram_write(&mut self, addr: u16, v: u8) {
-        if self.state == PixelTransfer {
+        if self.mode == PixelTransfer {
             return; // Writing VRAM during Mode3 is not permitted.
         }
 
@@ -414,10 +409,10 @@ impl PPU {
         if enabled && !self.enabled {
             self.enabled = true;
             self.lcd_just_enabled = true;
-            self.next_state(OAMSearch);
+            self.next_mode(OAMSearch);
             self.ly = 0;
         } else if !enabled && self.enabled {
-            if self.state != VBlank {
+            if self.mode != VBlank {
                 // TODO: games are not supposed to disable LCD outside of VBlank.
                 // When this happens I think we're supposed to draw a single line in the middle of the screen.
             }
@@ -439,7 +434,7 @@ impl PPU {
     // Compute value of the STAT register.
     pub fn reg_stat_read(&self) -> u8 {
         0b1000_0000 // Unused bits
-            | match self.prev_state {
+            | match self.prev_mode {
                 HBlank(_)             => 0b0000_0000,
                 VBlank                => 0b0000_0001,
                 OAMSearch             => 0b0000_0010,
@@ -460,14 +455,14 @@ impl PPU {
     }
 
     pub fn dma_ok(&self) -> bool {
-        match self.state {
+        match self.mode {
             HBlank(_) | VBlank => true,
             _ => false,
         }
     }
 
     pub fn maybe_trash_oam(&mut self) {
-        if self.state == PPUState::OAMSearch && self.cycles < 19 {
+        if self.mode == Mode::OAMSearch && self.cycles < 19 {
             // Corruption of OAM is duplicating the current 8 bytes being searched into the next 8 bytes.
             let pos = (self.cycles as usize) * 2;
             self.oam[pos + 2] = self.oam[pos];
@@ -478,13 +473,13 @@ impl PPU {
 
 // Models the 4 states the PPU can be in when it is active.
 #[derive(Clone, Debug, PartialEq)]
-pub enum PPUState {
+pub enum Mode {
     OAMSearch,
     PixelTransfer,
     HBlank(u16),     // Number of cycles to remain in HBlank for.
     VBlank,
 }
-use self::PPUState::{*};
+use self::Mode::{*};
 
 struct PixelTransferState {
     ppu_cycles: u16,
@@ -578,110 +573,5 @@ impl Palette {
         self.entries[1] = (v & 0b00001100) >> 2;
         self.entries[2] = (v & 0b00110000) >> 4;
         self.entries[3] = (v & 0b11000000) >> 6;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_scanline_pt_cycles_bg() {
-        let test = |scx| {
-            let mut ppu = PPU::new();
-            ppu.ly = 66;
-            ppu.scx = scx;
-            ppu.enabled = true;
-            for _ in 0..20 { ppu.advance(); }
-            assert_eq!(ppu.state, PPUState::PixelTransfer);
-
-            let mut cycles = 0;
-            while ppu.state == PPUState::PixelTransfer {
-                cycles += 1;
-                ppu.advance();
-            }
-            cycles
-        };
-
-        assert_eq!(43, test(0));
-        assert_eq!(44, test(1));
-        assert_eq!(45, test(7));
-        assert_eq!(43, test(8));
-    }
-
-    #[test]
-    fn test_scanline_pt_cycles_window() {
-        let test = |scx, wx| {
-            let mut ppu = PPU::new();
-            ppu.wy = 66;
-            ppu.wx = wx;
-            ppu.ly = 66;
-            ppu.scx = scx;
-            ppu.enabled = true;
-            ppu.win_enabled = true;
-            for _ in 0..20 { ppu.advance(); }
-            assert_eq!(ppu.state, PPUState::PixelTransfer);
-
-            let mut cycles = 0;
-            while ppu.state == PPUState::PixelTransfer {
-                cycles += 1;
-                ppu.advance();
-            }
-            cycles
-        };
-
-        assert_eq!(45, test(0, 7));
-        assert_eq!(47, test(7, 7));
-        assert_eq!(45, test(8, 7));
-    }
-
-    #[test]
-    fn test_scanline_pt_cycles_obj() {
-        let test = |sprites: Vec<u8>| {
-            let mut ppu = PPU::new();
-            ppu.ly = 66;
-            ppu.enabled = true;
-            ppu.obj_enabled = true;
-            for (n, x) in sprites.iter().enumerate() {
-                ppu.oam[n].x = *x;
-                ppu.oam[n].y = 66 + 16;
-            }
-            for _ in 0..20 { ppu.advance(); }
-            assert_eq!(ppu.scanline_objs.len(), sprites.len());
-            assert_eq!(ppu.state, PPUState::PixelTransfer);
- 
-            let mut cycles = 0;
-            while ppu.state == PPUState::PixelTransfer {
-                cycles += 1;
-                ppu.advance();
-            }
-            cycles
-        };
-
-        assert_eq!(45, test(vec![0]));
-        assert_eq!(45, test(vec![1]));
-        assert_eq!(45, test(vec![2]));
-        assert_eq!(45, test(vec![3]));
-        assert_eq!(44, test(vec![4]));
-        assert_eq!(44, test(vec![5]));
-        assert_eq!(44, test(vec![6]));
-        assert_eq!(44, test(vec![7]));
-        assert_eq!(45, test(vec![8]));
-        assert_eq!(45, test(vec![9]));
-        assert_eq!(45, test(vec![10]));
-        assert_eq!(45, test(vec![11]));
-        assert_eq!(44, test(vec![12]));
-        assert_eq!(44, test(vec![13]));
-        assert_eq!(44, test(vec![14]));
-        assert_eq!(44, test(vec![15]));
-        assert_eq!(45, test(vec![16]));
-
-        assert_eq!(45, test(vec![0]));
-        assert_eq!(47, test(vec![0, 0]));
-        assert_eq!(48, test(vec![0, 0, 0]));
-        assert_eq!(50, test(vec![0, 0, 0, 0]));
-        assert_eq!(51, test(vec![0, 0, 0, 0, 0]));
-
-        assert_eq!(48, test(vec![0, 8]));
     }
 }

@@ -8,7 +8,7 @@ const DUTY_CYCLES: [[f32; 8]; 4] = [
 ];
 const NOISE_DIVISORS: [u16; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
-pub struct SoundController {
+pub struct APUState {
     sample_cycles: f64,
 
     timer: u16,
@@ -28,6 +28,87 @@ pub struct SoundController {
     wave_ram: [u8; 32],
 
     pub sample_queue: Vec<f32>,
+}
+
+/// Runs APU for a single CPU (1MHz) clock cycle.
+pub fn clock(state: &mut APUState) {
+    if !state.enabled {
+        return;
+    }
+
+    state.timer += 1;
+    state.chan3.wav_read_clocks = state.chan3.wav_read_clocks.saturating_sub(1);
+
+    if state.timer == 2048 {
+        state.timer = 0;
+        state.frame_seq_timer = state.frame_seq_timer.wrapping_add(1);
+
+        if state.frame_seq_timer % 2 == 1 {
+            if state.chan1.counter { length_clock(64,  &mut state.chan1.length, &mut state.chan1.on); }
+            if state.chan2.counter { length_clock(64,  &mut state.chan2.length, &mut state.chan2.on); }
+            if state.chan3.counter { length_clock(256, &mut state.chan3.length, &mut state.chan3.on); }
+            if state.chan4.counter { length_clock(64,  &mut state.chan4.length, &mut state.chan4.on); }
+        }
+        if state.frame_seq_timer % 4 == 3 {
+            state.chan1.sweep_clock();
+        }
+        if state.frame_seq_timer == 8 {
+            state.chan1.vol_env.clock();
+            state.chan2.vol_env.clock();
+            state.chan4.vol_env.clock();
+            state.frame_seq_timer = 0;
+        }
+    }
+
+    if state.chan1.on {
+        state.chan1.freq_timer += 4;
+        if (state.chan1.freq_timer / 4) >= (2048 - state.chan1.freq) {
+            state.chan1.pos = state.chan1.pos.wrapping_add(1);
+            state.chan1.freq_timer = 0;
+        }
+    }
+
+    if state.chan2.on {
+        state.chan2.freq_timer += 4;
+        if (state.chan2.freq_timer / 4) >= (2048 - state.chan2.freq) {
+            state.chan2.pos = state.chan2.pos.wrapping_add(1);
+            state.chan2.freq_timer = 0;
+        }
+    }
+
+    if state.chan3.on {
+        state.chan3.freq_timer += 4;
+        if (state.chan3.freq_timer / 2) >= (2048 - state.chan3.freq) {
+            state.chan3.pos = (state.chan3.pos + 1) % 32;
+            state.chan3.wav_read_clocks = 2;
+            state.chan3.freq_timer = 0;
+        }
+    }
+
+    if state.chan4.on {
+        state.chan4.freq_timer = state.chan4.freq_timer.saturating_add(4);
+        let freq = NOISE_DIVISORS[state.chan4.div_ratio as usize] << state.chan4.poly_freq;
+        if (state.chan4.freq_timer / 8) >= freq {
+            state.chan4.noise_clock();
+            state.chan4.freq_timer = 0;
+        }
+    }
+
+    state.sample_cycles += 1.0;
+    let cycles_per_sample = 1048576.0 / SAMPLE_RATE;
+    if state.sample_cycles >= cycles_per_sample {
+        state.sample_cycles -= cycles_per_sample;
+        state.generate_sample();
+    }
+}
+
+fn length_clock(max: u16, len: &mut u16, on: &mut bool) {
+    if *len < max {
+        *len += 1;
+        if *len == max {
+            *on = false;
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -200,6 +281,7 @@ struct Channel3 {
     counter: bool,
     pos: usize,
     freq_timer: u16,
+    wav_read_clocks: u16,
 }
 
 impl Channel3 {
@@ -208,8 +290,8 @@ impl Channel3 {
             return (l, r);
         }
         let wav = (if self.level == 0 { 0. }
-                   else if self.level == 1 { wav as f32 }
-                   else { (wav >> (self.level - 1)) as f32 }) / 15.0;
+                   else if self.level == 1 { (wav as f32) - 7. }
+                   else { ((wav >> (self.level - 1)) as f32) - 7. }) / 7.;
         (
             l + if self.left  { wav } else { 0.0 },
             r + if self.right { wav } else { 0.0 }
@@ -253,9 +335,9 @@ impl Channel4 {
     }
 }
 
-impl SoundController {
-    pub fn new() -> SoundController {
-        SoundController{
+impl APUState {
+    pub fn new() -> APUState {
+        APUState{
             sample_cycles: 0.0,
             timer: 0, frame_seq_timer: 0,
 
@@ -270,72 +352,6 @@ impl SoundController {
             wave_ram: [0; 32],
 
             sample_queue: Vec::new(),
-        }
-    }
-
-    pub fn advance(&mut self) {
-        if !self.enabled {
-            return;
-        }
-
-        self.timer += 1;
-        if self.timer == 2048 {
-            self.timer = 0;
-            self.frame_seq_timer = self.frame_seq_timer.wrapping_add(1);
-
-            if self.frame_seq_timer % 2 == 1 {
-                if self.chan1.counter { Self::length_clock(64,  &mut self.chan1.length, &mut self.chan1.on); }
-                if self.chan2.counter { Self::length_clock(64,  &mut self.chan2.length, &mut self.chan2.on); }
-                if self.chan3.counter { Self::length_clock(256, &mut self.chan3.length, &mut self.chan3.on); }
-                if self.chan4.counter { Self::length_clock(64,  &mut self.chan4.length, &mut self.chan4.on); }
-            }
-            if self.frame_seq_timer % 4 == 3 {
-                self.chan1.sweep_clock();
-            }
-            if self.frame_seq_timer == 8 {
-                self.vol_env_clock();
-                self.frame_seq_timer = 0;
-            }
-        }
-
-        if self.chan1.on {
-            self.chan1.freq_timer += 4;
-            if (self.chan1.freq_timer / 4) >= (2048 - self.chan1.freq) {
-                self.chan1.pos = self.chan1.pos.wrapping_add(1);
-                self.chan1.freq_timer = 0;
-            }
-        }
-
-        if self.chan2.on {
-            self.chan2.freq_timer += 4;
-            if (self.chan2.freq_timer / 4) >= (2048 - self.chan2.freq) {
-                self.chan2.pos = self.chan2.pos.wrapping_add(1);
-                self.chan2.freq_timer = 0;
-            }
-        }
-
-        if self.chan3.on {
-            self.chan3.freq_timer += 4;
-            if (self.chan3.freq_timer / 2) >= (2048 - self.chan3.freq) {
-                self.chan3.pos = (self.chan3.pos + 1) % 32;
-                self.chan3.freq_timer = 0;
-            }
-        }
-
-        if self.chan4.on {
-            self.chan4.freq_timer = self.chan4.freq_timer.saturating_add(4);
-            let freq = NOISE_DIVISORS[self.chan4.div_ratio as usize] << self.chan4.poly_freq;
-            if (self.chan4.freq_timer / 8) >= freq {
-                self.chan4.noise_clock();
-                self.chan4.freq_timer = 0;
-            }
-        }
-
-        self.sample_cycles += 1.0;
-        let cycles_per_sample = 1048576.0 / SAMPLE_RATE;
-        if self.sample_cycles >= cycles_per_sample {
-            self.sample_cycles -= cycles_per_sample;
-            self.generate_sample();
         }
     }
 
@@ -360,26 +376,8 @@ impl SoundController {
             return;
         }
 
-        let l = l * 0.1;
-        let r = r * 0.1;
-
         self.sample_queue.push(l);
         self.sample_queue.push(r);
-    }
-
-    fn length_clock(max: u16, len: &mut u16, on: &mut bool) {
-        if *len < max {
-            *len += 1;
-            if *len == max {
-                *on = false;
-            }
-        }
-    }
-
-    fn vol_env_clock(&mut self) {
-        self.chan1.vol_env.clock();
-        self.chan2.vol_env.clock();
-        self.chan4.vol_env.clock();
     }
 
     pub fn reg_nr10_read(&self) -> u8 {
@@ -574,9 +572,10 @@ impl SoundController {
         }
         self.chan3.level = v >> 5;
 
-        if self.chan3.level == 0 {
-            self.chan3.on = false;
-        }
+        // TODO: this looks wrong so I commented it out, why was it here?
+        // if self.chan3.level == 0 {
+        //     self.chan3.on = false;
+        // }
     }
 
     pub fn reg_nr33_read(&self) -> u8 {
@@ -766,12 +765,17 @@ impl SoundController {
         }
     }
 
-    pub fn wave_read(&self, addr: u16) -> u8 {
+    pub fn wave_read(&self, mut addr: u16) -> u8 {
         if self.chan3.on {
+            if self.chan3.wav_read_clocks == 0 {
+                return 0xFF;
+            }
+
+            addr = self.chan3.pos as u16;
         }
 
         let base = (addr as usize)*2;
-        self.wave_ram[base] << 4 | self.wave_ram[base+1]
+        (self.wave_ram[base] << 4) | self.wave_ram[base+1]
     }
 
     pub fn wave_write(&mut self, addr: u16, v: u8) {
