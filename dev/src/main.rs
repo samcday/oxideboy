@@ -47,7 +47,7 @@ fn main() -> Result<()> {
     let mut limit = false;
     let mut paused = false;
     let print_fps = env::var("PRINT_FPS").ok().unwrap_or(String::from("0")) == "1";
-    let mut gameboy = gameboy::CPU::new(rom);
+    let mut gameboy = gameboy::GameboyContext::new(rom);
 
     if !(env::var("RUN_BOOTROM").ok().unwrap_or(String::from("0")) == "1") {
         gameboy.skip_bootrom();
@@ -55,7 +55,6 @@ fn main() -> Result<()> {
 
     audio_device.resume();
 
-    let mut delta = 0;
     let start = Instant::now();
     let mut next_frame = FRAME_TIME;
 
@@ -89,22 +88,22 @@ fn main() -> Result<()> {
                 | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                     break 'running
                 },
-                Event::KeyDown {keycode: Some(Keycode::Up), ..} => { gameboy.joypad().up = true; }
-                Event::KeyDown {keycode: Some(Keycode::Down), ..} => { gameboy.joypad().down = true; }
-                Event::KeyDown {keycode: Some(Keycode::Right), ..} => { gameboy.joypad().right = true; }
-                Event::KeyDown {keycode: Some(Keycode::Left), ..} => { gameboy.joypad().left = true; }
-                Event::KeyDown {keycode: Some(Keycode::A), ..} => { gameboy.joypad().a = true; }
-                Event::KeyDown {keycode: Some(Keycode::S), ..} => { gameboy.joypad().b = true; }
-                Event::KeyDown {keycode: Some(Keycode::Return), ..} => { gameboy.joypad().start = true; }
-                Event::KeyDown {keycode: Some(Keycode::RShift), ..} => { gameboy.joypad().select = true; }
-                Event::KeyUp {keycode: Some(Keycode::Up), ..} => { gameboy.joypad().up = false; }
-                Event::KeyUp {keycode: Some(Keycode::Down), ..} => { gameboy.joypad().down = false; }
-                Event::KeyUp {keycode: Some(Keycode::Right), ..} => { gameboy.joypad().right = false; }
-                Event::KeyUp {keycode: Some(Keycode::Left), ..} => { gameboy.joypad().left = false; }
-                Event::KeyUp {keycode: Some(Keycode::A), ..} => { gameboy.joypad().a = false; }
-                Event::KeyUp {keycode: Some(Keycode::S), ..} => { gameboy.joypad().b = false; }
-                Event::KeyUp {keycode: Some(Keycode::Return), ..} => { gameboy.joypad().start = false; }
-                Event::KeyUp {keycode: Some(Keycode::RShift), ..} => { gameboy.joypad().select = false; }
+                Event::KeyDown {keycode: Some(Keycode::Up), ..} => { gameboy.state.joypad.up = true; }
+                Event::KeyDown {keycode: Some(Keycode::Down), ..} => { gameboy.state.joypad.down = true; }
+                Event::KeyDown {keycode: Some(Keycode::Right), ..} => { gameboy.state.joypad.right = true; }
+                Event::KeyDown {keycode: Some(Keycode::Left), ..} => { gameboy.state.joypad.left = true; }
+                Event::KeyDown {keycode: Some(Keycode::A), ..} => { gameboy.state.joypad.a = true; }
+                Event::KeyDown {keycode: Some(Keycode::S), ..} => { gameboy.state.joypad.b = true; }
+                Event::KeyDown {keycode: Some(Keycode::Return), ..} => { gameboy.state.joypad.start = true; }
+                Event::KeyDown {keycode: Some(Keycode::RShift), ..} => { gameboy.state.joypad.select = true; }
+                Event::KeyUp {keycode: Some(Keycode::Up), ..} => { gameboy.state.joypad.up = false; }
+                Event::KeyUp {keycode: Some(Keycode::Down), ..} => { gameboy.state.joypad.down = false; }
+                Event::KeyUp {keycode: Some(Keycode::Right), ..} => { gameboy.state.joypad.right = false; }
+                Event::KeyUp {keycode: Some(Keycode::Left), ..} => { gameboy.state.joypad.left = false; }
+                Event::KeyUp {keycode: Some(Keycode::A), ..} => { gameboy.state.joypad.a = false; }
+                Event::KeyUp {keycode: Some(Keycode::S), ..} => { gameboy.state.joypad.b = false; }
+                Event::KeyUp {keycode: Some(Keycode::Return), ..} => { gameboy.state.joypad.start = false; }
+                Event::KeyUp {keycode: Some(Keycode::RShift), ..} => { gameboy.state.joypad.select = false; }
 
                 Event::KeyUp {keycode: Some(Keycode::L), ..} => {
                     limit = !limit;
@@ -124,9 +123,10 @@ fn main() -> Result<()> {
         }
 
         if !paused {
-            let (new_delta, framebuf, mut samples) = gameboy.run_frame(delta);
-            gb_buffer.copy_from_slice(framebuf);
+            gameboy.run_frame();
+            gb_buffer.copy_from_slice(gameboy.state.ppu.framebuffer());
 
+            let mut samples = &gameboy.state.apu.sample_queue[..];
             if throwaway_samples {
                 if throwaway_count > samples.len() {
                     throwaway_count -= samples.len();
@@ -143,7 +143,6 @@ fn main() -> Result<()> {
                 }
                 audio_device.queue(samples);
             }
-            delta = new_delta;
         }
 
         if limit {

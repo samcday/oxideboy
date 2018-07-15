@@ -438,7 +438,7 @@ pub fn run(ctx: &mut GameboyContext) {
 
         execute_instruction(ctx, inst);
         if !ctx.state.cpu.bootrom_enabled {
-            // println!("Instr: {} ;${:04X} ({})", inst, self.instr_addr);
+            // println!("Instr: {} ;${:04X}", inst, ctx.instr_addr);
         }
     }
 }
@@ -525,9 +525,7 @@ fn decode(ctx: &mut GameboyContext) -> Inst {
         0x3E => Inst::LD8(Operand8::Reg(A), Operand8::Imm(fetch8(ctx))),
         0x3F => Inst::CCF,
         0x40 => {
-            if cfg!(test) {
-                ctx.mooneye_breakpoint = true;
-            }
+            ctx.mooneye_breakpoint = true;
             Inst::LD8(Operand8::Reg(B), Operand8::Reg(B))
         },
         0x41 => Inst::LD8(Operand8::Reg(B), Operand8::Reg(C)),
@@ -1050,8 +1048,6 @@ fn stop(ctx: &mut GameboyContext) {
 fn halt(ctx: &mut GameboyContext) {
     // TODO: pretty sure I need to check interrupt states here.
     ctx.state.cpu.halted = true;
-    // When we're halted, we have to process interrupts, or we'd stay halted forever.
-    ctx.state.int.ime = true;
 }
 
 // INC %r8 | INC (HL)

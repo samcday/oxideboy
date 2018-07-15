@@ -10,7 +10,7 @@ pub enum Interrupt {
     Joypad = 0b10000,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct InterruptState {
     pending_interrupts: bool,
     pub enabled: u8,
@@ -59,7 +59,7 @@ impl InterruptState {
     }
 
     pub fn clear(&mut self, intr: Interrupt) {
-        self.requested ^= !(intr as u8);
+        self.requested &= !(intr as u8);
         self.pending_interrupts = self.requested & self.enabled > 0;
     }
 }
@@ -67,14 +67,19 @@ impl InterruptState {
 /// Checks if there's any interrupts to process. If there is, interrupt state is updated
 /// and the address to jump to is returned.
 pub fn process(ctx: &mut GameboyContext) {
-    // We can bail quickly if there's no interrupts to process, or IME is disabled.
-    if !ctx.state.int.pending_interrupts || !ctx.state.int.ime {
+    // We can bail quickly if there's no interrupts to process.
+    if !ctx.state.int.pending_interrupts {
         return;
     }
 
-    // There's at least one outstandng interrupt. No matter what, we exit HALT mode (if we were in it)
-    // and clear IME flag.
+    // If there are interrupts to process, we clear HALT state, even if IME is disabled.
     ctx.state.cpu.halted = false;
+
+    if !ctx.state.int.ime {
+        // If IME isn't enabled though, we don't actually process any interrupts.
+        return;
+    }
+
     ctx.state.int.ime = false;
 
     // Now let's find which interrupt we're processing...

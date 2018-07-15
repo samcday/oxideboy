@@ -89,6 +89,7 @@ pub struct GameboyContext {
     pub cart: cartridge::Cartridge,
 
     pub cycle_count: u64,
+    next_frame_cycles: u64,
 
     // Debugging stuff.
     pub instr_addr: u16,            // Address of the current instruction
@@ -103,6 +104,7 @@ impl GameboyContext {
             state: GameboyState::new(),
             cart,
             cycle_count: 0,
+            next_frame_cycles: 0,
             instr_addr: 0,
             mooneye_breakpoint: false,
         }
@@ -300,15 +302,14 @@ impl GameboyContext {
             0xE000 ... 0xFDFF => { self.state.ram[(addr - 0xE000) as usize] = v }
             0xFE00 ... 0xFE9F => { self.state.ppu.oam_write((addr - 0xFE00) as usize, v) }
             0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
+            0xFF00            => { self.state.joypad.reg_p1_write(v) }
             0xFF01            => { self.state.cpu.sb = Some(v) }
             0xFF02            => { self.state.cpu.reg_sc_write(v) }
             0xFF04            => { self.state.timer.reg_div_write() }
             0xFF05            => { self.state.timer.reg_tima_write(v) }
             0xFF06            => { self.state.timer.reg_tma_write(v) }
             0xFF07            => { timer::reg_tac_write(self, v & 0x7) }
-            0xFF0F            => { self.state.int.reg_ie_write(v & 0x1F) }
-
-            0xFF00            => { self.state.joypad.reg_p1_write(v) }
+            0xFF0F            => { self.state.int.reg_if_write(v & 0x1F) }
 
             // Sound
             0xFF10            => { self.state.apu.reg_nr10_write(v) }
@@ -387,11 +388,11 @@ impl GameboyContext {
     /// Because we emulate at the instruction level, sometimes the last instruction we execute in this loop
     /// may take us over the 17556 cycle threshold. We return a delta number of cycles that should be fed in to the
     /// next call to ensure we don't run too fast.
-    pub fn run_frame(&mut self, delta: u16) {
+    pub fn run_frame(&mut self) {
         self.state.apu.sample_queue.clear();
 
-        let cycle_end = self.cycle_count + 17556;
-        while cycle_end > self.cycle_count {
+        self.next_frame_cycles += 17556;
+        while self.cycle_count < self.next_frame_cycles {
             cpu::run(self);
         }
     }
