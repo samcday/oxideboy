@@ -4,7 +4,7 @@ use ::GameboyContext;
 use self::Reg8::{*};
 use self::Reg16::{*};
 
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct CPUState {
     // CPU Registers
     pub a: u8,
@@ -30,7 +30,7 @@ pub struct CPUState {
 
 /// CPU flags contained in the "F" register:
 /// Z: Zero flag, N: subtract flag, H: half carry flag, C: carry flag
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct Flags {
     pub z: bool,
     pub n: bool,

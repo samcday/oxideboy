@@ -1,6 +1,6 @@
 use ::GameboyContext;
 
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct DMAState {
     pub reg: u8,
     request: bool,

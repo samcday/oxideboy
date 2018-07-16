@@ -1,5 +1,6 @@
 use std::slice;
 use ::interrupt::{InterruptState, Interrupt};
+use ::BigArray;
 
 // The default palette colors, in ARGB8888 format.
 const COLOR_MAPPING: [u32; 4] = [
@@ -90,7 +91,7 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
                 if state.interrupt_lyc && state.ly == state.lyc {
                     interrupts.request(Interrupt::Stat);
                 }
-                state.cur_framebuffer = (state.cur_framebuffer + 1) % 2;
+                state.active_fb = !state.active_fb;
                 state.next_mode(OAMSearch);
             }
         }
@@ -234,10 +235,13 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
     }
 
     if state.pt_state.ppu_cycles >= state.pt_state.cycle_budget {
-        let mut fb_pos = (state.ly as usize) * 160;
-        for i in 8..168 {
-            state.framebuffers[state.cur_framebuffer as usize][fb_pos] = COLOR_MAPPING[state.pt_state.scanline[i] as usize];
-            fb_pos += 1;
+        {
+            let mut fb_pos = (state.ly as usize) * 160;
+            let fb = &mut state.framebuffers[if state.active_fb { ::SCREEN_SIZE..::SCREEN_SIZE*2 } else { 0..::SCREEN_SIZE }];
+            for i in 8..168 {
+                fb[fb_pos] = COLOR_MAPPING[state.pt_state.scanline[i] as usize];
+                fb_pos += 1;
+            }
         }
 
         let mut hblank_cycles = 51+43 - state.cycles;
@@ -255,6 +259,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PPUState {
     pub enabled: bool,          // Master switch to turn LCD on/off.
     pub mode: Mode,
@@ -286,9 +291,9 @@ pub struct PPUState {
     pub obj_enabled: bool,  // Toggles display of OBJs on/off.
     obj_tall: bool,         // If true, we're rendering 8x16 OBJs.
 
-    tiles: [TileEntry; 384], // 0x8000 - 0x97FF
-    tilemap: [u8; 2048],     // 0x9800 - 0x9FFF
-    oam: [OAMEntry; 40],     // 0xFE00 - 0xFDFF
+    tiles: Vec<TileEntry>,   // 0x8000 - 0x97FF
+    tilemap: Vec<u8>,     // 0x9800 - 0x9FFF
+    oam: Vec<OAMEntry>,     // 0xFE00 - 0xFDFF
 
     scanline_objs: Vec<(usize, u8)>,
 
@@ -296,8 +301,8 @@ pub struct PPUState {
 
     lcd_just_enabled: bool,
 
-    framebuffers: [[u32; ::SCREEN_SIZE]; 2],
-    cur_framebuffer: usize,
+    framebuffers: Vec<u32>,
+    active_fb: bool,
 }
 
 impl PPUState {
@@ -312,8 +317,8 @@ impl PPUState {
             bg_enabled: false, bg_code_hi: false, bg_data_lo: false,
             obj_enabled: false, obj_tall: false,
             interrupt_oam: false, interrupt_hblank: false, interrupt_vblank: false, interrupt_lyc: false,
-            tiles: [TileEntry{data: [[0; 8]; 8]}; 384],
-            tilemap: [0; 2048], oam: [Default::default(); 40],
+            tiles: vec![TileEntry{data: [[0; 8]; 8]}; 384],
+            tilemap: vec![0; 2048], oam: vec![Default::default(); 40],
             pt_state: PixelTransferState {
                 cycle_budget: 0,
                 ppu_cycles: 0,
@@ -324,8 +329,8 @@ impl PPUState {
                 in_win: false,
             },
             scanline_objs: Vec::new(),
-            framebuffers: [[0; 160*144]; 2],
-            cur_framebuffer: 0,
+            framebuffers: vec![0; ::SCREEN_SIZE * 2],
+            active_fb: false,
             lcd_just_enabled: false,
         };
         state.clear_framebuffers();
@@ -334,14 +339,12 @@ impl PPUState {
 
     // Gets the last drawn framebuffer (i.e the currently *inactive* one).
     pub fn framebuffer(&self) -> &[u32] {
-        &self.framebuffers[(self.cur_framebuffer + 1) % 2]
+        &self.framebuffers[if self.active_fb { 0..::SCREEN_SIZE } else { ::SCREEN_SIZE..::SCREEN_SIZE*2 }]
     }
 
     fn clear_framebuffers(&mut self) {
-        for framebuffer in self.framebuffers.iter_mut() {
-            for pix in framebuffer.iter_mut() {
-                *pix = COLOR_MAPPING[0];
-            }
+        for pix in self.framebuffers.iter_mut() {
+            *pix = COLOR_MAPPING[0];
         }
     }
 
@@ -472,7 +475,7 @@ impl PPUState {
 }
 
 // Models the 4 states the PPU can be in when it is active.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Mode {
     OAMSearch,
     PixelTransfer,
@@ -481,11 +484,14 @@ pub enum Mode {
 }
 use self::Mode::{*};
 
+#[derive(Serialize, Deserialize)]
 struct PixelTransferState {
     ppu_cycles: u16,
     cycle_budget: u16,
     cycle_countdown: u8,
+    #[serde(with = "BigArray")]
     scanline: [u8; 176],
+    #[serde(with = "BigArray")]
     scanline_prio: [bool; 176],
     x: u8,
     tilemap_addr: usize,
@@ -496,7 +502,7 @@ struct PixelTransferState {
 
 // The OAMEntry struct is packed in C representation (no padding) so that we can view it as a contiguous byte array
 // when performing DMA copies and OAM memory writes from the CPU.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct OAMEntry {
     y: u8,
@@ -522,7 +528,7 @@ impl OAMEntry {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
 pub struct TileEntry {
     data: [[u8; 8]; 8]
 }
@@ -562,7 +568,7 @@ impl TileEntry {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Serialize, Deserialize, Copy, Clone)]
 pub struct Palette { entries: [u8; 4] }
 impl Palette {
     pub fn pack(&self) -> u8 {

@@ -10,7 +10,7 @@ pub enum Interrupt {
     Joypad = 0b10000,
 }
 
-#[derive(Debug, Default)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct InterruptState {
     pending_interrupts: bool,
     pub enabled: u8,

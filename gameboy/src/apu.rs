@@ -8,6 +8,7 @@ const DUTY_CYCLES: [[f32; 8]; 4] = [
 ];
 const NOISE_DIVISORS: [u16; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
+#[derive(Serialize, Deserialize, Default)]
 pub struct APUState {
     sample_cycles: f64,
 
@@ -111,7 +112,7 @@ fn length_clock(max: u16, len: &mut u16, on: &mut bool) {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct VolumeEnvelope {
     pub default: u8,
     pub inc: bool,
@@ -162,7 +163,7 @@ impl VolumeEnvelope {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Channel1 {
     pub on: bool,
     left: bool, right: bool,
@@ -241,7 +242,7 @@ impl Channel1 {
     }
 }
 
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 struct Channel2 {
     on: bool,
     left: bool,
@@ -269,7 +270,7 @@ impl Channel2 {
     }
 }
 
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 struct Channel3 {
     enabled: bool,
     on: bool,
@@ -299,7 +300,7 @@ impl Channel3 {
     }
 }
 
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 struct Channel4 {
     on: bool,
     left: bool,

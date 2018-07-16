@@ -3,7 +3,7 @@
 use super::GameboyContext;
 use super::interrupt::Interrupt;
 
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct TimerState {
     pub div: u16,        // Increments every CPU clock cycle (4.194304Mhz). Only top 8 bits are visible to programs.
     enabled: bool,       // Controls whether the timer unit is running

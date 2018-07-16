@@ -72,6 +72,8 @@ fn main() -> Result<()> {
     let mut throwaway_samples = true;
     let mut throwaway_count = 44100;
 
+    let mut save_state: Option<Vec<u8>> = None;
+
     let mut frames = 0;
     let mut fps_timer = Instant::now();
     let sec = Duration::from_secs(1);
@@ -118,6 +120,18 @@ fn main() -> Result<()> {
                         audio_device.resume();
                     }
                 }
+
+                Event::KeyUp {keycode: Some(Keycode::LeftBracket), ..} => {
+                    let meh = gameboy.save_state();
+                    println!("Okay: {}", meh.len());
+                    save_state = Some(meh);
+                }
+                Event::KeyUp {keycode: Some(Keycode::RightBracket), ..} => {
+                    if let Some(ref data) = save_state {
+                        gameboy.load_state(&data[..]);
+                    }
+                }
+
                 _ => {}
             }
         }
