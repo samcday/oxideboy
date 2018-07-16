@@ -1,7 +1,7 @@
 use ::GameboyContext;
 use self::Interrupt::*;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Interrupt {
     VBlank = 0b00001,
     Stat   = 0b00010,
@@ -80,8 +80,6 @@ pub fn process(ctx: &mut GameboyContext) {
         return;
     }
 
-    ctx.state.int.ime = false;
-
     // Now let's find which interrupt we're processing...
     let pending = ctx.state.int.enabled & ctx.state.int.requested;
     let intr = if pending & (VBlank as u8) > 0 {
@@ -97,8 +95,6 @@ pub fn process(ctx: &mut GameboyContext) {
     } else {
         unreachable!("There must be at least one pending interrupt at this point");
     };
-
-    ctx.state.int.clear(intr.clone());
 
     // Interrupt handling needs 3 internal cycles to do interrupt-y stuff.
     ctx.clock();
@@ -124,8 +120,12 @@ pub fn process(ctx: &mut GameboyContext) {
         ctx.state.cpu.pc = 0;
         // Okay so this interrupt didn't go so good. Let's see if there's another one.
         process(ctx);
+        // Regardless of what happens in the next try, IME needs to be disabled.
+        ctx.state.int.ime = false;
         return;
     }
 
     ctx.state.cpu.pc = intr.handler_addr();
+    ctx.state.int.clear(intr);
+    ctx.state.int.ime = false;
 }

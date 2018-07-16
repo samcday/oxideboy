@@ -342,7 +342,7 @@ impl fmt::Display for Inst {
 }
 
 impl CPUState {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self{
             a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: Default::default(),
             sp: 0, pc: 0,

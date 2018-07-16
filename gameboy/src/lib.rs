@@ -70,7 +70,7 @@ pub struct GameboyState {
 impl GameboyState {
     fn new() -> Self {
         Self {
-            cpu: Default::default(),
+            cpu: cpu::CPUState::new(),
             apu: apu::APUState::new(),
             ppu: ppu::PPUState::new(),
             dma: Default::default(),
