@@ -68,6 +68,7 @@ pub struct GameboyState {
     pub ppu: ppu::PPUState,
     pub timer: timer::TimerState,
     pub joypad: JoypadState,
+    pub cart: cartridge::Cartridge,
 
     // RAM segments.
     #[serde(with = "BigArray")]
@@ -86,14 +87,15 @@ impl Default for GameboyState {
             int: Default::default(),
             timer: Default::default(),
             joypad: Default::default(),
+            cart: Default::default(),
             ram: [0; 0x2000], hram: [0; 0x7F],
         }
     }
 }
 
 impl GameboyState {
-    fn new() -> Self {
-        Default::default()
+    fn new(cart: cartridge::Cartridge) -> Self {
+        Self { cart, ..Default::default() }
     }
 }
 
@@ -101,7 +103,7 @@ impl GameboyState {
 /// state of the CPU / PPU / APU / timer / etc.
 pub struct GameboyContext {
     pub state: GameboyState,
-    pub cart: cartridge::Cartridge,
+    rom: Vec<u8>,
 
     pub cycle_count: u64,
     next_frame_cycles: u64,
@@ -113,11 +115,11 @@ pub struct GameboyContext {
 
 impl GameboyContext {
     pub fn new(rom: Vec<u8>) -> Self {
-        let cart = cartridge::Cartridge::from_rom(rom);
+        let cart = cartridge::Cartridge::from_rom(&rom);
 
         Self {
-            state: GameboyState::new(),
-            cart,
+            state: GameboyState::new(cart),
+            rom,
             cycle_count: 0,
             next_frame_cycles: 0,
             instr_addr: 0,
@@ -241,10 +243,10 @@ impl GameboyContext {
         match addr {
             0x0000 ... 0x0100 if self.state.cpu.bootrom_enabled => DMG0_BOOTROM[addr as usize],
 
-            0x0000 ... 0x3FFF => self.cart.rom_lo()[addr as usize],
-            0x4000 ... 0x7FFF => self.cart.rom_hi()[(addr - 0x4000) as usize],
+            0x0000 ... 0x3FFF => self.state.cart.rom_lo(&self.rom)[addr as usize],
+            0x4000 ... 0x7FFF => self.state.cart.rom_hi(&self.rom)[(addr - 0x4000) as usize],
             0x8000 ... 0x9FFF => self.state.ppu.vram_read(addr - 0x8000),
-            0xA000 ... 0xBFFF => self.cart.ram()[(addr - 0xA000) as usize],
+            0xA000 ... 0xBFFF => self.state.cart.ram()[(addr - 0xA000) as usize],
             0xC000 ... 0xDFFF => self.state.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.state.ram[(addr - 0xE000) as usize],
             0xFE00 ... 0xFE9F => self.state.ppu.oam_read((addr - 0xFE00) as usize),
@@ -310,17 +312,17 @@ impl GameboyContext {
     }
 
     fn mem_write8(&mut self, addr: u16, v: u8) {
+        self.clock();
+
         // While DMA transfer is in progress, write to the OAM area will be ignored.
         if self.state.dma.active && (addr >= 0xFE00 && addr <= 0xFE9F) {
-            self.clock();
             return;
         }
 
-        self.clock();
         match addr {
-            0x0000 ... 0x7FFF => { self.cart.write(addr, v); }
+            0x0000 ... 0x7FFF => { self.state.cart.write(addr, v); }
             0x8000 ... 0x9FFF => { self.state.ppu.vram_write(addr - 0x8000, v) }
-            0xA000 ... 0xBFFF => { self.cart.write(addr, v); }
+            0xA000 ... 0xBFFF => { self.state.cart.write(addr, v); }
             0xC000 ... 0xDFFF => { self.state.ram[(addr - 0xC000) as usize] = v }
             0xE000 ... 0xFDFF => { self.state.ram[(addr - 0xE000) as usize] = v }
             0xFE00 ... 0xFE9F => { self.state.ppu.oam_write((addr - 0xFE00) as usize, v) }

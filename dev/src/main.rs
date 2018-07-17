@@ -127,6 +127,7 @@ fn main() -> Result<()> {
                 Event::KeyUp {keycode: Some(Keycode::RightBracket), ..} => {
                     if let Some(ref data) = save_state {
                         gameboy.load_state(&data[..]);
+                        gameboy.state.joypad = Default::default();
                         gb_buffer.copy_from_slice(gameboy.state.ppu.framebuffer());
                         audio_device.clear();
                         audio_device.queue(&gameboy.state.apu.sample_queue[..]);

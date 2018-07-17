@@ -1,6 +1,6 @@
+#[derive(Serialize, Deserialize, Default)]
 pub struct Cartridge {
     cart_type: CartridgeType,
-    rom: Vec<u8>,
 
     // Used by MBC1 + MBC3
     rom_bank: u8,
@@ -10,14 +10,21 @@ pub struct Cartridge {
     pub ram: Vec<u8>,
 }
 
+#[derive(Serialize, Deserialize)]
 enum CartridgeType {
     ROMOnly,
     MBC1,
     MBC3,
 }
 
+impl Default for CartridgeType {
+    fn default() -> Self {
+        CartridgeType::ROMOnly
+    }
+}
+
 impl Cartridge {
-    pub fn from_rom(rom: Vec<u8>) -> Self {
+    pub fn from_rom(rom: &[u8]) -> Self {
         let cart_type = match rom[0x147] {
             0         => CartridgeType::ROMOnly,
             1|2|3     => CartridgeType::MBC1,
@@ -42,19 +49,19 @@ impl Cartridge {
                 v => panic!("Unexpected RAM size {} encountered", v),
             }]
         };
-        Self{cart_type, rom, rom_bank: 1, rom_bank_count, ram_enabled: false, ram, ram_bank: 0}
+        Self{cart_type, rom_bank: 1, rom_bank_count, ram_enabled: false, ram, ram_bank: 0}
     }
 
-    pub fn rom_lo(&self) -> &[u8] {
-        &self.rom[0..0x4000]
+    pub fn rom_lo<'a>(&self, rom: &'a[u8]) -> &'a[u8] {
+        &rom[0..0x4000]
     }
 
-    pub fn rom_hi(&self) -> &[u8] {
+    pub fn rom_hi<'a>(&self, rom: &'a[u8]) -> &'a[u8] {
         match self.cart_type {
-            CartridgeType::ROMOnly => &self.rom[0x4000..0x8000],
+            CartridgeType::ROMOnly => &rom[0x4000..0x8000],
             CartridgeType::MBC1|CartridgeType::MBC3 => {
                 let base = (self.rom_bank as usize) * 0x4000;
-                &self.rom[base .. base + 0x4000]
+                &rom[base .. base + 0x4000]
             }
         }
     }
