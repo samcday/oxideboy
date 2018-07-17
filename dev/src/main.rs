@@ -122,13 +122,14 @@ fn main() -> Result<()> {
                 }
 
                 Event::KeyUp {keycode: Some(Keycode::LeftBracket), ..} => {
-                    let meh = gameboy.save_state();
-                    println!("Okay: {}", meh.len());
-                    save_state = Some(meh);
+                    save_state = Some(gameboy.save_state());
                 }
                 Event::KeyUp {keycode: Some(Keycode::RightBracket), ..} => {
                     if let Some(ref data) = save_state {
                         gameboy.load_state(&data[..]);
+                        gb_buffer.copy_from_slice(gameboy.state.ppu.framebuffer());
+                        audio_device.clear();
+                        audio_device.queue(&gameboy.state.apu.sample_queue[..]);
                     }
                 }
 
