@@ -331,7 +331,7 @@ impl GameboyContext {
             0xFF04            => { self.state.timer.reg_div_write() }
             0xFF05            => { self.state.timer.reg_tima_write(v) }
             0xFF06            => { self.state.timer.reg_tma_write(v) }
-            0xFF07            => { timer::reg_tac_write(self, v & 0x7) }
+            0xFF07            => { self.state.timer.reg_tac_write(v & 0x7, &mut self.state.int) }
             0xFF0F            => { self.state.int.reg_if_write(v & 0x1F) }
 
             // Sound

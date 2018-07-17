@@ -1,7 +1,7 @@
 //! Implementation of the timer circuitry in the Sharp LR35902 chip.
 
 use super::GameboyContext;
-use super::interrupt::Interrupt;
+use super::interrupt::{Interrupt, InterruptState};
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct TimerState {
@@ -26,6 +26,43 @@ impl TimerState {
                 256  => 3,
                 _    => unreachable!("freq has fixed set of values")
             }
+    }
+
+    pub fn reg_tac_write(&mut self, v: u8, int: &mut InterruptState) {
+        let was_enabled = self.enabled;
+        let orig_freq = self.freq;
+
+        self.enabled = v & 0b100 > 0;
+        if self.enabled {
+            self.freq = match v & 0b11 {
+                0b00 => 1024,
+                0b01 => 16,
+                0b10 => 64,
+                0b11 => 256,
+                _ => unreachable!("Matched all possible 2 bit values"),
+            }
+        }
+
+        // The original DMG had a glitch that could cause TIMA to sometimes spuriously increment.
+        // We emulate that quirk here.
+        // More info: http://gbdev.gg8.se/wiki/articles/Timer_Obscure_Behaviour
+        let glitch = if was_enabled {
+            if !self.enabled {
+                self.div & (orig_freq / 2) != 0
+            } else {
+                (self.div & (orig_freq / 2) != 0) && (self.div & (self.freq / 2) == 0)
+            }
+        } else { false };
+        if glitch {
+            // A cut down version of what we do in advance_timer.
+            // Note how here we're not delaying the TIMA reset or interrupt request to the next cycle.
+            // We do it immediately in the glitch case. Hardware is weird.
+            self.tima = self.tima.wrapping_add(1);
+            if self.tima == 0 {
+                self.tima = self.tma;
+                int.request(Interrupt::Timer);
+            }
+        }
     }
 
     pub fn reg_tma_write(&mut self, v: u8) {
@@ -105,39 +142,3 @@ pub fn clock(ctx: &mut GameboyContext) {
     }
 }
 
-pub fn reg_tac_write(ctx: &mut GameboyContext, v: u8) {
-    let was_enabled = ctx.state.timer.enabled;
-    let orig_freq = ctx.state.timer.freq;
-
-    ctx.state.timer.enabled = v & 0b100 > 0;
-    if ctx.state.timer.enabled {
-        ctx.state.timer.freq = match v & 0b11 {
-            0b00 => 1024,
-            0b01 => 16,
-            0b10 => 64,
-            0b11 => 256,
-            _ => unreachable!("Matched all possible 2 bit values"),
-        }
-    }
-
-    // The original DMG had a glitch that could cause TIMA to sometimes spuriously increment.
-    // We emulate that quirk here.
-    // More info: http://gbdev.gg8.se/wiki/articles/Timer_Obscure_Behaviour
-    let glitch = if was_enabled {
-        if !ctx.state.timer.enabled {
-            ctx.state.timer.div & (orig_freq / 2) != 0
-        } else {
-            (ctx.state.timer.div & (orig_freq / 2) != 0) && (ctx.state.timer.div & (ctx.state.timer.freq / 2) == 0)
-        }
-    } else { false };
-    if glitch {
-        // A cut down version of what we do in advance_timer.
-        // Note how here we're not delaying the TIMA reset or interrupt request to the next cycle.
-        // We do it immediately in the glitch case. Hardware is weird.
-        ctx.state.timer.tima = ctx.state.timer.tima.wrapping_add(1);
-        if ctx.state.timer.tima == 0 {
-            ctx.state.timer.tima = ctx.state.timer.tma;
-            ctx.state.int.request(Interrupt::Timer);
-        }
-    }
-}
