@@ -4,6 +4,7 @@ pub struct Cartridge {
 
     // Used by MBC1 + MBC3
     rom_bank: u8,
+    rom_bank_count: u8,
     ram_enabled: bool,
     ram_bank: u8,
     pub ram: Vec<u8>,
@@ -23,6 +24,13 @@ impl Cartridge {
             0x12|0x13 => CartridgeType::MBC3,
             v => panic!("Unsupported cartridge type: {:X}", v)
         };
+        let rom_bank_count = match rom[0x148] as u32 {
+            v @ 0...6 => 2u8.pow(v + 1),
+            0x52 => 72,
+            0x53 => 80,
+            0x54 => 96,
+            v => panic!("Unexpected ROM size {}", v),
+        };
         let ram = match cart_type {
             CartridgeType::ROMOnly => Vec::new(),
             _ => vec![0; match rom[0x149] {
@@ -34,7 +42,7 @@ impl Cartridge {
                 v => panic!("Unexpected RAM size {} encountered", v),
             }]
         };
-        Self{cart_type, rom, rom_bank: 1, ram_enabled: false, ram, ram_bank: 0}
+        Self{cart_type, rom, rom_bank: 1, rom_bank_count, ram_enabled: false, ram, ram_bank: 0}
     }
 
     pub fn rom_lo(&self) -> &[u8] {
@@ -73,11 +81,7 @@ impl Cartridge {
                 if v > 0x1F {
                     return;
                 }
-                self.rom_bank = v.max(1);
-                // if self.rom_bank >= self.rom_bank_cnt {
-                //     // TODO:
-                //     panic!("ROM bank {} requested, maximum is {}", self.rom_bank, self.rom_bank_cnt);
-                // }
+                self.rom_bank = v.max(1).min(self.rom_bank_count);
             },
             0xA000 ... 0xBFFF => {
                 if !self.ram_enabled {
