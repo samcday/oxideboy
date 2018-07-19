@@ -117,27 +117,27 @@ impl TimerState {
 }
 
 /// Runs the timer for a single CPU clock cycle.
-pub fn clock(ctx: &mut GameboyContext) {
+pub fn clock(timer: &mut TimerState, intr: &mut InterruptState) {
     // DIV is a 16 bit register (of which only the upper 8 bits are addressable) that increments
     // at the same speed as the CPU clock - 4.194304Mhz.
-    ctx.state.timer.div = ctx.state.timer.div.wrapping_add(4);
-    ctx.state.timer.tima_reloaded = false;
+    timer.div = timer.div.wrapping_add(4);
+    timer.tima_reloaded = false;
 
     // If TIMA overflowed on the previous cycle, this is where we reload it to TMA and request timer interrupt.
     // See the code below here for when we set tima_overflow.
-    if ctx.state.timer.tima_overflow {
-        ctx.state.timer.tima = ctx.state.timer.tma;
-        ctx.state.int.request(Interrupt::Timer);
-        ctx.state.timer.tima_overflow = false;
-        ctx.state.timer.tima_reloaded = true;
+    if timer.tima_overflow {
+        timer.tima = timer.tma;
+        intr.request(Interrupt::Timer);
+        timer.tima_overflow = false;
+        timer.tima_reloaded = true;
     }
 
-    if ctx.state.timer.enabled && ctx.state.timer.div % ctx.state.timer.freq == 0 {
-        ctx.state.timer.tima = ctx.state.timer.tima.wrapping_add(1);
-        if ctx.state.timer.tima == 0 {
+    if timer.enabled && timer.div % timer.freq == 0 {
+        timer.tima = timer.tima.wrapping_add(1);
+        if timer.tima == 0 {
             // When TIMA overflows, we don't actually reload it with TMA and request timer interrupt immediately.
             // That happens on the next cycle.
-            ctx.state.timer.tima_overflow = true;
+            timer.tima_overflow = true;
         }
     }
 }

@@ -6,6 +6,7 @@ Nothing to really see here yet, unless you're really into terrible codez.
 
 # Current TODO list:
 
+ * Pass all mealybug-tearoom-tests
  * Pass all gb-test-roms dmg_sound tests
  * Pass all mooneye tests
  * Pass all gb-test-roms oam_bug tests

@@ -147,7 +147,7 @@ impl GameboyContext {
     // incremented to 11. This cycle accuracy is tested in the mem_timing.gb test ROM.
     fn clock(&mut self) {
         self.cycle_count += 1;
-        timer::clock(self);
+        timer::clock(&mut self.state.timer, &mut self.state.int);
         dma::clock(self);
         ppu::clock(&mut self.state.ppu, &mut self.state.int);
         apu::clock(&mut self.state.apu);
