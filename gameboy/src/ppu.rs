@@ -1,6 +1,10 @@
+#![allow(unused_variables, unused_imports, dead_code)]
+
 use std::slice;
 use ::interrupt::{InterruptState, Interrupt};
 use ::BigArray;
+
+use self::Mode::{*};
 
 // The default palette colors, in ARGB8888 format.
 const COLOR_MAPPING: [u32; 4] = [
@@ -12,6 +16,52 @@ const COLOR_MAPPING: [u32; 4] = [
 const EMPTY_TILE: TileEntry = TileEntry{data: [[0; 8]; 8]};
 const DEFAULT_PALETTE: Palette = Palette{entries: [0, 3, 3, 3]};
 
+const TILE_SIZE: usize = 16; // Number of bytes per tile. Each 8 pixels is encoded in 2 bytes.
+
+#[derive(Serialize, Deserialize)]
+pub struct PPUState {
+    pub enabled: bool,          // Master switch to turn LCD on/off.
+    pub mode: Mode,
+    pub cycles: u16,            // Counts how many CPU cycles have elapsed in the current PPU stage.
+
+    pub scy: u8,
+    pub scx: u8,
+    pub ly: u8,
+    pub lyc: u8,
+    pub wx: u8,
+    pub wy: u8,
+    pub bgp: Palette,
+    pub obp0: Palette,
+    pub obp1: Palette,
+
+    interrupt_oam: bool,
+    interrupt_hblank: bool,
+    interrupt_vblank: bool,
+    interrupt_lyc: bool,
+
+    win_enabled: bool,    // Toggles window display on/off.
+    bg_enabled: bool,     // Toggles BG tile display on/off.
+    win_code_addr: usize, // The base address where we look for window tile codes.
+    bg_code_addr: usize,  // The base address where we look for background tile codes.
+    data_base: usize,     // The base address to use for background/window tile data.
+
+    pub obj_enabled: bool,  // Toggles display of OBJs on/off.
+    obj_tall: bool,         // If true, we're rendering 8x16 OBJs.
+
+    tiles: Vec<u8>,     // 0x8000 - 0x97FF
+    tilemap: Vec<u8>,   // 0x9800 - 0x9FFF
+    oam: Vec<OAMEntry>, // 0xFE00 - 0xFDFF
+
+    scanline_objs: Vec<(usize, u8)>,
+
+    pt_state: PixelTransferState,
+
+    lcd_just_enabled: bool,
+
+    framebuffers: Vec<u32>,
+    active_fb: bool,
+}
+
 // Advances PPU by a single clock cycle. Basically, all the video magic happens in here.
 // Before you read this code, go and watch this video: https://www.youtube.com/watch?v=HyzD8pNlpwI&t=29m12s
 // Any interrupt codes we return here (STAT / VBlank) are ORd with the main CPU IF register.
@@ -20,7 +70,6 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
         return;
     }
 
-    state.prev_mode = state.mode.clone();
     state.cycles += 1;
 
     match state.mode {
@@ -29,15 +78,11 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
         // The actual hardware performs this process over 20 clock cycles. However, since OAM memory
         // is inaccessible during this stage, there's no need to emulate it in a cycle accurate manner.
         // Instead we just perform all the work on the first cycle and spin for the remaining 19.
-        OAMSearch => {
-            if state.cycles == 1 {
-                oam_search(state);
-            }
-
-            if state.cycles == 20 {
-                state.next_mode(PixelTransfer);
-                return;
-            }
+        OAMSearch if state.cycles == 1 => {
+            oam_search(state);
+        }
+        OAMSearch if state.cycles == 20 => {
+            state.next_mode(PixelTransfer);
         }
         // The second stage of a scanline, and the most important one. This is where we rasterize
         // the background map, window map, and OBJs into actual pixels that go into the framebuffer.
@@ -47,30 +92,31 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
         // HBlank stage is a variable number of cycles pause between drawing a line and moving on
         // to the next line. The amount of cycles varies depending on the amount of work that was
         // done in Pixel Transfer. The more OBJs in the scanline, the less time we pause here.
-        HBlank(n) => {
-            // Otherwise, we wait until we've counted the required number of cycles.
-            if state.cycles == n {
-                // Alright, time to move on to the next line.
-                state.ly += 1;
+        HBlank(n) if state.cycles == n - 1 => {
+            // OAM STAT interrupts are one cycle early, except on the first line (but that interrupt is handled during
+            // VBlank state, see below).
+            if state.interrupt_oam {
+                interrupts.request(Interrupt::Stat);
+            }
+        }
+        HBlank(n) if state.cycles == n => {
+            // Alright, time to move on to the next line.
+            state.ly += 1;
 
-                // Is the next line off screen? If so, we've reached VBlank.
-                if state.ly == 144 {
-                    // Set the VBlank interrupt request.
-                    interrupts.request(Interrupt::VBlank);
-                    // And also set the STAT interrupt request if VBlank interrupts are enabled in there.
-                    if state.interrupt_vblank {
-                        interrupts.request(Interrupt::Stat);
-                    }
-                    state.next_mode(VBlank);
-                } else {
-                    if state.interrupt_oam {
-                        interrupts.request(Interrupt::Stat);
-                    }
-                    if state.interrupt_lyc && state.ly == state.lyc {
-                        interrupts.request(Interrupt::Stat);
-                    }
-                    state.next_mode(OAMSearch);
+            // Is the next line off screen? If so, we've reached VBlank.
+            if state.ly == 144 {
+                // Set the VBlank interrupt request.
+                interrupts.request(Interrupt::VBlank);
+                // And also set the STAT interrupt request if VBlank interrupts are enabled in there.
+                if state.interrupt_vblank {
+                    interrupts.request(Interrupt::Stat);
                 }
+                state.next_mode(VBlank);
+            } else {
+                if state.interrupt_lyc && state.ly == state.lyc {
+                    interrupts.request(Interrupt::Stat);
+                }
+                state.next_mode(OAMSearch);
             }
         },
         // The VBlank stage is when we've finished rendering all lines for the current frame.
@@ -95,6 +141,7 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
                 state.next_mode(OAMSearch);
             }
         }
+        _ => {}
     }
 }
 
@@ -130,125 +177,96 @@ pub fn oam_search(state: &mut PPUState) {
 /// Our PPU code is run in lockstep with the CPU at 1Mhz. However the real PPU runs at 4Mhz/2Mhz, so we simulate that
 /// here by running the flusher steps at 4Mhz and the pixel fetching process at 2Mhz.
 fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
-    // On the first cycle of this stage we ensure our state info is clean.
     if state.cycles == 1 {
-        // TODO: explain this.
-        state.pt_state.cycle_budget = (172 + (state.scx % 8)).into();
+        // We're just starting a new Mode 3, reset all the state data.
+        state.pt_state = Default::default();
 
-        state.pt_state.ppu_cycles = 0;
-        state.pt_state.cycle_countdown = 12;
-        state.pt_state.x = 8 - (state.scx % 8);
-        state.pt_state.fetch_obj = false;
-        state.pt_state.in_win = false;
+        state.pt_state.fb_pos = ((state.ly as usize) * 160) + (if state.active_fb { ::SCREEN_SIZE } else { 0 });
 
-        // TODO: we're latching the memory addr for BG code map reads here.
-        // If SCX changes mid scanline what is supposed to happen?
-        let code_base_addr = if state.bg_code_hi { 1024 } else { 0 };
-        let ly = state.ly as usize;
-        let scy = state.scy as usize;
-        let scx = state.scx as usize;
-        state.pt_state.tilemap_addr = code_base_addr + (((((ly + scy) / 8) % 32) * 32) + ((scx / 8) % 32));
-        state.pt_state.tile_y = (scy + ly) % 8;
+        // state.pt_state.cycle_budget = (172 + (state.scx % 8)).into();
 
-        let mut stall_buckets = [0; 21];
-        let mut extra = 0;
-        for (_, obj_x) in &state.scanline_objs {
-            let idx = (obj_x / 8) as usize;
-            stall_buckets[idx] = (5u16.saturating_sub((*obj_x as u16) % 8)).max(stall_buckets[idx]);
-            extra += 6;
-        }
-        extra += stall_buckets.iter().sum::<u16>();
-        state.pt_state.cycle_budget += extra & !3;
+        // state.pt_state.ppu_cycles = 0;
+        // state.pt_state.cycle_countdown = 12;
+        // state.pt_state.x = 8 - (state.scx % 8);
+        // state.pt_state.fetch_obj = false;
+        // state.pt_state.in_win = false;
+
+        // // TODO: we're latching the memory addr for BG code map reads here.
+        // // If SCX changes mid scanline what is supposed to happen?
+        // let code_base_addr = if state.bg_code_hi { 1024 } else { 0 };
+
+        // let scx = state.scx as usize;
+        // state.pt_state.tilemap_addr = code_base_addr + (((((ly + scy) / 8) % 32) * 32) + ((scx / 8) % 32));
+        
+
+        // let mut stall_buckets = [0; 21];
+        // let mut extra = 0;
+        // for (_, obj_x) in &state.scanline_objs {
+        //     let idx = (obj_x / 8) as usize;
+        //     stall_buckets[idx] = (5u16.saturating_sub((*obj_x as u16) % 8)).max(stall_buckets[idx]);
+        //     extra += 6;
+        // }
+        // extra += stall_buckets.iter().sum::<u16>();
+        // state.pt_state.cycle_budget += extra & !3;
     }
 
-    for _ in 0..4 {
-        state.pt_state.ppu_cycles += 1;
-        if state.pt_state.ppu_cycles >= state.pt_state.cycle_budget {
-            break;
-        }
-
-        state.pt_state.cycle_countdown -= 1;
-        if state.pt_state.cycle_countdown > 0 {
-            continue;
-        }
-
-        if state.pt_state.fetch_obj {
-            let (obj_idx, obj_x) = state.scanline_objs[state.scanline_objs.len() - 1];
-            let obj = state.oam[obj_idx as usize];
-            let mut obj_code = obj.code as usize;
-            let mut obj_y = if obj.vert_flip() {
-                (if state.obj_tall { 15 } else { 7 }) - (state.ly + 16 - obj.y) as usize
-            } else {
-                (state.ly + 16 - obj.y) as usize
-            };
-            if obj_y >= 8 {
-                obj_y -= 8;
-                obj_code += 1;
+    'cycle: for i in 0..2 {
+        for i in 0..2 {
+            if state.pt_state.line_x == 168 {
+                break 'cycle;
             }
-            let palette = if obj.palette() { &state.obp1 } else { &state.obp0 };
-            let obj_x = obj_x as usize;
-            state.tiles[obj_code].draw(
-                &mut state.pt_state.scanline[obj_x..], &mut state.pt_state.scanline_prio[obj_x..], obj_y, true, !obj.priority(), obj.horz_flip(), palette
-            );
-            state.scanline_objs.pop();
-            state.pt_state.fetch_obj = false;
-        } else if state.pt_state.x < 176 {
-            let x = state.pt_state.x as usize;
-            if state.bg_enabled {
-                // Fetch BG tile and write it into FIFO.
-                let tile = state.tilemap[state.pt_state.tilemap_addr];
-                let tile = if !state.bg_data_lo {
-                    (256 + (tile as u8 as i8 as i16)) as usize
+
+            if state.pt_state.fifo.len > 0 {
+                let pixel = state.pt_state.fifo.pop_pixel();
+                if state.pt_state.line_x >= 8 {
+                    state.framebuffers[state.pt_state.fb_pos] = COLOR_MAPPING[pixel as usize];
+                    state.pt_state.fb_pos += 1;
+                }
+                state.pt_state.line_x += 1;
+            }
+        }
+
+        match state.pt_state.fetch_state {
+            TileFetcherState::Read => {
+                state.pt_state.tile_code = state.tilemap[if state.pt_state.in_win {
+                    let map_y = ((state.scy as usize) + (state.ly as usize)) / 8 * 32;
+                    state.win_code_addr + (state.pt_state.tile_x * TILE_SIZE) + map_y
                 } else {
-                    (tile as usize)
-                };
-                state.tiles[tile].draw(&mut state.pt_state.scanline[x..], &mut state.pt_state.scanline_prio[x..], state.pt_state.tile_y, false, false, false, &state.bgp);
-            } else {
-                EMPTY_TILE.draw(&mut state.pt_state.scanline[x..], &mut state.pt_state.scanline_prio[x..], state.pt_state.tile_y, false, false, false, &state.bgp);
+                    let map_y = ((state.scy as usize) + (state.ly as usize)) / 8 * 32;
+                    state.bg_code_addr + (state.pt_state.tile_x * TILE_SIZE) + map_y
+                }] as usize;
+                state.pt_state.fetch_state = TileFetcherState::FetchHi;
             }
-            state.pt_state.x = (state.pt_state.x + 8).min(176);
-            state.pt_state.tilemap_addr = (state.pt_state.tilemap_addr&!0x1F)|(((state.pt_state.tilemap_addr+1)&0x1F));
-        }
+            TileFetcherState::FetchHi => {
+                let offset = (((state.scy as usize) + (state.ly as usize)) % 8) * 2;
+                state.pt_state.tile_hi = state.tiles[state.data_base + (state.pt_state.tile_code * 0x10) + offset];
+                state.pt_state.fetch_state = TileFetcherState::FetchLo;
+            }
+            TileFetcherState::FetchLo => {
+                let offset = (((state.scy as usize) + (state.ly as usize)) % 8) * 2;
+                state.pt_state.tile_lo = state.tiles[state.data_base + (state.pt_state.tile_code * 0x10) + offset + 1];
+                state.pt_state.fetch_state = TileFetcherState::Push;
 
-        let mut pending_objs = state.obj_enabled && !state.scanline_objs.is_empty();
-        let mut next_obj_x = if pending_objs {
-            (state.scanline_objs[state.scanline_objs.len() - 1]).1
-        } else { 0 };
-
-        // Did we just cross over window boundary?
-        state.pt_state.cycle_countdown = 8;
-        if state.win_enabled && state.ly >= state.wy && !state.pt_state.in_win && state.pt_state.x >= state.wx + 1 {
-            state.pt_state.cycle_budget += 6;
-            state.pt_state.in_win = true;
-            state.pt_state.x = state.wx + 1;
-            let code_base_addr = if state.win_code_hi { 1024 } else { 0 };
-            // TODO: gotta handle that weird window wrapping thing at 0xa6
-            let ly = state.ly as usize;
-            let wy = state.wy as usize;
-            state.pt_state.tilemap_addr = code_base_addr + (((((ly-wy) / 8) % 32) * 32));
-            state.pt_state.tile_y = ((state.ly-state.wy) % 8) as usize;
-            state.pt_state.cycle_countdown = 6;
-        } else if pending_objs && state.pt_state.x >= next_obj_x + 8 {
-            state.pt_state.fetch_obj = true;
-            state.pt_state.cycle_countdown = 6;
+                // At the very beginning of the scanline, the first 6 clocks are just throwaway work.
+                if state.pt_state.line_x == 0 {
+                    state.pt_state.fifo.push_tile(0, 0, &state.bgp, false);
+                    state.pt_state.fetch_state = TileFetcherState::Read;
+                }
+            }
+            TileFetcherState::Push => {
+                state.pt_state.fifo.push_tile(state.pt_state.tile_hi, state.pt_state.tile_lo, &state.bgp, false);
+                state.pt_state.tile_x = (state.pt_state.tile_x + 1) % 32;
+                state.pt_state.fetch_state = TileFetcherState::Read;
+            }
         }
     }
 
-    if state.pt_state.ppu_cycles >= state.pt_state.cycle_budget {
-        {
-            let mut fb_pos = (state.ly as usize) * 160;
-            let fb = &mut state.framebuffers[if state.active_fb { ::SCREEN_SIZE..::SCREEN_SIZE*2 } else { 0..::SCREEN_SIZE }];
-            for i in 8..168 {
-                fb[fb_pos] = COLOR_MAPPING[state.pt_state.scanline[i] as usize];
-                fb_pos += 1;
-            }
-        }
-
-        let mut hblank_cycles = 51+43 - state.cycles;
+    if state.pt_state.line_x == 168 {
+        let hblank_cycles = 51+43 - state.cycles;
         if state.lcd_just_enabled {
             // The first scanline after LCD is enabled is 1 cycle shorter.
-            state.lcd_just_enabled = false;
-            hblank_cycles -= 1;
+            // state.lcd_just_enabled = false;
+            // hblank_cycles -= 1;
         }
         state.next_mode(HBlank(hblank_cycles));
 
@@ -259,75 +277,22 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct PPUState {
-    pub enabled: bool,          // Master switch to turn LCD on/off.
-    pub mode: Mode,
-    pub prev_mode: Mode,   // STAT reports the current mode perpetually 1 cycle late
-    pub cycles: u16,            // Counts how many CPU cycles have elapsed in the current PPU stage.
-
-    pub scy: u8,
-    pub scx: u8,
-    pub ly: u8,
-    pub lyc: u8,
-    pub wx: u8,
-    pub wy: u8,
-    pub bgp: Palette,
-    pub obp0: Palette,
-    pub obp1: Palette,
-
-    interrupt_oam: bool,
-    interrupt_hblank: bool,
-    interrupt_vblank: bool,
-    interrupt_lyc: bool,
-
-    win_enabled: bool,  // Toggles window display on/off.
-    win_code_hi: bool,
-
-    bg_enabled: bool,   // Toggles BG tile display on/off.
-    bg_code_hi: bool,   // Toggles where we look for BG code data. true: 0x9C00-0x9FFF, false: 0x9800-0x9BFF
-    bg_data_lo: bool,   // Toggles where we look for BG tile data. true: 0x8000-0x8FFF, false: 0x8800-0x97FF
-
-    pub obj_enabled: bool,  // Toggles display of OBJs on/off.
-    obj_tall: bool,         // If true, we're rendering 8x16 OBJs.
-
-    tiles: Vec<TileEntry>,   // 0x8000 - 0x97FF
-    tilemap: Vec<u8>,     // 0x9800 - 0x9FFF
-    oam: Vec<OAMEntry>,     // 0xFE00 - 0xFDFF
-
-    scanline_objs: Vec<(usize, u8)>,
-
-    pt_state: PixelTransferState,
-
-    lcd_just_enabled: bool,
-
-    framebuffers: Vec<u32>,
-    active_fb: bool,
-}
-
 impl PPUState {
     pub fn new() -> PPUState {
         let mut state = PPUState {
-            enabled: false, mode: OAMSearch, prev_mode: OAMSearch, cycles: 0,
+            enabled: false, mode: OAMSearch, cycles: 0,
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
             wx: 0, wy: 0,
             bgp: DEFAULT_PALETTE, obp0: DEFAULT_PALETTE, obp1: DEFAULT_PALETTE,
-            win_enabled: false, win_code_hi: false,
-            bg_enabled: false, bg_code_hi: false, bg_data_lo: false,
+            win_enabled: false, win_code_addr: 0,
+            bg_enabled: false, bg_code_addr: 0, data_base: 0x800,
             obj_enabled: false, obj_tall: false,
             interrupt_oam: false, interrupt_hblank: false, interrupt_vblank: false, interrupt_lyc: false,
-            tiles: vec![TileEntry{data: [[0; 8]; 8]}; 384],
-            tilemap: vec![0; 2048], oam: vec![Default::default(); 40],
-            pt_state: PixelTransferState {
-                cycle_budget: 0,
-                ppu_cycles: 0,
-                cycle_countdown: 0,
-                fetch_obj: false,
-                tilemap_addr: 0, tile_y: 0, x: 0,
-                scanline: [0; 176], scanline_prio: [false; 176],
-                in_win: false,
-            },
+            tiles: vec![0; 0x1800],
+            tilemap: vec![0; 0x800],
+            oam: vec![Default::default(); 40],
+            pt_state: Default::default(),
             scanline_objs: Vec::new(),
             framebuffers: vec![0; ::SCREEN_SIZE * 2],
             active_fb: false,
@@ -354,7 +319,7 @@ impl PPUState {
     }
 
     pub fn oam_read(&self, addr: usize) -> u8 {
-        if self.prev_mode == OAMSearch || self.prev_mode == PixelTransfer {
+        if self.mode == OAMSearch || self.mode == PixelTransfer {
             return 0xFF; // Reading OAM memory during Mode2 & Mode3 is not permitted.
         }
         (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr]
@@ -372,10 +337,10 @@ impl PPUState {
             return 0xFF; // Reading VRAM during Mode3 is not permitted.
         }
 
-        if addr >= 0x1800 {
-            self.tilemap[(addr - 0x1800) as usize]
+        if addr < 0x1800 {
+            self.tiles[addr as usize]
         } else {
-            self.tiles[(addr / 16) as usize].get_byte(addr % 16)
+            self.tilemap[(addr - 0x1800) as usize]
         }
     }
 
@@ -384,24 +349,24 @@ impl PPUState {
             return; // Writing VRAM during Mode3 is not permitted.
         }
 
-        if addr >= 0x1800 {
-            self.tilemap[(addr - 0x1800) as usize] = v;
+        if addr < 0x1800 {
+            self.tiles[addr as usize] = v;
         } else {
-            self.tiles[(addr / 16) as usize].write_byte(addr % 16, v);
+            self.tilemap[(addr - 0x1800) as usize] = v;
         }
     }
 
     // Compute value of the LCDC register.
     pub fn reg_lcdc_read(&self) -> u8 {
         0
-            | if self.enabled     { 0b1000_0000 } else { 0 }
-            | if self.win_code_hi { 0b0100_0000 } else { 0 }
-            | if self.win_enabled { 0b0010_0000 } else { 0 }
-            | if self.bg_data_lo  { 0b0001_0000 } else { 0 }
-            | if self.bg_code_hi  { 0b0000_1000 } else { 0 }
-            | if self.obj_tall    { 0b0000_0100 } else { 0 }
-            | if self.obj_enabled { 0b0000_0010 } else { 0 }
-            | if self.bg_enabled  { 0b0000_0001 } else { 0 }
+            | if self.enabled                { 0b1000_0000 } else { 0 }
+            | if self.win_code_addr == 0x400 { 0b0100_0000 } else { 0 }
+            | if self.win_enabled            { 0b0010_0000 } else { 0 }
+            | if self.data_base == 0         { 0b0001_0000 } else { 0 }
+            | if self.bg_code_addr == 0x400  { 0b0000_1000 } else { 0 }
+            | if self.obj_tall               { 0b0000_0100 } else { 0 }
+            | if self.obj_enabled            { 0b0000_0010 } else { 0 }
+            | if self.bg_enabled             { 0b0000_0001 } else { 0 }
     }
 
     // Update PPU state based on new LCDC value.
@@ -425,19 +390,19 @@ impl PPUState {
             self.clear_framebuffers();
         }
 
-        self.win_code_hi = v & 0b0100_0000 > 0;
-        self.win_enabled = v & 0b0010_0000 > 0;
-        self.bg_data_lo  = v & 0b0001_0000 > 0;
-        self.bg_code_hi  = v & 0b0000_1000 > 0;
-        self.obj_tall    = v & 0b0000_0100 > 0;
-        self.obj_enabled = v & 0b0000_0010 > 0;
-        self.bg_enabled  = v & 0b0000_0001 > 0;
+        self.win_code_addr = if v & 0b0100_0000 > 0 { 0x400 } else { 0 };
+        self.win_enabled   =    v & 0b0010_0000 > 0;
+        self.data_base     = if v & 0b0001_0000 > 0 { 0 } else { 0x800 };
+        self.bg_code_addr  = if v & 0b0000_1000 > 0 { 0x400 } else { 0 };
+        self.obj_tall      =    v & 0b0000_0100 > 0;
+        self.obj_enabled   =    v & 0b0000_0010 > 0;
+        self.bg_enabled    =    v & 0b0000_0001 > 0;
     }
 
     // Compute value of the STAT register.
     pub fn reg_stat_read(&self) -> u8 {
         0b1000_0000 // Unused bits
-            | match self.prev_mode {
+            | match self.mode {
                 HBlank(_)             => 0b0000_0000,
                 VBlank                => 0b0000_0001,
                 OAMSearch             => 0b0000_0010,
@@ -477,31 +442,90 @@ impl PPUState {
 // Models the 4 states the PPU can be in when it is active.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Mode {
-    OAMSearch,
-    PixelTransfer,
-    HBlank(u16),     // Number of cycles to remain in HBlank for.
-    VBlank,
+    HBlank(u16),   // Mode 0
+    VBlank,        // Mode 1
+    OAMSearch,     // Mode 2
+    PixelTransfer, // Mode 3
 }
-use self::Mode::{*};
 
 #[derive(Serialize, Deserialize)]
-struct PixelTransferState {
-    ppu_cycles: u16,
-    cycle_budget: u16,
-    cycle_countdown: u8,
-    #[serde(with = "BigArray")]
-    scanline: [u8; 176],
-    #[serde(with = "BigArray")]
-    scanline_prio: [bool; 176],
-    x: u8,
-    tilemap_addr: usize,
-    fetch_obj: bool,
-    tile_y: usize,
-    in_win: bool,
+enum TileFetcherState {
+    Read,
+    FetchHi,
+    FetchLo,
+    Push
+}
+impl Default for TileFetcherState { fn default() -> Self { TileFetcherState::Read } }
+
+/// The PixelFifo holds pending pixel data that has not yet been flushed to the LCD.
+/// As tiles are fetched from VRAM and processed, they're held in the FIFO and pushed to the LCD at a rate of 1 pixel
+/// per 4Mhz clock cycle. The FIFO is necessary because OBJ pixels needs to be blended with BG/window pixels before
+/// being sent to the LCD.
+/// The FIFO is implemented as a very basic bounded (16 entry) ring buffer.
+#[derive(Serialize, Deserialize, Default)]
+struct PixelFifo {
+    pixels: [u8; 16],
+    prio: [bool; 16],
+    read_pos: usize,
+    write_pos: usize,
+    len: usize,
+}
+impl PixelFifo {
+    /// Pushes 8 pixels into the FIFO from provided tile data (raw hi and lo bytes read from VRAM).
+    /// Each pixel is translated through the provided Palette. The pixels can optionally be flipped horizontally, which
+    /// is used by OBJs.
+    fn push_tile(&mut self, mut hi: u8, mut lo: u8, pal: &Palette, flip: bool) {
+        if self.len > 8 {
+            panic!("push_tile on a FIFO with {} pixels", self.len);
+        }
+
+        if flip {
+            // Flip the hi and lo bytes using bit hackery.
+            // http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
+            hi = (((hi as u64) * 0x0202020202u64 & 0x010884422010u64) % 1023) as u8;
+            lo = (((lo as u64) * 0x0202020202u64 & 0x010884422010u64) % 1023) as u8;
+        }
+        let mut lo = lo as usize;
+        let mut hi = (hi as usize) << 1;
+
+        self.len += 8;
+        for i in 0..8 {
+            self.pixels[self.write_pos] = pal.entries[(lo | (hi & 0b10)) & 0b11];
+            lo >>= 1; hi >>= 1;
+            self.write_pos = (self.write_pos + 1) % 16;
+        }
+    }
+
+    /// Pops a single pixel out of the FIFO.
+    fn pop_pixel(&mut self) -> u8 {
+        if self.read_pos == self.write_pos {
+            panic!("pop_pixel() on an empty FIFO");
+        }
+        let pixel = self.pixels[self.read_pos];
+        self.len -= 1;
+        self.read_pos = (self.read_pos + 1) % 16;
+        pixel
+    }
 }
 
-// The OAMEntry struct is packed in C representation (no padding) so that we can view it as a contiguous byte array
-// when performing DMA copies and OAM memory writes from the CPU.
+/// Mode 3 is somewhat complex, with a lot of information that needs to be tracked. All of that info is kept in here.
+/// It's worth noting that very little data is "cached" here, as the operation of Mode3 can be manipulated while it's
+/// in progress by writing to LCDC / SCX / palette registers.
+#[derive(Serialize, Deserialize, Default)]
+struct PixelTransferState {
+    tile_code: usize,   // Code of the current tile being read, used to index into the relevant (BG/window) tile map.
+    tile_hi: u8,        // The 1st byte of the current tile.
+    tile_lo: u8,        // The 2nd byte of the current tile.
+    tile_x: usize,      // X position of current tile in the tile map, wraps at 32 (the tile width of tile map).
+    in_win: bool,       // Denotes whether we're rendering window or BG.
+    fetch_state: TileFetcherState,
+    fifo: PixelFifo,
+    line_x: usize,
+    fb_pos: usize,      // Location in the framebuffer to write the next pixel.
+}
+
+/// The OAMEntry struct is packed in C representation (no padding) so that we can view it as a contiguous byte array
+/// when performing DMA copies and OAM memory writes from the CPU.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct OAMEntry {

@@ -598,7 +598,7 @@ impl APUState {
         if !self.enabled {
             return;
         }
-        self.chan3.freq = (self.chan3.freq & 0xFF) | (((v & 7) as u16) << 8);
+        self.chan3.freq = (self.chan3.freq & 0xFF) | (((v & 0b111) as u16) << 8);
         let prev_counter = self.chan3.counter;
         self.chan3.counter = v & 0b0100_0000 > 0;
 

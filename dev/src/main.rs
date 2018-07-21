@@ -53,7 +53,9 @@ fn main() -> Result<()> {
         gameboy.skip_bootrom();
     }
 
-    audio_device.resume();
+    if !(env::var("MUTE").ok().unwrap_or(String::from("0")) == "1") {
+        audio_device.resume();
+    }
 
     let start = Instant::now();
     let mut next_frame = FRAME_TIME;

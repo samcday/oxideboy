@@ -171,7 +171,6 @@ impl GameboyContext {
         self.state.ppu.reg_lcdc_write(0x91);
         // PPU should be in the middle of a VBlank.
         self.state.ppu.mode = ppu::Mode::VBlank;
-        self.state.ppu.prev_mode = ppu::Mode::VBlank;
         self.state.ppu.ly = 145;
         self.state.ppu.cycles = 144;
         // Setup Nintendo logo in tilemap.

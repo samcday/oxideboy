@@ -1,6 +1,5 @@
 //! Implementation of the timer circuitry in the Sharp LR35902 chip.
 
-use super::GameboyContext;
 use super::interrupt::{Interrupt, InterruptState};
 
 #[derive(Serialize, Deserialize, Default)]
