@@ -1,8 +1,5 @@
-#![allow(unused_variables, unused_imports, dead_code)]
-
 use std::slice;
 use ::interrupt::{InterruptState, Interrupt};
-use ::BigArray;
 
 use self::Mode::{*};
 
@@ -13,10 +10,7 @@ const COLOR_MAPPING: [u32; 4] = [
     0xFF346856,
     0xFF081820,
 ];
-const EMPTY_TILE: TileEntry = TileEntry{data: [[0; 8]; 8]};
 const DEFAULT_PALETTE: Palette = Palette{entries: [0, 3, 3, 3]};
-
-const TILE_SIZE: usize = 16; // Number of bytes per tile. Each 8 pixels is encoded in 2 bytes.
 
 #[derive(Serialize, Deserialize)]
 pub struct PPUState {
@@ -55,8 +49,6 @@ pub struct PPUState {
     scanline_objs: Vec<(usize, u8)>,
 
     pt_state: PixelTransferState,
-
-    lcd_just_enabled: bool,
 
     framebuffers: Vec<u32>,
     active_fb: bool,
@@ -113,6 +105,9 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
                 }
                 state.next_mode(VBlank);
             } else {
+                // if state.interrupt_oam {
+                //     interrupts.request(Interrupt::Stat);
+                // }
                 if state.interrupt_lyc && state.ly == state.lyc {
                     interrupts.request(Interrupt::Stat);
                 }
@@ -180,54 +175,39 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
     if state.cycles == 1 {
         // We're just starting a new Mode 3, reset all the state data.
         state.pt_state = Default::default();
-
         state.pt_state.fb_pos = ((state.ly as usize) * 160) + (if state.active_fb { ::SCREEN_SIZE } else { 0 });
-
-        // state.pt_state.cycle_budget = (172 + (state.scx % 8)).into();
-
-        // state.pt_state.ppu_cycles = 0;
-        // state.pt_state.cycle_countdown = 12;
-        // state.pt_state.x = 8 - (state.scx % 8);
-        // state.pt_state.fetch_obj = false;
-        // state.pt_state.in_win = false;
-
-        // // TODO: we're latching the memory addr for BG code map reads here.
-        // // If SCX changes mid scanline what is supposed to happen?
-        // let code_base_addr = if state.bg_code_hi { 1024 } else { 0 };
-
-        // let scx = state.scx as usize;
-        // state.pt_state.tilemap_addr = code_base_addr + (((((ly + scy) / 8) % 32) * 32) + ((scx / 8) % 32));
-        
-
-        // let mut stall_buckets = [0; 21];
-        // let mut extra = 0;
-        // for (_, obj_x) in &state.scanline_objs {
-        //     let idx = (obj_x / 8) as usize;
-        //     stall_buckets[idx] = (5u16.saturating_sub((*obj_x as u16) % 8)).max(stall_buckets[idx]);
-        //     extra += 6;
-        // }
-        // extra += stall_buckets.iter().sum::<u16>();
-        // state.pt_state.cycle_budget += extra & !3;
     }
 
-    'cycle: for i in 0..2 {
-        for i in 0..2 {
+    // The fetcher runs at 2Mhz.
+    'fetchcycle: for _ in 0..2 {
+        // The pixel flush runs at 4Mhz.
+        for _ in 0..2 {
             if state.pt_state.line_x == 168 {
-                break 'cycle;
+                break 'fetchcycle;
             }
 
             if state.pt_state.fifo.len > 0 {
                 let pixel = state.pt_state.fifo.pop_pixel();
+
+                // The first 8 pixels are shifted from the FIFO but are not clocked to the LCD.
                 if state.pt_state.line_x >= 8 {
                     state.framebuffers[state.pt_state.fb_pos] = COLOR_MAPPING[pixel as usize];
                     state.pt_state.fb_pos += 1;
                 }
+
                 state.pt_state.line_x += 1;
             }
         }
 
+        // Now we run the fetcher state machine. This is the process that fetches tile data from VRAM and pushes
+        // processed pixels into the FIFO.
         match state.pt_state.fetch_state {
+            // Step 2. Figure out which tile we're rendering next by reading from window/BG tile map.
             TileFetcherState::Read => {
+                if state.pt_state.line_x == 0 && state.cycles > 1 {
+                    // state.pt_state.fifo.push_tile(0, 0, &state.bgp, false);
+                }
+
                 state.pt_state.tile_code = state.tilemap[if state.pt_state.in_win {
                     let map_y = ((state.scy as usize) + (state.ly as usize)) / 8 * 32;
                     state.win_code_addr + (state.pt_state.tile_x) + map_y
@@ -237,6 +217,8 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 }] as usize;
                 state.pt_state.fetch_state = TileFetcherState::FetchLo;
             }
+            // Step 2. We know which tile we're reading now. The row of pixels we need is in two bytes in tile data
+            // section of VRAM. Read the first byte, which contains the LSBs of each pixel.
             TileFetcherState::FetchLo => {
                 let offset = (((state.scy as usize) + (state.ly as usize)) % 8) * 2;
                 state.pt_state.tile_lo = state.tiles[if state.tile_data_hi {
@@ -247,6 +229,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 } + offset];
                 state.pt_state.fetch_state = TileFetcherState::FetchHi;
             }
+            // Step 3. Follow up from step 2 above, now we read the high byte containing MSBs of each pixel.
             TileFetcherState::FetchHi => {
                 let offset = (((state.scy as usize) + (state.ly as usize)) % 8) * 2;
                 state.pt_state.tile_hi = state.tiles[if state.tile_data_hi {
@@ -263,6 +246,8 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                     state.pt_state.fetch_state = TileFetcherState::Read;
                 }
             }
+            // Step 4. We have the tile data we need, now we interleave the bits from both bytes and write the pixel
+            // data into the FIFO.
             TileFetcherState::Push => {
                 state.pt_state.fifo.push_tile(state.pt_state.tile_hi, state.pt_state.tile_lo, &state.bgp, false);
                 state.pt_state.tile_x = (state.pt_state.tile_x + 1) % 32;
@@ -272,12 +257,9 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
     }
 
     if state.pt_state.line_x == 168 {
+        // Thje HBlank phase runs for 51 cycles *or less*, depending on how much work we did during this Mode 3 (which
+        // takes a minimum of 43 cycles).
         let hblank_cycles = 51+43 - state.cycles;
-        if state.lcd_just_enabled {
-            // The first scanline after LCD is enabled is 1 cycle shorter.
-            // state.lcd_just_enabled = false;
-            // hblank_cycles -= 1;
-        }
         state.next_mode(HBlank(hblank_cycles));
 
         // If HBlank STAT interrupt is enabled, we send it now.
@@ -306,7 +288,6 @@ impl PPUState {
             scanline_objs: Vec::new(),
             framebuffers: vec![0; ::SCREEN_SIZE * 2],
             active_fb: false,
-            lcd_just_enabled: false,
         };
         state.clear_framebuffers();
         state
@@ -386,7 +367,6 @@ impl PPUState {
         // Are we enabling LCD from a previously disabled state?
         if enabled && !self.enabled {
             self.enabled = true;
-            self.lcd_just_enabled = true;
             self.next_mode(OAMSearch);
             self.ly = 0;
         } else if !enabled && self.enabled {
@@ -499,7 +479,7 @@ impl PixelFifo {
         let mut hi = (hi as usize) << 1;
 
         self.len += 8;
-        for i in 0..8 {
+        for _ in 0..8 {
             self.pixels[self.write_pos] = pal.entries[(lo & 0b01) | (hi & 0b10)];
             lo >>= 1; hi >>= 1;
             self.write_pos = (self.write_pos + 1) % 16;
@@ -545,61 +525,10 @@ pub struct OAMEntry {
     attrs: u8,
 }
 impl OAMEntry {
-    fn priority(&self) -> bool {
-        self.attrs & 0x80 > 0
-    }
-
-    fn vert_flip(&self) -> bool {
-        self.attrs & 0x40 > 0
-    }
-
-    fn horz_flip(&self) -> bool {
-        self.attrs & 0x20 > 0
-    }
-
-    fn palette(&self) -> bool {
-        self.attrs & 0x10 > 0
-    }
-}
-
-#[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
-pub struct TileEntry {
-    data: [[u8; 8]; 8]
-}
-impl TileEntry {
-    fn draw(&self, dst: &mut [u8], dst_prio: &mut[bool], y: usize, sprite: bool, prio: bool, flip: bool, pal: &Palette) {
-        let mut tile_pos = if flip { 7 } else { 0 };
-        for i in 0..dst.len().min(8) {
-            let pix = self.data[y];
-            let pix = pix[tile_pos];
-            tile_pos = if flip { tile_pos.saturating_sub(1) } else { tile_pos + 1 };
-            if sprite {
-                if pix == 0 || dst_prio[i] || (!prio && dst[i] > 0) {
-                    continue;
-                }
-                dst_prio[i] = true;
-            } else {
-                dst_prio[i] = false;
-            }
-            dst[i] = pal.entries[pix as usize];
-        }
-    }
-    fn write_byte(&mut self, pos: u16, mut v: u8) {
-        let lo = pos % 2 == 0;
-        for (_, pix) in self.data[(pos / 2) as usize].iter_mut().rev().enumerate() {
-            *pix &= if lo { !1 } else { !2 };
-            *pix |= if lo { v & 1 } else { (v & 1) << 1};
-            v >>= 1;
-        }
-    }
-    fn get_byte(&self, pos: u16) -> u8 {
-        let lo = pos % 2 == 0;
-        let mut byte = 0;
-        for (idx, pix) in self.data[(pos / 2) as usize].iter().enumerate() {
-            byte |= if lo { pix & 1 } else { (pix & 2) >> 1 } << (7-idx);
-        }
-        byte
-    }
+    fn priority(&self)  -> bool { self.attrs & 0x80 > 0 }
+    fn vert_flip(&self) -> bool { self.attrs & 0x40 > 0 }
+    fn horz_flip(&self) -> bool { self.attrs & 0x20 > 0 }
+    fn palette(&self)   -> bool { self.attrs & 0x10 > 0 }
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone)]
