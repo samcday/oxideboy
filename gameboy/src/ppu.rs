@@ -43,7 +43,7 @@ pub struct PPUState {
     bg_enabled: bool,     // Toggles BG tile display on/off.
     win_code_addr: usize, // The base address where we look for window tile codes.
     bg_code_addr: usize,  // The base address where we look for background tile codes.
-    data_base: usize,     // The base address to use for background/window tile data.
+    tile_data_hi: bool,   // If true, tile code is interpreted as signed and based from 0x8800.
 
     pub obj_enabled: bool,  // Toggles display of OBJs on/off.
     obj_tall: bool,         // If true, we're rendering 8x16 OBJs.
@@ -230,21 +230,31 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             TileFetcherState::Read => {
                 state.pt_state.tile_code = state.tilemap[if state.pt_state.in_win {
                     let map_y = ((state.scy as usize) + (state.ly as usize)) / 8 * 32;
-                    state.win_code_addr + (state.pt_state.tile_x * TILE_SIZE) + map_y
+                    state.win_code_addr + (state.pt_state.tile_x) + map_y
                 } else {
                     let map_y = ((state.scy as usize) + (state.ly as usize)) / 8 * 32;
-                    state.bg_code_addr + (state.pt_state.tile_x * TILE_SIZE) + map_y
+                    state.bg_code_addr + (state.pt_state.tile_x) + map_y
                 }] as usize;
-                state.pt_state.fetch_state = TileFetcherState::FetchHi;
-            }
-            TileFetcherState::FetchHi => {
-                let offset = (((state.scy as usize) + (state.ly as usize)) % 8) * 2;
-                state.pt_state.tile_hi = state.tiles[state.data_base + (state.pt_state.tile_code * 0x10) + offset];
                 state.pt_state.fetch_state = TileFetcherState::FetchLo;
             }
             TileFetcherState::FetchLo => {
                 let offset = (((state.scy as usize) + (state.ly as usize)) % 8) * 2;
-                state.pt_state.tile_lo = state.tiles[state.data_base + (state.pt_state.tile_code * 0x10) + offset + 1];
+                state.pt_state.tile_lo = state.tiles[if state.tile_data_hi {
+                    let tile_code = state.pt_state.tile_code as i8 as i16;
+                    (0x800 + (tile_code * 0x10)) as usize
+                } else {
+                    state.pt_state.tile_code * 0x10
+                } + offset];
+                state.pt_state.fetch_state = TileFetcherState::FetchHi;
+            }
+            TileFetcherState::FetchHi => {
+                let offset = (((state.scy as usize) + (state.ly as usize)) % 8) * 2;
+                state.pt_state.tile_hi = state.tiles[if state.tile_data_hi {
+                    let tile_code = state.pt_state.tile_code as i8 as i16;
+                    (0x800 + (tile_code * 0x10)) as usize
+                } else {
+                    state.pt_state.tile_code * 0x10
+                } + offset + 1];
                 state.pt_state.fetch_state = TileFetcherState::Push;
 
                 // At the very beginning of the scanline, the first 6 clocks are just throwaway work.
@@ -286,7 +296,7 @@ impl PPUState {
             wx: 0, wy: 0,
             bgp: DEFAULT_PALETTE, obp0: DEFAULT_PALETTE, obp1: DEFAULT_PALETTE,
             win_enabled: false, win_code_addr: 0,
-            bg_enabled: false, bg_code_addr: 0, data_base: 0x800,
+            bg_enabled: false, bg_code_addr: 0, tile_data_hi: true,
             obj_enabled: false, obj_tall: false,
             interrupt_oam: false, interrupt_hblank: false, interrupt_vblank: false, interrupt_lyc: false,
             tiles: vec![0; 0x1800],
@@ -362,7 +372,7 @@ impl PPUState {
             | if self.enabled                { 0b1000_0000 } else { 0 }
             | if self.win_code_addr == 0x400 { 0b0100_0000 } else { 0 }
             | if self.win_enabled            { 0b0010_0000 } else { 0 }
-            | if self.data_base == 0         { 0b0001_0000 } else { 0 }
+            | if !self.tile_data_hi          { 0b0001_0000 } else { 0 }
             | if self.bg_code_addr == 0x400  { 0b0000_1000 } else { 0 }
             | if self.obj_tall               { 0b0000_0100 } else { 0 }
             | if self.obj_enabled            { 0b0000_0010 } else { 0 }
@@ -392,7 +402,7 @@ impl PPUState {
 
         self.win_code_addr = if v & 0b0100_0000 > 0 { 0x400 } else { 0 };
         self.win_enabled   =    v & 0b0010_0000 > 0;
-        self.data_base     = if v & 0b0001_0000 > 0 { 0 } else { 0x800 };
+        self.tile_data_hi  = if v & 0b0001_0000 > 0 { false } else { true };
         self.bg_code_addr  = if v & 0b0000_1000 > 0 { 0x400 } else { 0 };
         self.obj_tall      =    v & 0b0000_0100 > 0;
         self.obj_enabled   =    v & 0b0000_0010 > 0;
@@ -479,7 +489,7 @@ impl PixelFifo {
             panic!("push_tile on a FIFO with {} pixels", self.len);
         }
 
-        if flip {
+        if !flip {
             // Flip the hi and lo bytes using bit hackery.
             // http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
             hi = (((hi as u64) * 0x0202020202u64 & 0x010884422010u64) % 1023) as u8;
@@ -490,7 +500,7 @@ impl PixelFifo {
 
         self.len += 8;
         for i in 0..8 {
-            self.pixels[self.write_pos] = pal.entries[(lo | (hi & 0b10)) & 0b11];
+            self.pixels[self.write_pos] = pal.entries[(lo & 0b01) | (hi & 0b10)];
             lo >>= 1; hi >>= 1;
             self.write_pos = (self.write_pos + 1) % 16;
         }
