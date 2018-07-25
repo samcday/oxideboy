@@ -10,7 +10,7 @@ const COLOR_MAPPING: [u32; 4] = [
     0xFF346856,
     0xFF081820,
 ];
-const DEFAULT_PALETTE: Palette = Palette{entries: [0, 3, 3, 3]};
+const DEFAULT_PALETTE: Palette = Palette{entries: [0, 3, 3, 3], bus_conflict: 0, old_entries: [0; 4]};
 
 #[derive(Serialize, Deserialize)]
 pub struct PPUState {
@@ -138,6 +138,10 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
         }
         _ => {}
     }
+
+    state.bgp.bus_conflict = 0;
+    state.obp0.bus_conflict = 0;
+    state.obp1.bus_conflict = 0;
 }
 
 // Searches through the OAM table to find any OBJs that overlap the line we're currently drawing.
@@ -177,7 +181,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
         // We're just starting a new Mode 3, reset all the state data.
         state.pt_state = Default::default();
         state.pt_state.fb_pos = ((state.ly as usize) * 160) + (if state.active_fb { ::SCREEN_SIZE } else { 0 });
-        state.pt_state.fifo.push_tile(0, 0, &state.bgp, false);
+        state.pt_state.fifo.push_tile(0, 0, false);
         state.pt_state.idle_cycles = 5;
     }
 
@@ -192,7 +196,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
         }
 
         if state.pt_state.fifo.len > 0 {
-            let pixel = state.pt_state.fifo.pop_pixel();
+            let pixel = state.bgp.entry(state.pt_state.fifo.pop_pixel());
 
             // The first 8 pixels are shifted from the FIFO but are not clocked to the LCD.
             if state.pt_state.line_x >= 8 {
@@ -260,10 +264,20 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             // Step 4. We have the tile data we need, now we interleave the bits from both bytes and write the pixel
             // data into the FIFO.
             TileFetcherState::Push => {
-                state.pt_state.fifo.push_tile(state.pt_state.tile_hi, state.pt_state.tile_lo, &state.bgp, false);
+                state.pt_state.fifo.push_tile(state.pt_state.tile_hi, state.pt_state.tile_lo, false);
                 state.pt_state.tile_x = (state.pt_state.tile_x + 1) % 32;
                 state.pt_state.fetch_state = TileFetcherState::SleepRead;
             }
+        }
+
+        if state.bgp.bus_conflict > 0 {
+            state.bgp.bus_conflict -= 1;
+        }
+        if state.obp0.bus_conflict > 0 {
+            state.obp0.bus_conflict -= 1;
+        }
+        if state.obp1.bus_conflict > 0 {
+            state.obp1.bus_conflict -= 1;
         }
     }
 
@@ -469,7 +483,7 @@ impl Default for TileFetcherState { fn default() -> Self { TileFetcherState::Sle
 /// The FIFO is implemented as a very basic bounded (16 entry) ring buffer.
 #[derive(Serialize, Deserialize, Default)]
 struct PixelFifo {
-    pixels: [u8; 16],
+    pixels: [usize; 16],
     prio: [bool; 16],
     read_pos: usize,
     write_pos: usize,
@@ -479,7 +493,7 @@ impl PixelFifo {
     /// Pushes 8 pixels into the FIFO from provided tile data (raw hi and lo bytes read from VRAM).
     /// Each pixel is translated through the provided Palette. The pixels can optionally be flipped horizontally, which
     /// is used by OBJs.
-    fn push_tile(&mut self, mut hi: u8, mut lo: u8, pal: &Palette, flip: bool) {
+    fn push_tile(&mut self, mut hi: u8, mut lo: u8, flip: bool) {
         if self.len > 0 {
             panic!("push_tile on a FIFO with {} pixels", self.len);
         }
@@ -495,14 +509,14 @@ impl PixelFifo {
 
         self.len += 8;
         for _ in 0..8 {
-            self.pixels[self.write_pos] = pal.entries[(lo & 0b01) | (hi & 0b10)];
+            self.pixels[self.write_pos] = (lo & 0b01) | (hi & 0b10);
             lo >>= 1; hi >>= 1;
             self.write_pos = (self.write_pos + 1) % 16;
         }
     }
 
     /// Pops a single pixel out of the FIFO.
-    fn pop_pixel(&mut self) -> u8 {
+    fn pop_pixel(&mut self) -> usize {
         if self.len == 0 {
             panic!("pop_pixel() on an empty FIFO");
         }
@@ -548,12 +562,27 @@ impl OAMEntry {
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone)]
-pub struct Palette { entries: [u8; 4] }
+pub struct Palette {
+    entries: [u8; 4],
+    bus_conflict: u8,
+    old_entries: [u8; 4],
+}
 impl Palette {
+    pub fn entry(&self, idx: usize) -> u8 {
+        if self.bus_conflict == 0 {
+            return self.entries[idx];
+        }
+        if self.bus_conflict == 2 {
+            return self.old_entries[idx];
+        }
+        return self.entries[idx] | self.old_entries[idx];
+    }
     pub fn pack(&self) -> u8 {
         self.entries[0] | (self.entries[1] << 2) | (self.entries[2] << 4) | (self.entries[3] << 6)
     }
-    pub fn unpack(&mut self, v: u8) {
+    pub fn update(&mut self, v: u8) {
+        self.old_entries = self.entries;
+        self.bus_conflict = 2;
         self.entries[0] =  v & 0b00000011;
         self.entries[1] = (v & 0b00001100) >> 2;
         self.entries[2] = (v & 0b00110000) >> 4;

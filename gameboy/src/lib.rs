@@ -367,9 +367,9 @@ impl GameboyContext {
             0xFF44            => { }                   // LY is readonly.
             0xFF45            => { self.state.ppu.lyc = v.into() }
             0xFF46            => { dma::start(self, v) }
-            0xFF47            => { self.state.ppu.bgp.unpack(v) }
-            0xFF48            => { self.state.ppu.obp0.unpack(v) }
-            0xFF49            => { self.state.ppu.obp1.unpack(v) }
+            0xFF47            => { self.state.ppu.bgp.update(v) }
+            0xFF48            => { self.state.ppu.obp0.update(v) }
+            0xFF49            => { self.state.ppu.obp1.update(v) }
             0xFF50 if self.state.cpu.bootrom_enabled && v == 1 => {
                 self.state.cpu.bootrom_enabled = false;
             }
