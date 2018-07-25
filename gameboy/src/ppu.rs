@@ -84,7 +84,7 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
         // HBlank stage is a variable number of cycles pause between drawing a line and moving on
         // to the next line. The amount of cycles varies depending on the amount of work that was
         // done in Pixel Transfer. The more OBJs in the scanline, the less time we pause here.
-        HBlank(n) if state.cycles == n - 1 => {
+        HBlank(n) if state.cycles == n - 2 => {
             // OAM STAT interrupts are one cycle early, except on the first line (but that interrupt is handled during
             // VBlank state, see below).
             if state.interrupt_oam {
@@ -145,15 +145,16 @@ pub fn oam_search(state: &mut PPUState) {
     state.scanline_objs.clear();
 
     let h = if state.obj_tall { 16 } else { 8 };
-    let ly_bound = state.ly + 16;
+    let ly_bound = state.ly + (h + 8);
 
     for (idx, obj) in state.oam.iter().enumerate() {
-        if state.scanline_objs.len() == 10 {
-            break;
-        }
-
         if ly_bound >= obj.y && ly_bound < obj.y + h && obj.x < 168 {
             state.scanline_objs.push((idx, obj.x));
+        }
+
+        // Each scanline can display a maximum of 10 OBJs.
+        if state.scanline_objs.len() == 10 {
+            break;
         }
     }
 
@@ -169,45 +170,47 @@ pub fn oam_search(state: &mut PPUState) {
 
 /// The second stage of the scanline. Takes 43+ cycles.
 /// This is where we fetch BG/window/OBJ tiles and flush pixels out to the LCD.
-/// Our PPU code is run in lockstep with the CPU at 1Mhz. However the real PPU runs at 4Mhz/2Mhz, so we simulate that
-/// here by running the flusher steps at 4Mhz and the pixel fetching process at 2Mhz.
+/// We emulate the main CPU at a 1Mhz instruction cycle granularity, but the PPU runs at 4Mhz. So the implementation
+/// here is modelled on 4Mhz steps.
 fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
     if state.cycles == 1 {
         // We're just starting a new Mode 3, reset all the state data.
         state.pt_state = Default::default();
         state.pt_state.fb_pos = ((state.ly as usize) * 160) + (if state.active_fb { ::SCREEN_SIZE } else { 0 });
+        state.pt_state.fifo.push_tile(0, 0, &state.bgp, false);
+        state.pt_state.idle_cycles = 5;
     }
 
-    // The fetcher runs at 2Mhz.
-    'fetchcycle: for _ in 0..2 {
-        // The pixel flush runs at 4Mhz.
-        for _ in 0..2 {
-            if state.pt_state.line_x == 168 {
-                break 'fetchcycle;
+    for _ in 0..4 {
+        if state.pt_state.idle_cycles > 0 {
+            state.pt_state.idle_cycles -= 1;
+            continue;
+        }
+
+        if state.pt_state.line_x == 168 {
+            break;
+        }
+
+        if state.pt_state.fifo.len > 0 {
+            let pixel = state.pt_state.fifo.pop_pixel();
+
+            // The first 8 pixels are shifted from the FIFO but are not clocked to the LCD.
+            if state.pt_state.line_x >= 8 {
+                state.framebuffers[state.pt_state.fb_pos] = COLOR_MAPPING[pixel as usize];
+                state.pt_state.fb_pos += 1;
             }
 
-            if state.pt_state.fifo.len > 0 {
-                let pixel = state.pt_state.fifo.pop_pixel();
-
-                // The first 8 pixels are shifted from the FIFO but are not clocked to the LCD.
-                if state.pt_state.line_x >= 8 {
-                    state.framebuffers[state.pt_state.fb_pos] = COLOR_MAPPING[pixel as usize];
-                    state.pt_state.fb_pos += 1;
-                }
-
-                state.pt_state.line_x += 1;
-            }
+            state.pt_state.line_x += 1;
         }
 
         // Now we run the fetcher state machine. This is the process that fetches tile data from VRAM and pushes
         // processed pixels into the FIFO.
         match state.pt_state.fetch_state {
-            // Step 2. Figure out which tile we're rendering next by reading from window/BG tile map.
+            TileFetcherState::SleepRead => {
+                state.pt_state.fetch_state = TileFetcherState::Read;
+            }
+            // Step 1. Figure out which tile we're rendering next by reading from window/BG tile map.
             TileFetcherState::Read => {
-                if state.pt_state.line_x == 0 && state.cycles > 1 {
-                    // state.pt_state.fifo.push_tile(0, 0, &state.bgp, false);
-                }
-
                 state.pt_state.tile_code = state.tilemap[if state.pt_state.in_win {
                     let map_y = ((state.scy as usize) + (state.ly as usize)) / 8 * 32;
                     state.win_code_addr + (state.pt_state.tile_x) + map_y
@@ -215,6 +218,9 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                     let map_y = ((state.scy as usize) + (state.ly as usize)) / 8 * 32;
                     state.bg_code_addr + (state.pt_state.tile_x) + map_y
                 }] as usize;
+                state.pt_state.fetch_state = TileFetcherState::SleepFetchLo;
+            }
+            TileFetcherState::SleepFetchLo => {
                 state.pt_state.fetch_state = TileFetcherState::FetchLo;
             }
             // Step 2. We know which tile we're reading now. The row of pixels we need is in two bytes in tile data
@@ -227,6 +233,9 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 } else {
                     state.pt_state.tile_code * 0x10
                 } + offset];
+                state.pt_state.fetch_state = TileFetcherState::SleepFetchHi;
+            }
+            TileFetcherState::SleepFetchHi => {
                 state.pt_state.fetch_state = TileFetcherState::FetchHi;
             }
             // Step 3. Follow up from step 2 above, now we read the high byte containing MSBs of each pixel.
@@ -238,20 +247,22 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 } else {
                     state.pt_state.tile_code * 0x10
                 } + offset + 1];
-                state.pt_state.fetch_state = TileFetcherState::Push;
+                state.pt_state.fetch_state = TileFetcherState::SleepPush;
 
                 // At the very beginning of the scanline, the first 6 clocks are just throwaway work.
-                if state.pt_state.line_x == 0 {
-                    state.pt_state.fifo.push_tile(0, 0, &state.bgp, false);
-                    state.pt_state.fetch_state = TileFetcherState::Read;
-                }
+                // if state.pt_state.line_x == 0 {
+                //     state.pt_state.fetch_state = TileFetcherState::Read;
+                // }
+            }
+            TileFetcherState::SleepPush => {
+                state.pt_state.fetch_state = TileFetcherState::Push;
             }
             // Step 4. We have the tile data we need, now we interleave the bits from both bytes and write the pixel
             // data into the FIFO.
             TileFetcherState::Push => {
                 state.pt_state.fifo.push_tile(state.pt_state.tile_hi, state.pt_state.tile_lo, &state.bgp, false);
                 state.pt_state.tile_x = (state.pt_state.tile_x + 1) % 32;
-                state.pt_state.fetch_state = TileFetcherState::Read;
+                state.pt_state.fetch_state = TileFetcherState::SleepRead;
             }
         }
     }
@@ -440,12 +451,16 @@ pub enum Mode {
 
 #[derive(Serialize, Deserialize)]
 enum TileFetcherState {
+    SleepRead,
     Read,
+    SleepFetchHi,
     FetchHi,
+    SleepFetchLo,
     FetchLo,
+    SleepPush,
     Push
 }
-impl Default for TileFetcherState { fn default() -> Self { TileFetcherState::Read } }
+impl Default for TileFetcherState { fn default() -> Self { TileFetcherState::SleepRead } }
 
 /// The PixelFifo holds pending pixel data that has not yet been flushed to the LCD.
 /// As tiles are fetched from VRAM and processed, they're held in the FIFO and pushed to the LCD at a rate of 1 pixel
@@ -465,7 +480,7 @@ impl PixelFifo {
     /// Each pixel is translated through the provided Palette. The pixels can optionally be flipped horizontally, which
     /// is used by OBJs.
     fn push_tile(&mut self, mut hi: u8, mut lo: u8, pal: &Palette, flip: bool) {
-        if self.len > 8 {
+        if self.len > 0 {
             panic!("push_tile on a FIFO with {} pixels", self.len);
         }
 
@@ -488,7 +503,7 @@ impl PixelFifo {
 
     /// Pops a single pixel out of the FIFO.
     fn pop_pixel(&mut self) -> u8 {
-        if self.read_pos == self.write_pos {
+        if self.len == 0 {
             panic!("pop_pixel() on an empty FIFO");
         }
         let pixel = self.pixels[self.read_pos];
@@ -512,6 +527,7 @@ struct PixelTransferState {
     fifo: PixelFifo,
     line_x: usize,
     fb_pos: usize,      // Location in the framebuffer to write the next pixel.
+    idle_cycles: u8,    // At the beginning of Mode 3 we idle for a few cycles, we track that here.
 }
 
 /// The OAMEntry struct is packed in C representation (no padding) so that we can view it as a contiguous byte array
