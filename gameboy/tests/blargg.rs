@@ -77,11 +77,11 @@ fn run_blargg_harness_test(rom: &[u8]) {
 // #[test] fn blargg_dmg_sound_10()  { run_blargg_harness_test(include_bytes!("blargg/dmg_sound/10-wave trigger while on.gb")); }
 #[test] fn blargg_dmg_sound_11()  { run_blargg_harness_test(include_bytes!("blargg/dmg_sound/11-regs after power.gb")); }
 // #[test] fn blargg_dmg_sound_12()  { run_blargg_harness_test(include_bytes!("blargg/dmg_sound/12-wave write while on.gb")); }
-#[test] fn blargg_oam_bug_01()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/1-lcd_sync.gb")); }
-#[test] fn blargg_oam_bug_02()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/2-causes.gb")); }
-#[test] fn blargg_oam_bug_03()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/3-non_causes.gb")); }
-#[test] fn blargg_oam_bug_04()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/4-scanline_timing.gb")); }
-#[test] fn blargg_oam_bug_05()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/5-timing_bug.gb")); }
-#[test] fn blargg_oam_bug_06()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/6-timing_no_bug.gb")); }
+// #[test] fn blargg_oam_bug_01()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/1-lcd_sync.gb")); }
+// #[test] fn blargg_oam_bug_02()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/2-causes.gb")); }
+// #[test] fn blargg_oam_bug_03()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/3-non_causes.gb")); }
+// #[test] fn blargg_oam_bug_04()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/4-scanline_timing.gb")); }
+// #[test] fn blargg_oam_bug_05()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/5-timing_bug.gb")); }
+// #[test] fn blargg_oam_bug_06()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/6-timing_no_bug.gb")); }
 // #[test] fn blargg_oam_bug_07()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/7-timing_effect.gb")); }
 // #[test] fn blargg_oam_bug_08()    { run_blargg_harness_test(include_bytes!("blargg/oam_bug/8-instr_effect.gb")); }
