@@ -177,8 +177,23 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
     if state.cycles == 1 {
         // We're just starting a new Mode 3, reset all the state data.
         state.pt_state = Default::default();
+
+        // We double buffer, but view both frame buffers as one contiguous lump of memory. So we calculate the correct
+        // offset here.
         state.pt_state.fb_pos = ((state.ly as usize) * 160) + (if state.active_fb { ::SCREEN_SIZE } else { 0 });
+
+        // Figure out the starting BG tile we'll be displaying. This is precomputed so even if SCX changed mid-scanline,
+        // the BG tile position does not change.
+        state.pt_state.tile_x = (state.scx / 8) as usize;
+
+        // The first 8 pixels are throwaway data since they're not visible.
         state.pt_state.fifo.push_tile(0, 0, false);
+
+        // In addition to the 8 pixels we always skip, we further throw away (SCX % 8) pixels. This is how fine
+        // scrolling is achieved.
+        state.pt_state.skip_pixels = 8 + (state.scx % 8);
+
+        // Stall the PPU for 4 cycles before any actual work starts.
         state.pt_state.idle_cycles = 4;
     }
 
@@ -188,20 +203,22 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             continue;
         }
 
-        if state.pt_state.line_x == 168 {
+        if state.pt_state.line_x == 160 {
             break;
         }
 
         if state.pt_state.fifo.len > 0 {
             let pixel = state.bgp.entry(state.pt_state.fifo.pop_pixel());
 
-            // The first 8 pixels are shifted from the FIFO but are not clocked to the LCD.
-            if state.pt_state.line_x >= 8 {
+            // Can we send this pixel to the LCD?
+            if state.pt_state.skip_pixels == 0 {
                 state.framebuffers[state.pt_state.fb_pos] = COLOR_MAPPING[pixel as usize];
                 state.pt_state.fb_pos += 1;
+                state.pt_state.line_x += 1;
+            } else {
+                // Nope. One more pixel into the abyss.
+                state.pt_state.skip_pixels -= 1;
             }
-
-            state.pt_state.line_x += 1;
         }
 
         // Now we run the fetcher state machine. This is the process that fetches tile data from VRAM and pushes
@@ -273,7 +290,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
         }
     }
 
-    if state.pt_state.line_x == 168 {
+    if state.pt_state.line_x == 160 {
         // Thje HBlank phase runs for 51 cycles *or less*, depending on how much work we did during this Mode 3 (which
         // takes a minimum of 43 cycles).
         let hblank_cycles = 51+43 - state.cycles;
@@ -532,6 +549,7 @@ struct PixelTransferState {
     fetch_state: TileFetcherState,
     fifo: PixelFifo,
     line_x: usize,
+    skip_pixels: u8,    // Number of pixels to skip at beginning of scanline
     fb_pos: usize,      // Location in the framebuffer to write the next pixel.
     idle_cycles: u8,    // At the beginning of Mode 3 we idle for a few cycles, we track that here.
 }
