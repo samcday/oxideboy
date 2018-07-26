@@ -7,3 +7,6 @@ authors = ["Sam Day <me@samcday.com>"]
 bincode = "1.0.1"
 serde = "1.0.70"
 serde_derive = "1.0"
+
+[dev-dependencies]
+image = "*"

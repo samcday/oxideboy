@@ -29,20 +29,20 @@ fn run_blargg_harness_test(rom: &[u8]) {
 
     // The test runner writes the magic value to RAM before specifying that tests are in progress.
     // Which is kinda dumb. Anyway, we force that value now so we know when tests are *actually* done.
-    gameboy.cart.ram[0] = 0x80;
+    gameboy.state.cart.ram[0] = 0x80;
 
     loop {
         gameboy::cpu::run(&mut gameboy);
 
         // Wait until the magic value is present in RAM and the test is signalled as complete.
-        if gameboy.cart.ram[1] == 0xDE && gameboy.cart.ram[2] == 0xB0 && gameboy.cart.ram[3] == 0x61 {
-            let exit_code = gameboy.cart.ram[0];
+        if gameboy.state.cart.ram[1] == 0xDE && gameboy.state.cart.ram[2] == 0xB0 && gameboy.state.cart.ram[3] == 0x61 {
+            let exit_code = gameboy.state.cart.ram[0];
             if exit_code != 0x80 {
                 let mut end = 0x04;
-                while gameboy.cart.ram[end] != 0 && end < 0x1FFF {
+                while gameboy.state.cart.ram[end] != 0 && end < 0x1FFF {
                     end += 1;
                 }
-                let output = std::str::from_utf8(&gameboy.cart.ram[0x04..end]).unwrap();
+                let output = std::str::from_utf8(&gameboy.state.cart.ram[0x04..end]).unwrap();
                 if exit_code != 0 {
                     panic!("Test failed. Output: {}", output);
                 }

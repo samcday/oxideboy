@@ -76,14 +76,14 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
         OAMSearch if state.cycles == 20 => {
             state.next_mode(PixelTransfer);
         }
-        // The second stage of a scanline, and the most important one. This is where we rasterize
-        // the background map, window map, and OBJs into actual pixels that go into the framebuffer.
+        // The second stage of a scanline, where we rasterize the background/window maps and any visible OBJs into
+        // actual pixels that go to the LCD.
         PixelTransfer => {
             pixel_transfer(state, interrupts);
         },
-        // HBlank stage is a variable number of cycles pause between drawing a line and moving on
-        // to the next line. The amount of cycles varies depending on the amount of work that was
-        // done in Pixel Transfer. The more OBJs in the scanline, the less time we pause here.
+        // HBlank stage is a variable number of cycles pause between drawing a line and moving on to the next line. The
+        // amount of cycles varies depending on the amount of work that was done during Pixel Transfer. The more OBJs in
+        // the scanline, the less time we pause here.
         HBlank(n) if state.cycles == n - 2 => {
             // OAM STAT interrupts are one cycle early, except on the first line (but that interrupt is handled during
             // VBlank state, see below).
@@ -105,9 +105,6 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
                 }
                 state.next_mode(VBlank);
             } else {
-                // if state.interrupt_oam {
-                //     interrupts.request(Interrupt::Stat);
-                // }
                 if state.interrupt_lyc && state.ly == state.lyc {
                     interrupts.request(Interrupt::Stat);
                 }
@@ -123,12 +120,12 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
             if state.cycles % 114 == 0 {
                 state.ly += 1;
             }
+            if state.cycles == 1139 && state.interrupt_oam {
+                interrupts.request(Interrupt::Stat);
+            }
             if state.cycles == 1140 {
                 state.ly = 0;
 
-                if state.interrupt_oam {
-                    interrupts.request(Interrupt::Stat);
-                }
                 if state.interrupt_lyc && state.ly == state.lyc {
                     interrupts.request(Interrupt::Stat);
                 }
@@ -182,7 +179,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
         state.pt_state = Default::default();
         state.pt_state.fb_pos = ((state.ly as usize) * 160) + (if state.active_fb { ::SCREEN_SIZE } else { 0 });
         state.pt_state.fifo.push_tile(0, 0, false);
-        state.pt_state.idle_cycles = 5;
+        state.pt_state.idle_cycles = 4;
     }
 
     for _ in 0..4 {
