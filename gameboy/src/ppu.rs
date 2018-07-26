@@ -230,7 +230,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 let offset = (((state.scy as usize) + (state.ly as usize)) % 8) * 2;
                 state.pt_state.tile_lo = state.tiles[if state.tile_data_hi {
                     let tile_code = state.pt_state.tile_code as i8 as i16;
-                    (0x800 + (tile_code * 0x10)) as usize
+                    (0x1000 + (tile_code * 0x10)) as usize
                 } else {
                     state.pt_state.tile_code * 0x10
                 } + offset];
@@ -244,16 +244,11 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 let offset = (((state.scy as usize) + (state.ly as usize)) % 8) * 2;
                 state.pt_state.tile_hi = state.tiles[if state.tile_data_hi {
                     let tile_code = state.pt_state.tile_code as i8 as i16;
-                    (0x800 + (tile_code * 0x10)) as usize
+                    (0x1000 + (tile_code * 0x10)) as usize
                 } else {
                     state.pt_state.tile_code * 0x10
                 } + offset + 1];
                 state.pt_state.fetch_state = TileFetcherState::SleepPush;
-
-                // At the very beginning of the scanline, the first 6 clocks are just throwaway work.
-                // if state.pt_state.line_x == 0 {
-                //     state.pt_state.fetch_state = TileFetcherState::Read;
-                // }
             }
             TileFetcherState::SleepPush => {
                 state.pt_state.fetch_state = TileFetcherState::Push;
