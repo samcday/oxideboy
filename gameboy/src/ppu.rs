@@ -565,6 +565,26 @@ pub struct Palette {
     old_entries: [u8; 4],
 }
 impl Palette {
+    pub fn pack(&self) -> u8 {
+        self.entries[0] | (self.entries[1] << 2) | (self.entries[2] << 4) | (self.entries[3] << 6)
+    }
+
+    pub fn update(&mut self, v: u8) {
+        self.old_entries = self.entries;
+        self.bus_conflict = 2;
+        self.entries[0] =  v & 0b00000011;
+        self.entries[1] = (v & 0b00001100) >> 2;
+        self.entries[2] = (v & 0b00110000) >> 4;
+        self.entries[3] = (v & 0b11000000) >> 6;
+    }
+
+    /// Gets the appropriate entry in the palette, accounting for the current bus conflict if it exists.
+    /// When updating any of the BGP/OBPx DMG registers, a bus conflict can occur. Because the CPU takes 4 T-cycles to
+    /// update the register, during those cycles the register can be read in different states. In the first cycle, the
+    /// value is still unchanged, but in the second cycle the value will be equivalent to the previous value OR'd with
+    /// the new value. Even though these effects are unobservable to CPU instructions, they matter for the PPU because
+    /// we're calculating pixels at 4Mhz. See the mattcurrie/mealybug-tearoom-tests/m3_bgp_change for a visual example
+    /// of this phenomenon.
     pub fn entry(&self, idx: usize) -> u8 {
         if self.bus_conflict == 0 {
             return self.entries[idx];
@@ -573,16 +593,5 @@ impl Palette {
             return self.old_entries[idx];
         }
         return self.entries[idx] | self.old_entries[idx];
-    }
-    pub fn pack(&self) -> u8 {
-        self.entries[0] | (self.entries[1] << 2) | (self.entries[2] << 4) | (self.entries[3] << 6)
-    }
-    pub fn update(&mut self, v: u8) {
-        self.old_entries = self.entries;
-        self.bus_conflict = 2;
-        self.entries[0] =  v & 0b00000011;
-        self.entries[1] = (v & 0b00001100) >> 2;
-        self.entries[2] = (v & 0b00110000) >> 4;
-        self.entries[3] = (v & 0b11000000) >> 6;
     }
 }
