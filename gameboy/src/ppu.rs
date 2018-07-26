@@ -33,18 +33,18 @@ pub struct PPUState {
     interrupt_vblank: bool,
     interrupt_lyc: bool,
 
-    win_enabled: bool,    // Toggles window display on/off.
-    bg_enabled: bool,     // Toggles BG tile display on/off.
-    win_code_addr: usize, // The base address where we look for window tile codes.
-    bg_code_addr: usize,  // The base address where we look for background tile codes.
-    tile_data_hi: bool,   // If true, tile code is interpreted as signed and based from 0x8800.
+    win_enabled: bool,      // Toggles window display on/off.
+    bg_enabled: bool,       // Toggles BG tile display on/off.
+    win_code_addr: usize,   // The base address where we look for window tile codes.
+    bg_code_addr: usize,    // The base address where we look for background tile codes.
+    tile_data_hi: bool,     // If true, tile code is interpreted as signed and based from 0x8800.
 
     pub obj_enabled: bool,  // Toggles display of OBJs on/off.
     obj_tall: bool,         // If true, we're rendering 8x16 OBJs.
 
-    tiles: Vec<u8>,     // 0x8000 - 0x97FF
-    tilemap: Vec<u8>,   // 0x9800 - 0x9FFF
-    oam: Vec<OAMEntry>, // 0xFE00 - 0xFDFF
+    tiles: Vec<u8>,         // 0x8000 - 0x97FF
+    tilemap: Vec<u8>,       // 0x9800 - 0x9FFF
+    oam: Vec<OAMEntry>,     // 0xFE00 - 0xFDFF
 
     scanline_objs: Vec<(usize, usize)>,
 

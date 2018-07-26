@@ -1,5 +1,7 @@
 extern crate gameboy;
 
+mod common;
+
 use gameboy::*;
 use std::time::Instant;
 
@@ -89,3 +91,35 @@ fn run_mooneye_test(rom: &[u8], enable_bootrom: bool) {
 #[test] fn mooneye_acceptance_reti_intr_timing() { run_mooneye_test(include_bytes!("mooneye/build/acceptance/reti_intr_timing.gb"), false); }
 #[test] fn mooneye_acceptance_reti_timing() { run_mooneye_test(include_bytes!("mooneye/build/acceptance/reti_timing.gb"), false); }
 #[test] fn mooneye_acceptance_rst_timing() { run_mooneye_test(include_bytes!("mooneye/build/acceptance/rst_timing.gb"), false); }
+
+#[test]
+fn mooneye_sprite_priority() {
+    let rom = include_bytes!("mooneye/build/manual-only/sprite_priority.gb");
+    let mut gameboy = GameboyContext::new(rom.to_vec());
+    gameboy.skip_bootrom();
+
+    let start = Instant::now();
+    while !gameboy.mooneye_breakpoint {
+        gameboy::cpu::run(&mut gameboy);
+
+        if start.elapsed().as_secs() > 10 {
+            panic!("Test ran for more than 10 seconds");
+        }
+    }
+    // The magic breakpoint for this test is fired immediately after LCD is enabled, so let a full frame get rendered
+    // before we run the comparison.
+    for _ in 0..17556 {
+        gameboy::cpu::run(&mut gameboy);
+    }
+
+    common::compare_framebuffer(gameboy.state.ppu.framebuffer(),
+                                include_bytes!("mooneye/manual-only/sprite_priority-expected.png"),
+                                |col| {
+                                    match col {
+                                        0xFFFFFFFF => 0xFFE0F8D0,
+                                        0xFF6F6F6F => 0xFF88C070,
+                                        0xFF000000 => 0xFF081820,
+                                        _ => panic!("Unexpected reference pixel color: {:X}", col)
+                                    }
+                                });
+}
