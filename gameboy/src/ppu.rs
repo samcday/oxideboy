@@ -217,16 +217,30 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
         // We can only send pixels to the LCD if we actually have some, and if we're not stalled waiting for an OBJ to
         // be fetched.
         if state.pt_state.bg_fifo.len > 0 && !stalled_on_obj {
-            let (pixel, _) = state.pt_state.bg_fifo.pop_pixel();
+            let (mut pixel, _, _) = state.pt_state.bg_fifo.pop_pixel();
+
+            // If the BG is disabled, we just use color 0 instead of the pixel from FIFO. We *do* use the pixel color if
+            // we're rendering the window though.
+            if !state.bg_enabled && !state.pt_state.in_win {
+                pixel = 0;
+            }
+
+            let bg_priority = pixel != 0;
             let mut pixel = state.bgp.entry(pixel);
 
             // Can we send this pixel to the LCD?
             if state.pt_state.skip_pixels == 0 {
+                // Is there an OBJ pixel to blend with this BG pixel?
                 if state.pt_state.obj_fifo.len > 0 {
-                    let (objpixel, objpal) = state.pt_state.obj_fifo.pop_pixel();
-                    // TODO: check priority vs BG here.
+                    let (objpixel, objpal, objprio) = state.pt_state.obj_fifo.pop_pixel();
 
-                    pixel = if objpal { state.obp1.entry(objpixel) } else { state.obp0.entry(objpixel) };
+                    // OBJ pixel 0 is always transparent.
+                    if objpixel > 0 {
+                        // We only render this OBJ pixel if it has priority over the BG, or if the BG pixel was 0.
+                        if !objprio || !bg_priority {
+                            pixel = if objpal { state.obp1.entry(objpixel) } else { state.obp0.entry(objpixel) };
+                        }
+                    }
                 }
 
                 state.framebuffers[state.pt_state.fb_pos] = COLOR_MAPPING[pixel as usize];
@@ -244,7 +258,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             state.pt_state.prev_fetch_state = state.pt_state.fetch_state;
 
             state.pt_state.obj_code = state.oam[state.pt_state.pending_obj].code as usize;
-            state.pt_state.fetch_state = TileFetcherState::SleepObjFetchHi;
+            state.pt_state.fetch_state = TileFetcherState::SleepObjFetchLo;
         }
 
         // Now we run the fetcher state machine. This is the process that fetches tile data from VRAM and pushes
@@ -307,6 +321,15 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 }
             }
 
+            // Step 1 of OBJ fetch. Similar to TileFetcherState::FetchLo, except for OBJ data.
+            TileFetcherState::SleepObjFetchLo => {
+                state.pt_state.fetch_state = TileFetcherState::ObjFetchLo;
+            }
+            TileFetcherState::ObjFetchLo => {
+                let tile_y = state.oam[state.pt_state.pending_obj].tile_y(state.ly, state.obj_tall);
+                state.pt_state.obj_hi = state.tiles[state.pt_state.obj_code * 0x10 + (tile_y * 2) + 1];
+                state.pt_state.fetch_state = TileFetcherState::SleepObjFetchHi;
+            }
             // Step 1 of OBJ fetch. Similar to TileFetcherState::FetchHi, except for OBJ data.
             TileFetcherState::SleepObjFetchHi => {
                 state.pt_state.fetch_state = TileFetcherState::ObjFetchHi;
@@ -314,16 +337,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             TileFetcherState::ObjFetchHi => {
                 // TODO: the tile_y logic is incomplete for tall OBJs, e.g when they're flipped.
                 let tile_y = state.oam[state.pt_state.pending_obj].tile_y(state.ly, state.obj_tall);
-                state.pt_state.obj_hi = state.tiles[state.pt_state.obj_code * 0x10 + (tile_y * 2)];
-                state.pt_state.fetch_state = TileFetcherState::SleepObjFetchLo;
-            }
-            // Step 2 of OBJ fetch. Similar to TileFetcherState::FetchLo, except for OBJ data.
-            TileFetcherState::SleepObjFetchLo => {
-                state.pt_state.fetch_state = TileFetcherState::ObjFetchLo;
-            }
-            TileFetcherState::ObjFetchLo => {
-                let tile_y = state.oam[state.pt_state.pending_obj].tile_y(state.ly, state.obj_tall);
-                state.pt_state.obj_lo = state.tiles[state.pt_state.obj_code * 0x10 + (tile_y * 2) + 1];
+                state.pt_state.obj_lo = state.tiles[state.pt_state.obj_code * 0x10 + (tile_y * 2)];
                 state.pt_state.fetch_state = TileFetcherState::SleepObjPush;
             }
             // Last step of OBJ fetch. Blend the OBJ data into the OBJ pixel fifo.
@@ -332,7 +346,8 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             }
             TileFetcherState::ObjPush => {
                 // Blend the data.
-                state.pt_state.obj_fifo.blend(state.pt_state.obj_hi, state.pt_state.obj_lo, &state.oam[state.scanline_objs[state.scanline_objs.len() - 1].0]);
+                state.pt_state.obj_fifo.blend(state.pt_state.obj_hi, state.pt_state.obj_lo,
+                                              &state.oam[state.scanline_objs[state.scanline_objs.len() - 1].0]);
 
                 // We're done with this OBJ, remove it from the pending list.
                 state.scanline_objs.pop();
@@ -544,17 +559,17 @@ pub enum Mode {
 enum TileFetcherState {
     SleepRead,
     Read,
-    SleepFetchHi,
-    FetchHi,
     SleepFetchLo,
     FetchLo,
+    SleepFetchHi,
+    FetchHi,
     SleepPush,
     Push,
 
-    SleepObjFetchHi,
-    ObjFetchHi,
     SleepObjFetchLo,
     ObjFetchLo,
+    SleepObjFetchHi,
+    ObjFetchHi,
     SleepObjPush,
     ObjPush,
 }
@@ -609,8 +624,11 @@ impl PixelFifo {
         }
     }
 
+    /// Blends 8 pixels of OBJ data into the FIFO. This differs from push_tile in that the FIFO will be widened to 8
+    /// empty pixels if necessary, but then existing FIFO data will be written over, depending on OBJ priorities.
     fn blend(&mut self, mut hi: u8, mut lo: u8, obj: &OAMEntry) {
         while self.len < 8 {
+            self.pixels[self.write_pos] = 0;
             self.write_pos = (self.write_pos + 1) % 16;
             self.len += 1;
         }
@@ -627,23 +645,28 @@ impl PixelFifo {
         let mut cur_write_pos = self.write_pos;
         for _ in 0..8 {
             cur_write_pos = cur_write_pos.wrapping_sub(1) % 16;
-            // TODO: actual blending and shit here.
-            self.pixels[cur_write_pos] = (lo & 0b01) | (hi & 0b10);
-            self.pal[cur_write_pos] = obj.palette(); 
+            // We only set this pixel if another OBJ hasn't set it already.
+            if self.pixels[cur_write_pos] == 0 {
+                self.pixels[cur_write_pos] = (lo & 0b01) | (hi & 0b10);
+                self.pal[cur_write_pos] = obj.palette(); 
+                self.prio[cur_write_pos] = obj.priority();
+            }
             lo >>= 1; hi >>= 1;
         }
     }
 
     /// Pops a single pixel out of the FIFO.
-    fn pop_pixel(&mut self) -> (usize, bool) {
+    fn pop_pixel(&mut self) -> (usize, bool, bool) {
         if self.len == 0 {
             panic!("pop_pixel() on an empty FIFO");
         }
         let pixel = self.pixels[self.read_pos];
         let pal = self.pal[self.read_pos];
+        let prio = self.prio[self.read_pos];
+
         self.len -= 1;
         self.read_pos = (self.read_pos + 1) % 16;
-        (pixel, pal)
+        (pixel, pal, prio)
     }
 }
 
