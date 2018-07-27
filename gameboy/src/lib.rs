@@ -16,6 +16,14 @@ pub const SCREEN_SIZE: usize = 160 * 144;
 pub const FRAME_RATE: f64 = 1048576.0 / 17556.0;
 
 static DMG0_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg0.rom");
+static DMG_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg.rom");
+
+/// An enum of the various Gameboy models we can emulate.
+#[derive(Eq, PartialEq)]
+pub enum Model {
+    DMG0,
+    DMG,
+}
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct JoypadState {
@@ -102,6 +110,8 @@ impl GameboyState {
 /// Represents a running gameboy emulation session. Contains the cartridge being run, and the
 /// state of the CPU / PPU / APU / timer / etc.
 pub struct GameboyContext {
+    pub model: Model,
+
     pub state: GameboyState,
     rom: Vec<u8>,
 
@@ -114,10 +124,11 @@ pub struct GameboyContext {
 }
 
 impl GameboyContext {
-    pub fn new(rom: Vec<u8>) -> Self {
+    pub fn new(model: Model, rom: Vec<u8>) -> Self {
         let cart = cartridge::Cartridge::from_rom(&rom);
 
         Self {
+            model,
             state: GameboyState::new(cart),
             rom,
             cycle_count: 0,
@@ -179,8 +190,11 @@ impl GameboyContext {
             self.state.ppu.vram_write(addr, v);
             addr += 1;
         }
-        // TODO: not in DMG0.
-        // self.state.ppu.vram_write(addr, 0x19);
+
+        if self.model == Model::DMG {
+            self.state.ppu.vram_write(addr, 0x19);
+        }
+
         addr = 0x1924;
         for v in 13..=24 {
             self.state.ppu.vram_write(addr, v);
@@ -202,14 +216,15 @@ impl GameboyContext {
             self.state.ppu.vram_write(vram_addr, z as u8); vram_addr += 2;
         }
 
-        // TODO: not in DMG0 mode.
-        // let mut src_addr = 0xD8;
-        // for _ in 0..8 {
-        //     let v = self.mem_get8(src_addr);
-        //     self.state.ppu.vram_write(vram_addr, v);
-        //     src_addr += 1;
-        //     vram_addr += 2;
-        // }
+        if self.model == Model::DMG {
+            let mut src_addr = 0xD8;
+            for _ in 0..8 {
+                let v = self.mem_get8(src_addr);
+                self.state.ppu.vram_write(vram_addr, v);
+                src_addr += 1;
+                vram_addr += 2;
+            }
+        }
 
         // After bootrom is finished, sound1 is still enabled but muted.
         self.state.apu.chan1.vol_env = apu::VolumeEnvelope{
@@ -238,9 +253,16 @@ impl GameboyContext {
         self.mem_get8(addr)
     }
 
+    fn bootrom_read(&self, addr: u16) -> u8 {
+        match self.model {
+            Model::DMG0 => DMG0_BOOTROM[addr as usize],
+            Model::DMG  => DMG_BOOTROM[addr as usize],
+        }
+    }
+
     fn mem_get8(&mut self, addr: u16) -> u8 {
         match addr {
-            0x0000 ... 0x0100 if self.state.cpu.bootrom_enabled => DMG0_BOOTROM[addr as usize],
+            0x0000 ... 0x0100 if self.state.cpu.bootrom_enabled => self.bootrom_read(addr),
 
             0x0000 ... 0x3FFF => self.state.cart.rom_lo(&self.rom)[addr as usize],
             0x4000 ... 0x7FFF => self.state.cart.rom_hi(&self.rom)[(addr - 0x4000) as usize],

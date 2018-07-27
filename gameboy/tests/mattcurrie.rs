@@ -6,7 +6,7 @@ use gameboy::*;
 use std::time::Instant;
 
 fn run_mattcurrie_test(rom: &[u8], expected: &[u8]) {
-    let mut gameboy = GameboyContext::new(rom.to_vec());
+    let mut gameboy = GameboyContext::new(Model::DMG, rom.to_vec());
     gameboy.skip_bootrom();
 
     let start = Instant::now();

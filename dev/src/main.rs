@@ -47,7 +47,7 @@ fn main() -> Result<()> {
     let mut limit = false;
     let mut paused = false;
     let print_fps = env::var("PRINT_FPS").ok().unwrap_or(String::from("0")) == "1";
-    let mut gameboy = gameboy::GameboyContext::new(rom);
+    let mut gameboy = gameboy::GameboyContext::new(gameboy::Model::DMG, rom);
 
     if !(env::var("RUN_BOOTROM").ok().unwrap_or(String::from("0")) == "1") {
         gameboy.skip_bootrom();

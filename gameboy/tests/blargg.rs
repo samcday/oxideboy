@@ -4,7 +4,7 @@ use gameboy::*;
 
 fn run_blargg_serial_test(rom: &[u8]) {
     let mut serial_output = String::new();
-    let mut gameboy = GameboyContext::new(rom.to_vec());
+    let mut gameboy = GameboyContext::new(Model::DMG, rom.to_vec());
     gameboy.skip_bootrom();
 
     loop {
@@ -24,7 +24,7 @@ fn run_blargg_serial_test(rom: &[u8]) {
 }
 
 fn run_blargg_harness_test(rom: &[u8]) {
-    let mut gameboy = GameboyContext::new(rom.to_vec());
+    let mut gameboy = GameboyContext::new(Model::DMG, rom.to_vec());
     gameboy.skip_bootrom();
 
     // The test runner writes the magic value to RAM before specifying that tests are in progress.
