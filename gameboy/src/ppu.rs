@@ -190,7 +190,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
 
         // In addition to the 8 pixels we always skip, we further throw away (SCX % 8) pixels. This is how fine
         // scrolling is achieved.
-        state.pt_state.skip_pixels = 8 + (state.scx % 8);
+        state.pt_state.skip_pixels = state.scx % 8;
 
         // Stall the PPU for 4 cycles before any actual work starts.
         state.pt_state.idle_cycles = 4;
@@ -208,11 +208,11 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             continue;
         }
 
-        if state.pt_state.line_x == 160 {
+        if state.pt_state.line_x == 168 {
             break;
         }
 
-        let stalled_on_obj = state.pt_state.pending_objs && state.pt_state.line_x + 8 >= state.pt_state.next_obj_x;
+        let stalled_on_obj = state.pt_state.pending_objs && state.pt_state.line_x >= state.pt_state.next_obj_x;
 
         // We can only send pixels to the LCD if we actually have some, and if we're not stalled waiting for an OBJ to
         // be fetched.
@@ -228,27 +228,29 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             let bg_priority = pixel != 0;
             let mut pixel = state.bgp.entry(pixel);
 
-            // Can we send this pixel to the LCD?
-            if state.pt_state.skip_pixels == 0 {
-                // Is there an OBJ pixel to blend with this BG pixel?
-                if state.pt_state.obj_fifo.len > 0 {
-                    let (objpixel, objpal, objprio) = state.pt_state.obj_fifo.pop_pixel();
+            // Is there an OBJ pixel to blend with this BG pixel?
+            if state.pt_state.obj_fifo.len > 0 {
+                let (objpixel, objpal, objprio) = state.pt_state.obj_fifo.pop_pixel();
 
-                    // OBJ pixel 0 is always transparent.
-                    if objpixel > 0 {
-                        // We only render this OBJ pixel if it has priority over the BG, or if the BG pixel was 0.
-                        if !objprio || !bg_priority {
-                            pixel = if objpal { state.obp1.entry(objpixel) } else { state.obp0.entry(objpixel) };
-                        }
+                // OBJ pixel 0 is always transparent.
+                if objpixel > 0 {
+                    // We only render this OBJ pixel if it has priority over the BG, or if the BG pixel was 0.
+                    if !objprio || !bg_priority {
+                        pixel = if objpal { state.obp1.entry(objpixel) } else { state.obp0.entry(objpixel) };
                     }
                 }
+            }
 
-                state.framebuffers[state.pt_state.fb_pos] = COLOR_MAPPING[pixel as usize];
-                state.pt_state.fb_pos += 1;
-                state.pt_state.line_x += 1;
-            } else {
+            // Can we send this pixel to the LCD?
+            if state.pt_state.skip_pixels > 0 {
                 // Nope. One more pixel into the abyss.
                 state.pt_state.skip_pixels -= 1;
+            } else {
+                if state.pt_state.line_x >= 8 {
+                    state.framebuffers[state.pt_state.fb_pos] = COLOR_MAPPING[pixel as usize];
+                    state.pt_state.fb_pos += 1;
+                }
+                state.pt_state.line_x += 1;
             }
         }
 
@@ -373,7 +375,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
         }
     }
 
-    if state.pt_state.line_x == 160 {
+    if state.pt_state.line_x == 168 {
         // Thje HBlank phase runs for 51 cycles *or less*, depending on how much work we did during this Mode 3 (which
         // takes a minimum of 43 cycles).
         let hblank_cycles = 51+43 - state.cycles;
