@@ -270,10 +270,10 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             }
             TileFetcherState::Read => {
                 state.pt_state.tile_code = state.tilemap[if state.pt_state.in_win {
-                    let map_y = ((state.scy as usize) + (state.ly as usize)) / 8 * 32;
+                    let map_y = ((state.scy as usize) + (state.ly as usize)) / 8 % 32 * 32;
                     state.win_code_addr + (state.pt_state.tile_x) + map_y
                 } else {
-                    let map_y = ((state.scy as usize) + (state.ly as usize)) / 8 * 32;
+                    let map_y = ((state.scy as usize) + (state.ly as usize)) / 8 % 32 * 32;
                     state.bg_code_addr + (state.pt_state.tile_x) + map_y
                 }] as usize;
                 state.pt_state.fetch_state = TileFetcherState::SleepFetchLo;
