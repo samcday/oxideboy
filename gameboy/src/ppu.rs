@@ -340,7 +340,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 // TODO: the tile_y logic is incomplete for tall OBJs, e.g when they're flipped.
                 let tile_y = state.oam[state.pt_state.pending_obj].tile_y(state.ly, state.obj_tall);
                 state.pt_state.obj_lo = state.tiles[state.pt_state.obj_code * 0x10 + (tile_y * 2)];
-                state.pt_state.fetch_state = TileFetcherState::SleepObjPush;
+                state.pt_state.fetch_state = TileFetcherState::ObjPush;
             }
             // Last step of OBJ fetch. Blend the OBJ data into the OBJ pixel fifo.
             TileFetcherState::SleepObjPush => {

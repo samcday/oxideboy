@@ -24,9 +24,15 @@ pub fn compare_framebuffer<F>(framebuf: &[u32], expected: &[u8], color_conv: F)
                 path.push("result.png");
                 let mut framebuf_image = vec![0u8; 160*144*3];
                 for i in 0..160*144 {
-                    framebuf_image[i*3] = ((framebuf[i] & 0xFF0000) >> 16) as u8;
-                    framebuf_image[i*3+1] = ((framebuf[i] & 0xFF00) >> 8) as u8;
-                    framebuf_image[i*3+2] = (framebuf[i] & 0xFF) as u8;
+                    if i == ((y * 160) + x) {
+                        framebuf_image[i*3] = 0xFF;
+                        framebuf_image[i*3+1] = 0;
+                        framebuf_image[i*3+2] = 0;
+                    } else {
+                        framebuf_image[i*3] = ((framebuf[i] & 0xFF0000) >> 16) as u8;
+                        framebuf_image[i*3+1] = ((framebuf[i] & 0xFF00) >> 8) as u8;
+                        framebuf_image[i*3+2] = (framebuf[i] & 0xFF) as u8;
+                    }
                 }
                 image::save_buffer(path.clone(), &framebuf_image[..], 160, 144, image::ColorType::RGB(8)).unwrap();
 
