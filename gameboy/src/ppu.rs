@@ -202,7 +202,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
         }
     }
 
-    for _ in 0..4 {
+    for i in 0..4 {
         if state.pt_state.idle_cycles > 0 {
             state.pt_state.idle_cycles -= 1;
             continue;
@@ -212,7 +212,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             break;
         }
 
-        let stalled_on_obj = state.pt_state.pending_objs && state.pt_state.line_x >= state.pt_state.next_obj_x;
+        let stalled_on_obj = state.pt_state.pending_objs && state.pt_state.line_x == state.pt_state.next_obj_x;
 
         // We can only send pixels to the LCD if we actually have some, and if we're not stalled waiting for an OBJ to
         // be fetched.
@@ -246,6 +246,9 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 // Nope. One more pixel into the abyss.
                 state.pt_state.skip_pixels -= 1;
             } else {
+                if (state.ly == 48 || state.ly == 40 || state.ly == 39) && state.pt_state.line_x == 20 {
+                    println!("Pixel y={} {} ({:X}) at {},{}", state.ly, pixel, COLOR_MAPPING[pixel as usize], state.cycles, i);
+                }
                 if state.pt_state.line_x >= 8 {
                     state.framebuffers[state.pt_state.fb_pos] = COLOR_MAPPING[pixel as usize];
                     state.pt_state.fb_pos += 1;
@@ -257,19 +260,23 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
         // If we're stalled waiting for an OBJ fetch and the tile fetcher is up to pushing a tile, then we switch it
         // over to doing the OBJ fetch.
         if stalled_on_obj && state.pt_state.fetch_state.pushing() {
+            if state.ly == 48 || state.ly == 40 || state.ly == 39 {
+                println!("y={} Switching to obj from {:?} @ {},{}", state.ly, state.pt_state.fetch_state, state.cycles, i);
+            }
             state.pt_state.prev_fetch_state = state.pt_state.fetch_state;
-
             state.pt_state.obj_code = state.oam[state.pt_state.pending_obj].code as usize;
             state.pt_state.fetch_state = TileFetcherState::SleepObjFetchLo;
+        }
+
+        if stalled_on_obj && (state.ly == 48 || state.ly == 40 || state.ly == 39) {
+            println!("y={} stalled on obj x={} state={:?} @ {},{}", state.ly, state.pt_state.next_obj_x, state.pt_state.fetch_state, state.cycles, i);
         }
 
         // Now we run the fetcher state machine. This is the process that fetches tile data from VRAM and pushes
         // processed pixels into the FIFO.
         match state.pt_state.fetch_state {
             // Step 1. Figure out which tile we're rendering next by reading from window/BG tile map.
-            TileFetcherState::SleepRead => {
-                state.pt_state.fetch_state = TileFetcherState::Read;
-            }
+            TileFetcherState::SleepRead => { state.pt_state.fetch_state = TileFetcherState::Read; }
             TileFetcherState::Read => {
                 state.pt_state.tile_code = state.tilemap[if state.pt_state.in_win {
                     let map_y = ((state.scy as usize) + (state.ly as usize)) / 8 % 32 * 32;
@@ -282,9 +289,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             }
             // Step 2. We know which tile we're reading now. The row of pixels we need is in two bytes in tile data
             // section of VRAM. Read the first byte, which contains the LSBs of each pixel.
-            TileFetcherState::SleepFetchLo => {
-                state.pt_state.fetch_state = TileFetcherState::FetchLo;
-            }
+            TileFetcherState::SleepFetchLo => { state.pt_state.fetch_state = TileFetcherState::FetchLo; }
             TileFetcherState::FetchLo => {
                 let offset = (((state.scy as usize) + (state.ly as usize)) % 8) * 2;
                 state.pt_state.tile_lo = state.tiles[if state.tile_data_hi {
@@ -296,9 +301,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 state.pt_state.fetch_state = TileFetcherState::SleepFetchHi;
             }
             // Step 3. Follow up from step 2 above, now we read the high byte containing MSBs of each pixel.
-            TileFetcherState::SleepFetchHi => {
-                state.pt_state.fetch_state = TileFetcherState::FetchHi;
-            }
+            TileFetcherState::SleepFetchHi => { state.pt_state.fetch_state = TileFetcherState::FetchHi; }
             TileFetcherState::FetchHi => {
                 let offset = (((state.scy as usize) + (state.ly as usize)) % 8) * 2;
                 state.pt_state.tile_hi = state.tiles[if state.tile_data_hi {
@@ -312,11 +315,9 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             }
             // Step 4. We have the tile data we need, now we interleave the bits from both bytes and write the pixel
             // data into the FIFO.
-            TileFetcherState::SleepPush => {
-                state.pt_state.fetch_state = TileFetcherState::Push;
-            }
+            TileFetcherState::SleepPush => { state.pt_state.fetch_state = TileFetcherState::Push; }
             TileFetcherState::Push => {
-                if state.pt_state.bg_fifo.len == 0 {
+                if state.pt_state.bg_fifo.len <= 8 {
                     state.pt_state.bg_fifo.push_tile(state.pt_state.tile_hi, state.pt_state.tile_lo, false);
                     state.pt_state.tile_x = (state.pt_state.tile_x + 1) % 32;
                     state.pt_state.fetch_state = TileFetcherState::SleepRead;
@@ -324,18 +325,14 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             }
 
             // Step 1 of OBJ fetch. Similar to TileFetcherState::FetchLo, except for OBJ data.
-            TileFetcherState::SleepObjFetchLo => {
-                state.pt_state.fetch_state = TileFetcherState::ObjFetchLo;
-            }
+            TileFetcherState::SleepObjFetchLo => { state.pt_state.fetch_state = TileFetcherState::ObjFetchLo; }
             TileFetcherState::ObjFetchLo => {
                 let tile_y = state.oam[state.pt_state.pending_obj].tile_y(state.ly, state.obj_tall);
                 state.pt_state.obj_hi = state.tiles[state.pt_state.obj_code * 0x10 + (tile_y * 2) + 1];
                 state.pt_state.fetch_state = TileFetcherState::SleepObjFetchHi;
             }
-            // Step 1 of OBJ fetch. Similar to TileFetcherState::FetchHi, except for OBJ data.
-            TileFetcherState::SleepObjFetchHi => {
-                state.pt_state.fetch_state = TileFetcherState::ObjFetchHi;
-            }
+            // Step 2 of OBJ fetch. Similar to TileFetcherState::FetchHi, except for OBJ data.
+            TileFetcherState::SleepObjFetchHi => { state.pt_state.fetch_state = TileFetcherState::ObjFetchHi; }
             TileFetcherState::ObjFetchHi => {
                 // TODO: the tile_y logic is incomplete for tall OBJs, e.g when they're flipped.
                 let tile_y = state.oam[state.pt_state.pending_obj].tile_y(state.ly, state.obj_tall);
@@ -343,9 +340,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 state.pt_state.fetch_state = TileFetcherState::ObjPush;
             }
             // Last step of OBJ fetch. Blend the OBJ data into the OBJ pixel fifo.
-            TileFetcherState::SleepObjPush => {
-                state.pt_state.fetch_state = TileFetcherState::ObjPush;
-            }
+            TileFetcherState::SleepObjPush => { state.pt_state.fetch_state = TileFetcherState::ObjPush; }
             TileFetcherState::ObjPush => {
                 // Blend the data.
                 state.pt_state.obj_fifo.blend(state.pt_state.obj_hi, state.pt_state.obj_lo,
@@ -360,19 +355,16 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 }
 
                 // Resume where we left off in the main window/BG tile fetch process.
+                if state.ly == 48 || state.ly == 40 || state.ly == 39 {
+                    println!("y={} switching back to {:?} @ {},{} (fifo={})", state.ly, state.pt_state.prev_fetch_state, state.cycles, i, state.pt_state.bg_fifo.len);
+                }
                 state.pt_state.fetch_state = state.pt_state.prev_fetch_state;
             }
         }
 
-        if state.bgp.bus_conflict > 0 {
-            state.bgp.bus_conflict -= 1;
-        }
-        if state.obp0.bus_conflict > 0 {
-            state.obp0.bus_conflict -= 1;
-        }
-        if state.obp1.bus_conflict > 0 {
-            state.obp1.bus_conflict -= 1;
-        }
+        if state.bgp.bus_conflict  > 0 { state.bgp.bus_conflict  -= 1; }
+        if state.obp0.bus_conflict > 0 { state.obp0.bus_conflict -= 1; }
+        if state.obp1.bus_conflict > 0 { state.obp1.bus_conflict -= 1; }
     }
 
     if state.pt_state.line_x == 168 {
@@ -605,8 +597,8 @@ impl PixelFifo {
     /// Each pixel is translated through the provided Palette. The pixels can optionally be flipped horizontally, which
     /// is used by OBJs.
     fn push_tile(&mut self, mut hi: u8, mut lo: u8, flip: bool) {
-        if self.len > 0 {
-            panic!("push_tile on a FIFO with {} pixels", self.len);
+        if self.len > 8 {
+            // panic!("push_tile on a FIFO with {} pixels", self.len);
         }
 
         if !flip {
