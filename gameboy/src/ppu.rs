@@ -202,7 +202,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
         }
     }
 
-    for i in 0..4 {
+    for _ in 0..4 {
         if state.pt_state.idle_cycles > 0 {
             state.pt_state.idle_cycles -= 1;
             continue;
