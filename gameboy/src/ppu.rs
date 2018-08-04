@@ -96,12 +96,6 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
 
             // Is the next line off screen? If so, we've reached VBlank.
             if state.ly == 144 {
-                // Set the VBlank interrupt request.
-                interrupts.request(Interrupt::VBlank);
-                // And also set the STAT interrupt request if VBlank interrupts are enabled in there.
-                if state.interrupt_vblank {
-                    interrupts.request(Interrupt::Stat);
-                }
                 state.next_mode(VBlank);
             } else {
                 if state.interrupt_lyc && state.ly == state.lyc {
@@ -115,6 +109,13 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
         // A whole scanline is ordinarily 114 cycles, so this is essentially 1140 cycles of quiet
         // time in which the game can update OAM, prepare for the next frame, etc.
         VBlank => {
+            if state.cycles == 1 {
+                // VBlank and STAT interrupt (if VBlank STAT is requested) happen on the second cycle of VBlank.
+                interrupts.request(Interrupt::VBlank);
+                if state.interrupt_vblank {
+                    interrupts.request(Interrupt::Stat);
+                }
+            }
             // Every 114 cycles we advance LY.
             if state.cycles % 114 == 0 {
                 state.ly += 1;
@@ -233,7 +234,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
                 let (objpixel, objpal, objprio) = state.pt_state.obj_fifo.pop_pixel();
 
                 // OBJ pixel 0 is always transparent.
-                if objpixel > 0 {
+                if state.obj_enabled && objpixel > 0 {
                     // We only render this OBJ pixel if it has priority over the BG, or if the BG pixel was 0.
                     if !objprio || !bg_priority {
                         pixel = if objpal { state.obp1.entry(objpixel) } else { state.obp0.entry(objpixel) };
