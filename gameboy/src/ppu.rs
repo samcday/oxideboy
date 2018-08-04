@@ -16,6 +16,7 @@ const DEFAULT_PALETTE: Palette = Palette{entries: [0, 3, 3, 3], bus_conflict: 0,
 pub struct PPUState {
     pub enabled: bool,          // Master switch to turn LCD on/off.
     pub mode: Mode,
+    pub prev_mode: Mode,
     pub cycles: u16,            // Counts how many CPU cycles have elapsed in the current PPU stage.
 
     pub scy: u8,
@@ -62,6 +63,7 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
         return;
     }
 
+    state.prev_mode = state.mode.clone();
     state.cycles += 1;
     match state.mode {
         // The first stage of a scanline.
@@ -378,7 +380,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
 impl PPUState {
     pub fn new() -> PPUState {
         let mut state = PPUState {
-            enabled: false, mode: OAMSearch, cycles: 0,
+            enabled: false, mode: OAMSearch, prev_mode: OAMSearch, cycles: 0,
             scy: 0, scx: 0,
             ly: 0, lyc: 0,
             wx: 0, wy: 0,
@@ -416,21 +418,21 @@ impl PPUState {
     }
 
     pub fn oam_read(&self, addr: usize) -> u8 {
-        if self.mode == OAMSearch || self.mode == PixelTransfer {
+        if self.prev_mode == OAMSearch || self.prev_mode == PixelTransfer {
             return 0xFF; // Reading OAM memory during Mode2 & Mode3 is not permitted.
         }
         (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr]
     }
 
     pub fn oam_write(&mut self, addr: usize, v: u8) {
-        if self.mode == OAMSearch || self.mode == PixelTransfer {
+        if self.prev_mode == OAMSearch || self.prev_mode == PixelTransfer {
             return; // Writing OAM memory during Mode2 & Mode3 is not permitted.
         }
         (unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) })[addr] = v
     }
 
     pub fn vram_read(&self, addr: u16) -> u8 {
-        if self.mode == PixelTransfer {
+        if self.prev_mode == PixelTransfer {
             return 0xFF; // Reading VRAM during Mode3 is not permitted.
         }
 
@@ -442,7 +444,7 @@ impl PPUState {
     }
 
     pub fn vram_write(&mut self, addr: u16, v: u8) {
-        if self.mode == PixelTransfer {
+        if self.prev_mode == PixelTransfer {
             return; // Writing VRAM during Mode3 is not permitted.
         }
 
@@ -498,7 +500,7 @@ impl PPUState {
     // Compute value of the STAT register.
     pub fn reg_stat_read(&self) -> u8 {
         0b1000_0000 // Unused bits
-            | match self.mode {
+            | match self.prev_mode {
                 HBlank(_)             => 0b0000_0000,
                 VBlank                => 0b0000_0001,
                 OAMSearch             => 0b0000_0010,
@@ -519,7 +521,7 @@ impl PPUState {
     }
 
     pub fn dma_ok(&self) -> bool {
-        match self.mode {
+        match self.prev_mode {
             HBlank(_) | VBlank => true,
             _ => false,
         }
