@@ -64,6 +64,7 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
     }
 
     state.prev_mode = state.mode.clone();
+
     state.cycles += 1;
     match state.mode {
         // The first stage of a scanline.
@@ -85,13 +86,6 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
         // HBlank stage is a variable number of cycles pause between drawing a line and moving on to the next line. The
         // amount of cycles varies depending on the amount of work that was done during Pixel Transfer. The more OBJs in
         // the scanline, the less time we pause here.
-        HBlank(n) if state.cycles == n - 2 => {
-            // OAM STAT interrupts are one cycle early, except on the first line (but that interrupt is handled during
-            // VBlank state, see below).
-            if state.interrupt_oam {
-                interrupts.request(Interrupt::Stat);
-            }
-        }
         HBlank(n) if state.cycles == n => {
             // Alright, time to move on to the next line.
             state.ly += 1;
@@ -122,9 +116,9 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
             if state.cycles % 114 == 0 {
                 state.ly += 1;
             }
-            if state.cycles == 1139 && state.interrupt_oam {
-                interrupts.request(Interrupt::Stat);
-            }
+            // if state.cycles == 1139 && state.interrupt_oam {
+            //     interrupts.request(Interrupt::Stat);
+            // }
             if state.cycles == 1140 {
                 state.ly = 0;
 
@@ -136,6 +130,11 @@ pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
             }
         }
         _ => {}
+    }
+
+    // TODO: line 0 OAM interrupt happens at a different time.
+    if state.cycles == 0 && state.mode == OAMSearch && state.interrupt_oam {
+        interrupts.request(Interrupt::Stat);
     }
 
     state.bgp.bus_conflict = 0;
@@ -195,8 +194,8 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
         // scrolling is achieved.
         state.pt_state.skip_pixels = state.scx % 8;
 
-        // Stall the PPU for 4 cycles before any actual work starts.
-        state.pt_state.idle_cycles = 4;
+        // Stall the PPU for 5 cycles before any actual work starts.
+        state.pt_state.idle_cycles = 1;
 
         if !state.scanline_objs.is_empty() {
             state.pt_state.pending_objs = true;
@@ -310,7 +309,7 @@ fn pixel_transfer(state: &mut PPUState, interrupts: &mut InterruptState) {
             // data into the FIFO.
             TileFetcherState::SleepPush => { state.pt_state.fetch_state = TileFetcherState::Push; }
             TileFetcherState::Push => {
-                if state.pt_state.bg_fifo.len <= 8 {
+                if state.pt_state.bg_fifo.len == 0 {
                     state.pt_state.bg_fifo.push_tile(state.pt_state.tile_hi, state.pt_state.tile_lo, false);
                     state.pt_state.tile_x = (state.pt_state.tile_x + 1) % 32;
                     state.pt_state.fetch_state = TileFetcherState::SleepRead;
