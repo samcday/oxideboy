@@ -25,7 +25,6 @@
 ;   pass: DMG, MGB, SGB, SGB2, CGB, AGB, AGS
 ;   fail: -
 
-.incdir "../common"
 .include "common.s"
 
   di
@@ -53,6 +52,8 @@
   set 1, (HL)
 
   enable_lcd
+  wait_vblank
+  wait_vblank
   halt_execution
 
 data:
