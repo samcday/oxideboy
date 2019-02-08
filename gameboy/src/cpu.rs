@@ -427,7 +427,7 @@ pub fn run(ctx: &mut GameboyContext) {
     ::interrupt::process(ctx);
 
     if ctx.state.cpu.pc == 0x48 {
-        println!("LCDC line={}: PPU is mode {:?} cycle {}", ctx.state.ppu.ly, ctx.state.ppu.mode, ctx.state.ppu.cycles);
+        // println!("LCDC line={}: PPU is mode {:?} cycle {}", ctx.state.ppu.ly, ctx.state.ppu.mode, ctx.state.ppu.cycles);
     }
 
     // Apply deferred change to IME.

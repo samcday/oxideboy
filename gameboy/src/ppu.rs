@@ -57,7 +57,6 @@ pub struct PPUState {
 
 // Advances PPU by a single clock cycle. Basically, all the video magic happens in here.
 // Before you read this code, go and watch this video: https://www.youtube.com/watch?v=HyzD8pNlpwI&t=29m12s
-// Any interrupt codes we return here (STAT / VBlank) are ORd with the main CPU IF register.
 pub fn clock(state: &mut PPUState, interrupts: &mut InterruptState) {
     if !state.enabled {
         return;
