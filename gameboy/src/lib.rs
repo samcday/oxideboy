@@ -431,9 +431,6 @@ impl GameboyContext {
     /// Runs the CPU for a whole video frame. A video frame is exactly 17556 CPU cycles.
     /// This higher level abstraction over the CPU is useful for running the emulator at the correct speed.
     /// Instead of trying to execute the CPU at 1Mhz, you can execute this method at 59.7Hz.
-    /// Because we emulate at the instruction level, sometimes the last instruction we execute in this loop
-    /// may take us over the 17556 cycle threshold. We return a delta number of cycles that should be fed in to the
-    /// next call to ensure we don't run too fast.
     pub fn run_frame(&mut self) {
         self.state.apu.sample_queue.clear();
 
