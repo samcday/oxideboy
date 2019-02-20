@@ -1,0 +1,11 @@
+[[package]]
+name = "dev-frontend"
+version = "0.1.0"
+dependencies = [
+ "gameboy 0.1.0",
+]
+
+[[package]]
+name = "gameboy"
+version = "0.1.0"
+
