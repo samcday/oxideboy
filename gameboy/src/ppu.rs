@@ -268,12 +268,12 @@ impl Ppu {
         }
 
         self.win_code_area_hi = v & 0b0100_0000 > 0;
-        self.win_enabled      =    v & 0b0010_0000 > 0;
-        self.bg_tile_area_lo  =    v & 0b0001_0000 > 0;
-        self.bg_code_area_hi  =    v & 0b0000_1000 > 0;
-        self.obj_tall_mode    =    v & 0b0000_0100 > 0;
-        self.obj_enabled      =    v & 0b0000_0010 > 0;
-        self.bg_enabled       =    v & 0b0000_0001 > 0;
+        self.win_enabled      = v & 0b0010_0000 > 0;
+        self.bg_tile_area_lo  = v & 0b0001_0000 > 0;
+        self.bg_code_area_hi  = v & 0b0000_1000 > 0;
+        self.obj_tall_mode    = v & 0b0000_0100 > 0;
+        self.obj_enabled      = v & 0b0000_0010 > 0;
+        self.bg_enabled       = v & 0b0000_0001 > 0;
     }
 
     // Read from the 0xFF41 STAT register.

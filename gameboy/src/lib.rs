@@ -82,6 +82,14 @@ pub struct Joypad {
     pub start: bool,
 }
 
+/// There are different models of the Gameboy that each behave slightly differently (different HW quirks, etc).
+/// When creating a Gameboy emulation context, the desired Model must be chosen.
+#[derive(Eq, PartialEq)]
+pub enum Model {
+    DMG0,
+    DMG,
+}
+
 impl Joypad {
     fn reg_p1_read(&self) -> u8 {
         let mut v = 0xCF;
@@ -107,14 +115,6 @@ impl Joypad {
         self.btn = v & 0x20 == 0;
         self.dir = v & 0x10 == 0;
     }
-}
-
-/// There are different models of the Gameboy that each behave slightly differently (different HW quirks, etc).
-/// When creating a Gameboy emulation context, the desired Model must be chosen.
-#[derive(Eq, PartialEq)]
-pub enum Model {
-    DMG0,
-    DMG,
 }
 
 impl Gameboy {

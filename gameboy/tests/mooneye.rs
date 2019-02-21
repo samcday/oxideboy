@@ -32,6 +32,8 @@ fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
 #[test] fn mooneye_acceptance_bits_reg_f() { run_mooneye_test(include_bytes!("mooneye/acceptance/bits/reg_f.gb"), Model::DMG, false); }
 #[test] fn mooneye_acceptance_bits_unused_hwio_gs() { run_mooneye_test(include_bytes!("mooneye/acceptance/bits/unused_hwio-GS.gb"), Model::DMG, false); }
 
+#[test] fn mooneye_acceptance_instr_daa() { run_mooneye_test(include_bytes!("mooneye/acceptance/instr/daa.gb"), Model::DMG, false); }
+
 #[test] fn mooneye_acceptance_interrupts_ie_push() { run_mooneye_test(include_bytes!("mooneye/acceptance/interrupts/ie_push.gb"), Model::DMG, false); }
 
 #[test] fn mooneye_acceptance_oam_dma_basic() { run_mooneye_test(include_bytes!("mooneye/acceptance/oam_dma/basic.gb"), Model::DMG, false); }
