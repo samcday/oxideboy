@@ -157,6 +157,7 @@ impl Hardware for Gameboy {
             0x8000 ... 0x9FFF => self.ppu.vram_read(addr - 0x8000),
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
+            0xFE00 ... 0xFE9F => self.ppu.oam_read((addr - 0xFE00) as usize),
             0xFF00            => self.joypad.reg_p1_read(),
             0xFF01            => self.serial.reg_sb_read(),
 
@@ -167,8 +168,31 @@ impl Hardware for Gameboy {
 
             0xFF0F            => 0xE0 | self.interrupts.request, // Unused IF bits are always 1
 
-            // TODO: APU
-            0xFF10 ... 0xFF26 => 0x00,
+            0xFF10            => self.apu.reg_nr10_read(),
+            0xFF11            => self.apu.reg_nr11_read(),
+            0xFF12            => self.apu.reg_nr12_read(),
+            0xFF13            => self.apu.reg_nr13_read(),
+            0xFF14            => self.apu.reg_nr14_read(),
+            0xFF15            => { 0xFF } // Unused address that the blargg dmg_sound tests erroneously read from
+            0xFF16            => self.apu.reg_nr21_read(),
+            0xFF17            => self.apu.reg_nr22_read(),
+            0xFF18            => self.apu.reg_nr23_read(),
+            0xFF19            => self.apu.reg_nr24_read(),
+            0xFF1A            => self.apu.reg_nr30_read(),
+            0xFF1B            => self.apu.reg_nr31_read(),
+            0xFF1C            => self.apu.reg_nr32_read(),
+            0xFF1D            => self.apu.reg_nr33_read(),
+            0xFF1E            => self.apu.reg_nr34_read(),
+            0xFF1F            => { 0xFF } // Unused address that the blargg dmg_sound tests erroneously read from
+            0xFF20            => self.apu.reg_nr41_read(),
+            0xFF21            => self.apu.reg_nr42_read(),
+            0xFF22            => self.apu.reg_nr43_read(),
+            0xFF23            => self.apu.reg_nr44_read(),
+            0xFF24            => self.apu.reg_nr50_read(),
+            0xFF25            => self.apu.reg_nr51_read(),
+            0xFF26            => self.apu.reg_nr52_read(),
+            0xFF27 ... 0xFF2F => { 0xFF } // Unused addresses that the blargg dmg_sound tests erroneously read from
+            0xFF30 ... 0xFF3F => self.apu.wave_read(addr - 0xFF30),
 
             0xFF40            => self.ppu.reg_lcdc_read(),
             0xFF42            => self.ppu.scy,
@@ -196,6 +220,7 @@ impl Hardware for Gameboy {
             0xA000 ... 0xBFFF => { self.cart.write(addr, v); }
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v },
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v },
+            0xFE00 ... 0xFE9F => { self.ppu.oam_write((addr - 0xFE00) as usize, v) }
             0xFF00            => { self.joypad.reg_p1_write(v) }
             0xFF01            => { self.serial.reg_sb_write(v) },
             0xFF02            => { self.serial.reg_sc_write(v) },
@@ -207,8 +232,31 @@ impl Hardware for Gameboy {
 
             0xFF0F            => { self.interrupts.reg_if_write(v & 0x1F) }
 
-            // TODO: APU
-            0xFF10 ... 0xFF26 => { },
+            0xFF10            => { self.apu.reg_nr10_write(v) }
+            0xFF11            => { self.apu.reg_nr11_write(v) }
+            0xFF12            => { self.apu.reg_nr12_write(v) }
+            0xFF13            => { self.apu.reg_nr13_write(v) }
+            0xFF14            => { self.apu.reg_nr14_write(v) }
+            0xFF15            => { } // Unused address that the blargg dmg_sound tests erroneously write to.
+            0xFF16            => { self.apu.reg_nr21_write(v) }
+            0xFF17            => { self.apu.reg_nr22_write(v) }
+            0xFF18            => { self.apu.reg_nr23_write(v) }
+            0xFF19            => { self.apu.reg_nr24_write(v) }
+            0xFF1A            => { self.apu.reg_nr30_write(v) }
+            0xFF1B            => { self.apu.reg_nr31_write(v) }
+            0xFF1C            => { self.apu.reg_nr32_write(v) }
+            0xFF1D            => { self.apu.reg_nr33_write(v) }
+            0xFF1E            => { self.apu.reg_nr34_write(v) }
+            0xFF1F            => { } // Unused address that the blargg dmg_sound tests erroneously write to.
+            0xFF20            => { self.apu.reg_nr41_write(v) }
+            0xFF21            => { self.apu.reg_nr42_write(v) }
+            0xFF22            => { self.apu.reg_nr43_write(v) }
+            0xFF23            => { self.apu.reg_nr44_write(v) }
+            0xFF24            => { self.apu.reg_nr50_write(v) }
+            0xFF25            => { self.apu.reg_nr51_write(v) }
+            0xFF26            => { self.apu.reg_nr52_write(v) }
+            0xFF27 ... 0xFF2F => { } // Unused addresses that the blargg dmg_sound tests erroneously write to.
+            0xFF30 ... 0xFF3F => { self.apu.wave_write(addr - 0xFF30, v) }
 
             0xFF40            => { self.ppu.reg_lcdc_write(v) }
             0xFF42            => { self.ppu.scy = v }

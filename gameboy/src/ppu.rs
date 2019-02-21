@@ -1,6 +1,9 @@
+use std::slice;
+
 const DEFAULT_PALETTE: Palette = Palette{entries: [0, 3, 3, 3], bus_conflict: 0, old_entries: [0; 4]};
 
 pub struct Ppu {
+    oam: Vec<OAMEntry>,     // 0xFE00 - 0xFDFF
 
     enabled: bool,          // 0xFF40 LCDC register bit 7
     win_code_area_hi: bool, // 0xFF40 LCDC register bit 6
@@ -25,12 +28,40 @@ pub struct Ppu {
     // Temporary.
     cycle_counter: u8,
 }
+/// The OAMEntry struct is packed in C representation (no padding) so that we can efficiently access it as a
+/// contiguous byte array when performing DMA copies and OAM memory reads/writes from the CPU.
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct OAMEntry {
+    y: u8,
+    x: u8,
+    code: u8,
+    attrs: u8,
+}
 
 #[derive(Copy, Clone, Debug)]
 pub struct Palette {
     entries: [u8; 4],
     bus_conflict: u8,
     old_entries: [u8; 4],
+}
+
+impl OAMEntry {
+    fn priority(&self)  -> bool { self.attrs & 0x80 > 0 }
+    fn vert_flip(&self) -> bool { self.attrs & 0x40 > 0 }
+    fn horz_flip(&self) -> bool { self.attrs & 0x20 > 0 }
+    fn palette(&self)   -> bool { self.attrs & 0x10 > 0 }
+
+    // Calculate the y position in the OBJ tile that should be rendered given the current scanline Y position.
+    fn tile_y(&self, ly: u8, obj_tall: bool) -> usize {
+        let base_y = (ly + 16) - self.y;
+        (if self.vert_flip() {
+            let h = if obj_tall { 16 } else { 8 };
+            h - base_y
+        } else {
+            base_y
+        }) as usize
+    }
 }
 
 impl Palette {
@@ -68,6 +99,8 @@ impl Palette {
 impl Ppu {
     pub fn new() -> Ppu {
         Ppu {
+            oam: vec![Default::default(); 40],
+
             enabled: false,
             win_code_area_hi: false,
             win_enabled: false,
@@ -104,6 +137,22 @@ impl Ppu {
 
             self.cycle_counter = 0;
         }
+    }
+
+    pub fn oam_read(&self, addr: usize) -> u8 {
+        // TODO:
+        // if self.prev_mode == OAMSearch || self.prev_mode == PixelTransfer {
+        //     return 0xFF; // Reading OAM memory during Mode2 & Mode3 is not permitted.
+        // }
+        (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr]
+    }
+
+    pub fn oam_write(&mut self, addr: usize, v: u8) {
+        // TODO:
+        // if self.prev_mode == OAMSearch || self.prev_mode == PixelTransfer {
+        //     return; // Writing OAM memory during Mode2 & Mode3 is not permitted.
+        // }
+        (unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) })[addr] = v
     }
 
     pub fn vram_read(&self, addr: u16) -> u8 {
