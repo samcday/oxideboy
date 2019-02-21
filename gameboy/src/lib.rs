@@ -9,6 +9,7 @@
 pub mod apu;
 pub mod cartridge;
 pub mod cpu;
+pub mod dma;
 pub mod interrupt;
 pub mod ppu;
 pub mod serial;
@@ -16,6 +17,7 @@ pub mod timer;
 
 use apu::Apu;
 use cartridge::Cartridge;
+use dma::DmaController;
 use interrupt::{Interrupt, InterruptController};
 use ppu::Ppu;
 use serial::Serial;
@@ -29,13 +31,14 @@ pub struct Gameboy {
     pub model: Model,
     pub cart: Cartridge,
     pub apu: Apu,
+    pub dma: DmaController,
     pub interrupts: InterruptController,
     pub joypad: Joypad,
     pub ppu: Ppu,
     pub serial: Serial,
     pub timer: Timer,
-    pub ram:  [u8; 0x2000],
-    pub hram: [u8; 0x7F],
+    pub ram:  [u8; 0x2000],         // 0xC000 - 0xDFFF (and echoed in 0xE000 - 0xFDFF)
+    pub hram: [u8; 0x7F],           // 0xFF80 - 0xFFFE
 
     rom: Vec<u8>,
     bootrom_enabled: bool,
@@ -63,7 +66,6 @@ pub trait Hardware {
     fn next_interrupt(&self) -> Option<Interrupt>;
     fn clear_interrupt(&mut self, int: Interrupt);
 }
-
 
 #[derive(Default)]
 pub struct Joypad {
@@ -124,6 +126,7 @@ impl Gameboy {
             cart,
             rom,
             apu: Apu::new(),
+            dma: Default::default(),
             interrupts: InterruptController::new(),
             joypad: Default::default(),
             ppu: Ppu::new(),
@@ -161,6 +164,7 @@ impl Hardware for Gameboy {
             0xFE00 ... 0xFE9F => self.ppu.oam_read((addr - 0xFE00) as usize),
             0xFF00            => self.joypad.reg_p1_read(),
             0xFF01            => self.serial.reg_sb_read(),
+            0xFF02            => self.serial.reg_sc_read(),
 
             0xFF04            => (self.timer.div >> 8) as u8,
             0xFF05            => self.timer.tima,
@@ -200,9 +204,12 @@ impl Hardware for Gameboy {
             0xFF43            => self.ppu.scx,
             0xFF44            => self.ppu.ly,
 
+            0xFF46            => self.dma.reg,
             0xFF47            => self.ppu.bgp.pack(),
             0xFF48            => self.ppu.obp0.pack(),
             0xFF49            => self.ppu.obp1.pack(),
+            0xFF4A            => self.ppu.wy as u8,
+            0xFF4B            => self.ppu.wx as u8,
 
             0xFF80 ... 0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF            => self.interrupts.enable,
@@ -262,9 +269,12 @@ impl Hardware for Gameboy {
             0xFF40            => { self.ppu.reg_lcdc_write(v) }
             0xFF42            => { self.ppu.scy = v }
             0xFF43            => { self.ppu.scx = v }
+            0xFF46            => { self.dma.start(v) }
             0xFF47            => { self.ppu.bgp.update(v) }
             0xFF48            => { self.ppu.obp0.update(v) }
             0xFF49            => { self.ppu.obp1.update(v) }
+            0xFF4A            => { self.ppu.wy = v },
+            0xFF4B            => { self.ppu.wx = v },
 
             0xFF50 if self.bootrom_enabled && v == 1 => {
                 self.bootrom_enabled = false;
@@ -281,7 +291,11 @@ impl Hardware for Gameboy {
         if self.timer.clock() {
             self.interrupts.request(Interrupt::Timer);
         }
-        // self.dma.clock();
+        let (dma_active, dma_src, dma_dst) = self.dma.clock();
+        if dma_active {
+            let v = self.mem_read8(dma_src);
+            self.ppu.oam_write(dma_dst, v);
+        }
         self.serial.clock();
         self.ppu.clock();
         self.apu.clock();

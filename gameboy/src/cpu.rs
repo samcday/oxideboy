@@ -19,10 +19,10 @@ use self::Register16::{*};
 /// when we fetch a NOP instruction and execute it, we also run all the other hardware components for a single cycle.
 pub struct Cpu<HW: Hardware> {
     // CPU registers
-    a: u8, f: Flags,
-    b: u8, c: u8,
-    h: u8, l: u8,
-    d: u8, e: u8,
+    pub a: u8, pub f: Flags,
+    pub b: u8, pub c: u8,
+    pub h: u8, pub l: u8,
+    pub d: u8, pub e: u8,
     sp: u16,
     pub pc: u16,
 
@@ -30,7 +30,7 @@ pub struct Cpu<HW: Hardware> {
     ime_defer: bool,        // Enabling interrupts is delayed by a cycle, we track that here.
     halted: bool,
 
-    mooneye_breakpoint: bool,
+    pub mooneye_breakpoint: bool,
 
     pub hw: HW,
 }
@@ -154,6 +154,12 @@ impl <HW: Hardware> Cpu<HW> {
         self.h = 0x84;
         self.l = 0x03;
         self.hw.skip_bootrom();
+    }
+
+    pub fn core_panic(&self, msg: String) -> ! {
+        panic!(
+            "{}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}",
+            msg, self.a, self.b, self.c, self.d, self.e, self.f.pack(), self.h, self.l, self.sp, self.pc);
     }
 
     /// Main entrypoint into the Cpu implementation. Fetches the next instruction, then decodes and executes it.

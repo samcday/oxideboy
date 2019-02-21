@@ -21,6 +21,8 @@ pub struct Ppu {
     pub bgp: Palette,       // 0xFF47 BGP register
     pub obp0: Palette,      // 0xFF48 OBP0 register
     pub obp1: Palette,      // 0xFF49 OBP1 register
+    pub wy: u8,             // 0xFF4A WY register
+    pub wx: u8,             // 0xFF4B WX register
 
     tiles: Vec<u8>,         // 0x8000 - 0x97FF
     tilemap: Vec<u8>,       // 0x9800 - 0x9FFF
@@ -116,6 +118,8 @@ impl Ppu {
             bgp: DEFAULT_PALETTE,
             obp0: DEFAULT_PALETTE,
             obp1: DEFAULT_PALETTE,
+            wy: 0,
+            wx: 0,
 
             tiles: vec![0; 0x1800],
             tilemap: vec![0; 0x800],
