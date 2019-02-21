@@ -145,23 +145,21 @@ impl Gameboy {
             Model::DMG  => DMG_BOOTROM[addr as usize],
         }
     }
-}
 
-impl Hardware for Gameboy {
-    fn mem_read8(&mut self, addr: u16) -> u8 {
-        // Reading from the memory bus takes a full CPU cycle.
-        self.clock();
-
+    /// Handles reads from the memory bus. This method is responsible for resolving memory addresses to the correct
+    /// memory segments and registers. Generally though, mem_read8 should be used since it ensures components are
+    /// clocked correctly and reads are prevented during situations like active DMA transfers.
+    fn mem_get8(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000 ... 0x0100 if self.bootrom_enabled => self.bootrom_read(addr),
             0x0000 ... 0x3FFF => self.cart.rom_lo(&self.rom)[addr as usize],
             0x4000 ... 0x7FFF => self.cart.rom_hi(&self.rom)[(addr - 0x4000) as usize],
-            0xA000 ... 0xBFFF => self.cart.ram()[(addr - 0xA000) as usize],
-
             0x8000 ... 0x9FFF => self.ppu.vram_read(addr - 0x8000),
+            0xA000 ... 0xBFFF => self.cart.ram()[(addr - 0xA000) as usize],
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
             0xFE00 ... 0xFE9F => self.ppu.oam_read((addr - 0xFE00) as usize),
+            0xFEA0 ... 0xFEFF => 0x00, // Undocumented space that some ROMs seem to address...
             0xFF00            => self.joypad.reg_p1_read(),
             0xFF01            => self.serial.reg_sb_read(),
             0xFF02            => self.serial.reg_sc_read(),
@@ -218,10 +216,10 @@ impl Hardware for Gameboy {
         }
     }
 
-    fn mem_write8(&mut self, addr: u16, v: u8) {
-        // Writing to the memory bus takes a full CPU cycle.
-        self.clock();
-
+    /// Handles writes to the memory bus. This method is responsible for resolving memory addresses to the correct
+    /// memory segments and registers. Generally though, mem_write8 should be used since it ensures components are
+    /// clocked correctly and writes are prevented during situations like active DMA transfers.
+    fn mem_set8(&mut self, addr: u16, v: u8) {
         match addr {
             0x0000 ... 0x7FFF => { self.cart.write(addr, v); }
             0x8000 ... 0x9FFF => { self.ppu.vram_write(addr - 0x8000, v) }
@@ -229,6 +227,7 @@ impl Hardware for Gameboy {
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v },
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v },
             0xFE00 ... 0xFE9F => { self.ppu.oam_write((addr - 0xFE00) as usize, v) }
+            0xFEA0 ... 0xFEFF => { } // Undocumented space that some ROMs seem to address...
             0xFF00            => { self.joypad.reg_p1_write(v) }
             0xFF01            => { self.serial.reg_sb_write(v) },
             0xFF02            => { self.serial.reg_sc_write(v) },
@@ -286,6 +285,33 @@ impl Hardware for Gameboy {
             _ => panic!("Unhandled memory write to 0x{:X}", addr),
         }
     }
+}
+
+impl Hardware for Gameboy {
+    fn mem_read8(&mut self, addr: u16) -> u8 {
+        // While DMA transfer is in progress, reads to the OAM area will see 0xFF.
+        if self.dma.active && (addr >= 0xFE00 && addr <= 0xFE9F) {
+            self.clock();
+            return 0xFF;
+        }
+
+        // Reading from the memory bus takes a full CPU cycle.
+        self.clock();
+
+        self.mem_get8(addr)
+    }
+
+    fn mem_write8(&mut self, addr: u16, v: u8) {
+        // Writing to the memory bus takes a full CPU cycle.
+        self.clock();
+
+        // While DMA transfer is in progress, write to the OAM area will be ignored.
+        if self.dma.active && (addr >= 0xFE00 && addr <= 0xFE9F) {
+            return;
+        }
+
+        self.mem_set8(addr, v)
+    }
 
     fn clock(&mut self) {
         if self.timer.clock() {
@@ -293,7 +319,7 @@ impl Hardware for Gameboy {
         }
         let (dma_active, dma_src, dma_dst) = self.dma.clock();
         if dma_active {
-            let v = self.mem_read8(dma_src);
+            let v = self.mem_get8(dma_src);
             self.ppu.oam_write(dma_dst, v);
         }
         self.serial.clock();
@@ -310,10 +336,10 @@ impl Hardware for Gameboy {
         // Ensure PPU has correct state (enabled, BG enabled, etc)
         self.ppu.reg_lcdc_write(0x91);
         // PPU should be in the middle of a VBlank.
-        // TODO:
-        // self.ppu.mode = ppu::Mode::VBlank;
-        // self.ppu.ly = 145;
-        // self.ppu.cycles = 144;
+        self.ppu.mode = ppu::Mode::Mode1;
+        self.ppu.ly = 145;
+        self.ppu.cycle_counter = 144;
+
         // Setup Nintendo logo in tilemap.
         let mut addr = 0x1904;
         for v in 1..=12 {
@@ -334,7 +360,7 @@ impl Hardware for Gameboy {
         let mut vram_addr = 0x10;
         let mut src_addr = 0x104;
         for _ in 0..48 {
-            let b = self.mem_read8(src_addr);
+            let b = self.mem_get8(src_addr);
             src_addr += 1;
             // Double up each bit in the source byte, using sorcery.
             // The best kind of sorcery too: copy/pasted from the interwebz.
@@ -349,7 +375,7 @@ impl Hardware for Gameboy {
         if self.model == Model::DMG {
             let mut src_addr = 0xD8;
             for _ in 0..8 {
-                let v = self.mem_read8(src_addr);
+                let v = self.mem_get8(src_addr);
                 self.ppu.vram_write(vram_addr, v);
                 src_addr += 1;
                 vram_addr += 2;

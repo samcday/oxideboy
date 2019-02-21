@@ -28,8 +28,19 @@ pub struct Ppu {
     tilemap: Vec<u8>,       // 0x9800 - 0x9FFF
 
     // Temporary.
-    cycle_counter: u8,
+    prev_mode: Mode,
+    pub mode: Mode,
+    pub cycle_counter: u32,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Mode {
+    Mode0,      // HBlank (51 or fewer cycles, depending on how long previous Mode3 took)
+    Mode1,      // VBlank (1140 cycles)
+    Mode2,      // OAM table scan (20 cycles)
+    Mode3,      // Pixel transfer (43+ cycles, depending on sprites)
+}
+
 /// The OAMEntry struct is packed in C representation (no padding) so that we can efficiently access it as a
 /// contiguous byte array when performing DMA copies and OAM memory reads/writes from the CPU.
 #[derive(Clone, Copy, Debug, Default)]
@@ -124,46 +135,79 @@ impl Ppu {
             tiles: vec![0; 0x1800],
             tilemap: vec![0; 0x800],
 
+            prev_mode: Mode::Mode0,
+            mode: Mode::Mode0,
             cycle_counter: 0,
         }
     }
 
     /// Advances the PPU by a single CPU clock step.
     pub fn clock(&mut self) {
+        if !self.enabled {
+            return;
+        }
+
+        // println!("Okay. Mode={:?} LY={} cycle={}", self.mode, self.ly, self.cycle_counter);
+        self.prev_mode = self.mode;
         self.cycle_counter += 1;
 
-        if self.cycle_counter == 114 {
-            self.ly += 1;
+        match self.mode {
+            Mode::Mode0 => {
+                if self.cycle_counter == 51 {
+                    self.ly += 1;
+                    self.cycle_counter = 0;
 
-            if self.ly == 154 {
-                self.ly = 0;
+                    if self.ly < 144 {
+                        self.mode = Mode::Mode2;
+                    } else {
+                        self.mode = Mode::Mode1;
+                    }
+                }
             }
-
-            self.cycle_counter = 0;
+            Mode::Mode1 => {
+                if self.cycle_counter % 114 == 0 {
+                    self.ly += 1;
+                }
+                if self.cycle_counter == 1140 {
+                    self.cycle_counter = 0;
+                    self.ly = 0;
+                    self.mode = Mode::Mode2;
+                }
+            }
+            Mode::Mode2 => {
+                if self.cycle_counter == 20 {
+                    self.cycle_counter = 0;
+                    self.mode = Mode::Mode3;
+                }
+            }
+            Mode::Mode3 => {
+                if self.cycle_counter == 43 {
+                    self.cycle_counter = 0;
+                    self.mode = Mode::Mode0;
+                }
+            }
         }
     }
 
     pub fn oam_read(&self, addr: usize) -> u8 {
-        // TODO:
-        // if self.prev_mode == OAMSearch || self.prev_mode == PixelTransfer {
-        //     return 0xFF; // Reading OAM memory during Mode2 & Mode3 is not permitted.
-        // }
+        if self.enabled && self.prev_mode == Mode::Mode2 || self.prev_mode == Mode::Mode3 {
+            return 0xFF; // Reading OAM memory during Mode2 & Mode3 is not permitted.
+        }
         (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr]
     }
 
     pub fn oam_write(&mut self, addr: usize, v: u8) {
-        // TODO:
-        // if self.prev_mode == OAMSearch || self.prev_mode == PixelTransfer {
-        //     return; // Writing OAM memory during Mode2 & Mode3 is not permitted.
-        // }
+        if self.enabled && self.prev_mode == Mode::Mode2 || self.prev_mode == Mode::Mode3 {
+            println!("ah-ha!");
+            return; // Writing OAM memory during Mode2 & Mode3 is not permitted.
+        }
         (unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) })[addr] = v
     }
 
     pub fn vram_read(&self, addr: u16) -> u8 {
-        // TODO: block VRAM reads during Mode3
-        // if self.prev_mode == PixelTransfer {
-        //     return 0xFF; // Reading VRAM during Mode3 is not permitted.
-        // }
+        if self.enabled && self.prev_mode == Mode::Mode3 {
+            return 0xFF; // Reading VRAM during Mode3 is not permitted.
+        }
 
         if addr < 0x1800 {
             self.tiles[addr as usize]
@@ -173,10 +217,9 @@ impl Ppu {
     }
 
     pub fn vram_write(&mut self, addr: u16, v: u8) {
-        // TODO: block VRAM writes during Mode3
-        // if self.prev_mode == PixelTransfer {
-        //     return; // Writing VRAM during Mode3 is not permitted.
-        // }
+        if self.enabled && self.prev_mode == Mode::Mode3 {
+            return; // Writing VRAM during Mode3 is not permitted.
+        }
 
         if addr < 0x1800 {
             self.tiles[addr as usize] = v;
@@ -205,7 +248,11 @@ impl Ppu {
         // Are we enabling LCD from a previously disabled state?
         if enabled && !self.enabled {
             self.enabled = true;
+            self.mode = Mode::Mode2;
             self.ly = 0;
+        } else if !enabled && self.enabled {
+            // TODO: check if we're inside a VBlank.
+            self.enabled = false;
         }
 
         self.win_code_area_hi = v & 0b0100_0000 > 0;

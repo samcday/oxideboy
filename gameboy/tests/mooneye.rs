@@ -79,9 +79,9 @@ fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
 // #[test] fn mooneye_acceptance_jp_cc_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/jp_cc_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_jp_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/jp_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_ld_hl_sp_e_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ld_hl_sp_e_timing.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_oam_dma_restart() { run_mooneye_test(include_bytes!("mooneye/acceptance/oam_dma_restart.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_oam_dma_restart() { run_mooneye_test(include_bytes!("mooneye/acceptance/oam_dma_restart.gb"), Model::DMG, false); }
 #[test] fn mooneye_acceptance_oam_dma_start() { run_mooneye_test(include_bytes!("mooneye/acceptance/oam_dma_start.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_oam_dma_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/oam_dma_timing.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_oam_dma_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/oam_dma_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_pop_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/pop_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_push_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/push_timing.gb"), Model::DMG, false); }
 #[test] fn mooneye_acceptance_rapid_di_ei() { run_mooneye_test(include_bytes!("mooneye/acceptance/rapid_di_ei.gb"), Model::DMG, false); }
