@@ -51,16 +51,13 @@ pub struct Ppu {
     mode3: Mode3State,
     pub cycles: u32,        // Counts how many CPU cycles have elapsed in the current PPU stage.
 
-    framebuffer: Vec<u32>,
-
-    // Temporary.
-    pub mode3_overhead: u8,
+    scanline_objs: Vec<(usize, usize)>,
+    pub framebuffer: Vec<u32>,
 }
 
 /// Mode 3 (Pixel transfer) is rather complicated. We keep track of it all here.
 #[derive(Default)]
 struct Mode3State {
-    scanline_objs: Vec<(usize, usize)>,
     fetch_state: TileFetcherState,
     prev_fetch_state: TileFetcherState,
     bg_fifo: PixelFifo,
@@ -312,13 +309,12 @@ impl Ppu {
             mode: Mode::Mode0(51),
             prev_mode: Mode::Mode0(51),
             mode3: Mode3State{
-                scanline_objs: Vec::new(),
                 ..Default::default()
             },
+            scanline_objs: Vec::new(),
             framebuffer: vec![0; SCREEN_SIZE],
 
             cycles: 0,
-            mode3_overhead: 0,
         }
     }
 
@@ -338,7 +334,6 @@ impl Ppu {
         match self.mode {
             Mode::Mode0(hblank_cycles) => { // HBlank
                 if self.cycles == hblank_cycles {
-                    self.mode3_overhead = 0;
                     self.ly += 1;
                     if self.interrupt_lyc && self.lyc == self.ly {
                         stat_int = true;
@@ -389,12 +384,6 @@ impl Ppu {
                 if self.cycles == 20 {
                     self.cycles = 0;
                     self.mode = Mode::Mode3;
-                    if self.scx % 8 > 0 {
-                        self.mode3_overhead += 1;
-                    }
-                    if self.scx % 8 > 4 {
-                        self.mode3_overhead += 1;
-                    }
                 }
             }
             Mode::Mode3 => { // Pixel transfer
@@ -407,18 +396,18 @@ impl Ppu {
 
     // Searches through the OAM table to find any OBJs that overlap the line we're currently drawing.
     pub fn oam_search(&mut self) {
-        self.mode3.scanline_objs.clear();
+        self.scanline_objs.clear();
 
         let h = if self.obj_tall_mode { 16 } else { 8 };
         let ly_bound = self.ly + (h + 8);
 
         for (idx, obj) in self.oam.iter().enumerate() {
             if ly_bound >= obj.y && ly_bound < obj.y + h && obj.x < 168 {
-                self.mode3.scanline_objs.push((idx, obj.x as usize));
+                self.scanline_objs.push((idx, obj.x as usize));
             }
 
             // Each scanline can display a maximum of 10 OBJs.
-            if self.mode3.scanline_objs.len() == 10 {
+            if self.scanline_objs.len() == 10 {
                 break;
             }
         }
@@ -429,8 +418,8 @@ impl Ppu {
         // pixel transfer, so this makes things more efficient.
         // Also, in the name of effiency, the list is ordered with the lowest x co-ord coming last.
         // This way, once we've drawn an OBJ, we just pop it off the Vec (which simply decrements len).
-        self.mode3.scanline_objs.sort_unstable_by(|(a_idx, a_x), (b_idx, b_x)| a_x.cmp(b_x).then(a_idx.cmp(b_idx)));
-        self.mode3.scanline_objs.reverse();
+        self.scanline_objs.sort_unstable_by(|(a_idx, a_x), (b_idx, b_x)| a_x.cmp(b_x).then(a_idx.cmp(b_idx)));
+        self.scanline_objs.reverse();
     }
 
     /// The second stage of the scanline. Takes 43+ cycles.
@@ -444,7 +433,7 @@ impl Ppu {
             // We're just starting a new Mode 3, reset all the state data.
             self.mode3 = Default::default();
 
-            self.mode3.fb_pos = 0;
+            self.mode3.fb_pos = self.ly as usize * 160;
 
             // Figure out the starting BG tile we'll be displaying. This is precomputed so even if SCX changed mid-scanline,
             // the BG tile position does not change.
@@ -460,9 +449,9 @@ impl Ppu {
             // Stall the PPU for 5 cycles before any actual work starts.
             self.mode3.idle_cycles = 1;
 
-            if !self.mode3.scanline_objs.is_empty() {
+            if !self.scanline_objs.is_empty() {
                 self.mode3.pending_objs = true;
-                self.mode3.pending_obj = self.mode3.scanline_objs[self.mode3.scanline_objs.len() - 1].0;
+                self.mode3.pending_obj = self.scanline_objs[self.scanline_objs.len() - 1].0;
                 self.mode3.next_obj_x = self.oam[self.mode3.pending_obj].x as usize;
             }
         }
@@ -599,7 +588,7 @@ impl Ppu {
                 TileFetcherState::ObjPush => {
                     // Blend the data.
                     self.mode3.obj_fifo.blend(self.mode3.obj_hi, self.mode3.obj_lo,
-                                                  &self.oam[self.mode3.scanline_objs[self.mode3.scanline_objs.len() - 1].0]);
+                                                  &self.oam[self.scanline_objs[self.scanline_objs.len() - 1].0]);
 
                     // XXX: Awful hack. The m3_bgp_change_sprites reveals that our PPU implementation isn't quite cycle
                     // accurate - we end up pushing some pixels 1 cycle too early, but only if there's a sprite on two
@@ -610,10 +599,10 @@ impl Ppu {
                     }
 
                     // We're done with this OBJ, remove it from the pending list.
-                    self.mode3.scanline_objs.pop();
-                    self.mode3.pending_objs = !self.mode3.scanline_objs.is_empty();
+                    self.scanline_objs.pop();
+                    self.mode3.pending_objs = !self.scanline_objs.is_empty();
                     if self.mode3.pending_objs {
-                        self.mode3.pending_obj = self.mode3.scanline_objs[self.mode3.scanline_objs.len() - 1].0;
+                        self.mode3.pending_obj = self.scanline_objs[self.scanline_objs.len() - 1].0;
                         self.mode3.next_obj_x = self.oam[self.mode3.pending_obj].x as usize;
                     }
 
