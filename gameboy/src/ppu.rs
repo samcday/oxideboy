@@ -159,7 +159,6 @@ impl Ppu {
             return;
         }
 
-        // println!("Okay. Mode={:?} LY={} cycle={}", self.mode, self.ly, self.cycle_counter);
         self.prev_mode = self.mode;
         self.cycle_counter += 1;
 
@@ -210,7 +209,6 @@ impl Ppu {
 
     pub fn oam_write(&mut self, addr: usize, v: u8) {
         if self.enabled && self.prev_mode == Mode::Mode2 || self.prev_mode == Mode::Mode3 {
-            println!("ah-ha!");
             return; // Writing OAM memory during Mode2 & Mode3 is not permitted.
         }
         (unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) })[addr] = v

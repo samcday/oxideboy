@@ -298,27 +298,28 @@ impl Gameboy {
 impl Hardware for Gameboy {
     fn mem_read8(&mut self, addr: u16) -> u8 {
         // While DMA transfer is in progress, reads to the OAM area will see 0xFF.
-        if self.dma.active && (addr >= 0xFE00 && addr <= 0xFE9F) {
-            self.clock();
-            return 0xFF;
-        }
+        let block_read = self.dma.active && (addr >= 0xFE00 && addr <= 0xFE9F);
 
         // Reading from the memory bus takes a full CPU cycle.
         self.clock();
 
-        self.mem_get8(addr)
+        if block_read {
+            0xFF
+        } else {
+            self.mem_get8(addr)
+        }
     }
 
     fn mem_write8(&mut self, addr: u16, v: u8) {
+        // While DMA transfer is in progress, write to the OAM area will be ignored.
+        let block_write = self.dma.active && (addr >= 0xFE00 && addr <= 0xFE9F);
+
         // Writing to the memory bus takes a full CPU cycle.
         self.clock();
 
-        // While DMA transfer is in progress, write to the OAM area will be ignored.
-        if self.dma.active && (addr >= 0xFE00 && addr <= 0xFE9F) {
-            return;
+        if !block_write {
+            self.mem_set8(addr, v)
         }
-
-        self.mem_set8(addr, v)
     }
 
     fn clock(&mut self) {
@@ -328,7 +329,6 @@ impl Hardware for Gameboy {
         let (dma_active, dma_src, dma_dst) = self.dma.clock();
         if dma_active {
             let v = self.mem_get8(dma_src);
-            println!("DMA active. Copying {:X} from {:X} to {:X}", v, dma_src, dma_dst);
             self.ppu.oam_write(dma_dst, v);
         }
         self.serial.clock();
