@@ -6,6 +6,35 @@ use crate::{Hardware};
 use self::Register8::{*};
 use self::Register16::{*};
 
+/// The heart of a Gameboy. A modified Z80 processor with 7 8-bit registers, and a flag register. The main emulation
+/// loop consists of running the Gameboy CPU fetch-decode-execute cycle over and over. The Gameboy CPU normally runs at
+/// 4.194304Mhz. The Color Gameboy can run the CPU twice as fast. It should be noted that this speed is the raw 
+/// "machine clock" speed. In most places in the codebase we instead deal with a different speed: the machine clock
+/// speed divided by 4: 1.048576Mhz. This is because all instructions take some multiple of 4 machine clock pulses (or
+/// T-cycles as they're often referred to as). So for example, if we were to just run NOP CPU instructions over and over
+/// we'd be executing 1,048,576 of them per second, not 4,194,304.
+/// The real Gameboy CPU is connected to a master crystal, which is oscillating at the 4.194304Mhz speed. Alongside the
+/// CPU the PPU and APU are also connected to that same crystal and running in lockstep with the CPU. The way we choose
+/// to emulate is by having each instruction cycle (4 machine cycles) pump the other hardware components. So for example
+/// when we fetch a NOP instruction and execute it, we also run all the other hardware components for a single cycle.
+pub struct Cpu<HW: Hardware> {
+    // CPU registers
+    a: u8, f: Flags,
+    b: u8, c: u8,
+    h: u8, l: u8,
+    d: u8, e: u8,
+    sp: u16,
+    pub pc: u16,
+
+    ime: bool,              // The IME register, master switch for turning all interrupts on/off.
+    ime_defer: bool,        // Enabling interrupts is delayed by a cycle, we track that here.
+    halted: bool,
+
+    mooneye_breakpoint: bool,
+
+    pub hw: HW,
+}
+
 /// CPU flags contained in the "F" register:
 /// Z: Zero flag, N: subtract flag, H: half carry flag, C: carry flag
 #[derive(Default)]
@@ -58,24 +87,6 @@ enum Operand16 {
     Register(Register16),   // Contents of a 16-bit register.
     Immediate(u16),         // Immediate value.
     ImmediateAddress(u16),  // Immediate 16-bit value interpreted as memory address.
-}
-
-pub struct Cpu<HW: Hardware> {
-    // CPU registers
-    a: u8, f: Flags,
-    b: u8, c: u8,
-    h: u8, l: u8,
-    d: u8, e: u8,
-    sp: u16,
-    pc: u16,
-
-    ime: bool,              // The IME register, master switch for turning all interrupts on/off.
-    ime_defer: bool,        // Enabling interrupts is delayed by a cycle, we track that here.
-    halted: bool,
-
-    mooneye_breakpoint: bool,
-
-    pub hw: HW,
 }
 
 impl Flags {
@@ -135,6 +146,20 @@ impl <HW: Hardware> Cpu<HW> {
 
     /// Main entrypoint into the Cpu implementation. Fetches the next instruction, then decodes and executes it.
     pub fn fetch_decode_execute(&mut self) {
+        self.process_interrupts();
+
+        // Apply deferred change to IME register.
+        if self.ime_defer {
+            self.ime = true;
+            self.ime_defer = false;
+        }
+
+        // If CPU is currently halted, we trigger a clock cycle to ensure other components get to run, then we exit.
+        if self.halted {
+            self.hw.clock();
+            return;
+        }
+
         match self.fetch8() {
             0x00 /* NOP         */ => {},
             0x01 /* LD BC,d16   */ => { let v = self.fetch16(); self.ld16(Operand16::Register(BC), Operand16::Immediate(v), false); },
@@ -649,6 +674,57 @@ impl <HW: Hardware> Cpu<HW> {
             0xFF /* SET 7,A    */ => self.setbit(7, Operand8::Register(A), true),
             _ => unreachable!("All u8 values handled"),
         }
+    }
+
+    /// Process any pending interrupts. Called before the CPU fetches the next instruction to execute.
+    fn process_interrupts(&mut self) {
+        let next_interrupt = self.hw.next_interrupt();
+        // We can bail quickly if there's no interrupts to process.
+        if next_interrupt.is_none() {
+            return;
+        }
+
+        // If there are interrupts to process, we clear HALT state, even if IME is disabled.
+        self.halted = false;
+
+        if !self.ime {
+            // If IME isn't enabled though, we don't actually process any interrupts.
+            return;
+        }
+
+        // Interrupt handling needs 3 internal cycles to do interrupt-y stuff.
+        self.hw.clock();
+        self.hw.clock();
+        self.hw.clock();
+
+        // Here's an interesting quirk. If the stack pointer was set to 0000 or 0001, then the push we just did
+        // above would have overwritten IE. If the new IE value no longer matches the interrupt we were processing,
+        // then we cancel that interrupt and set PC to 0. We then try and find another interrupt.
+        // If there isn't one, we end up running code from 0000. Crazy.
+        let pc = self.pc;
+        let mut sp = self.sp;
+        sp = sp.wrapping_sub(1);
+        self.hw.mem_write8(sp, ((pc & 0xFF00) >> 8) as u8);
+        // This is where we capture what IE is after pushing the upper byte. Pushing the lower byte might
+        // also overwrite IE, but in that case we ignore that occurring.
+        let still_pending = self.hw.next_interrupt();
+        sp = sp.wrapping_sub(1);
+        self.hw.mem_write8(sp, pc as u8);
+        self.sp = self.sp.wrapping_sub(2);
+
+        if next_interrupt != still_pending {
+            self.pc = 0;
+            // Okay so this interrupt didn't go so good. Let's see if there's another one.
+            self.process_interrupts();
+            // Regardless of what happens in the next try, IME needs to be disabled.
+            self.ime = false;
+            return;
+        }
+
+        let intr = next_interrupt.unwrap();
+        self.pc = intr.handler_addr();
+        self.hw.clear_interrupt(intr);
+        self.ime = false;
     }
 
     /// Fetches next byte from PC location, and bumps PC.

@@ -27,6 +27,7 @@ impl Serial {
         }
     }
 
+    /// Advances the serial port by a single CPU clock step.
     pub fn clock(&mut self) {
         // Were we provided some data from the remote end?
         if self.serial_in.is_some() {
@@ -63,7 +64,7 @@ impl Serial {
     }
 
     pub fn reg_sc_read(&self) -> u8 {
-        0 |
+        0b0111_1100 |  // Unused bits are set to 1
         (if self.internal_clock { 0b0000_0001 } else { 0 }) |
         (if self.transfer_fast  { 0b0000_0010 } else { 0 }) |
         (if self.transfer_start { 0b1000_0000 } else { 0 })
