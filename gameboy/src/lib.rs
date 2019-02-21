@@ -30,6 +30,7 @@ pub struct Gameboy {
     pub cart: Cartridge,
     pub apu: Apu,
     pub interrupts: InterruptController,
+    pub joypad: Joypad,
     pub ppu: Ppu,
     pub serial: Serial,
     pub timer: Timer,
@@ -38,14 +39,6 @@ pub struct Gameboy {
 
     rom: Vec<u8>,
     bootrom_enabled: bool,
-}
-
-/// There are different models of the Gameboy that each behave slightly differently (different HW quirks, etc).
-/// When creating a Gameboy emulation context, the desired Model must be chosen.
-#[derive(Eq, PartialEq)]
-pub enum Model {
-    DMG0,
-    DMG,
 }
 
 /// The CPU for the Gameboy/Gameboy Color is more or less the same. The only things that differ are how fast it runs and
@@ -70,6 +63,57 @@ pub trait Hardware {
     fn clear_interrupt(&mut self, int: Interrupt);
 }
 
+
+#[derive(Default)]
+pub struct Joypad {
+    btn: bool,
+    dir: bool,
+
+    pub up: bool,
+    pub down: bool,
+    pub left: bool,
+    pub right: bool,
+    pub a: bool,
+    pub b: bool,
+    pub select: bool,
+    pub start: bool,
+}
+
+impl Joypad {
+    fn reg_p1_read(&self) -> u8 {
+        let mut v = 0xCF;
+
+        if self.btn {
+            v ^= 0x20;
+            if self.a      { v ^= 1 }
+            if self.b      { v ^= 2 }
+            if self.select { v ^= 4 }
+            if self.start  { v ^= 8 }
+        } else if self.dir {
+            v ^= 0x10;
+            if self.right  { v ^= 1 }
+            if self.left   { v ^= 2 }
+            if self.up     { v ^= 4 }
+            if self.down   { v ^= 8 }
+        }
+
+        v
+    }
+
+    fn reg_p1_write(&mut self, v: u8) {
+        self.btn = v & 0x20 == 0;
+        self.dir = v & 0x10 == 0;
+    }
+}
+
+/// There are different models of the Gameboy that each behave slightly differently (different HW quirks, etc).
+/// When creating a Gameboy emulation context, the desired Model must be chosen.
+#[derive(Eq, PartialEq)]
+pub enum Model {
+    DMG0,
+    DMG,
+}
+
 impl Gameboy {
     pub fn new(model: Model, rom: Vec<u8>) -> Gameboy {
         let cart = Cartridge::from_rom(&rom);
@@ -80,6 +124,7 @@ impl Gameboy {
             rom,
             apu: Apu::new(),
             interrupts: InterruptController::new(),
+            joypad: Default::default(),
             ppu: Ppu::new(),
             serial: Serial::new(),
             timer: Timer::new(),
@@ -112,6 +157,7 @@ impl Hardware for Gameboy {
             0x8000 ... 0x9FFF => self.ppu.vram_read(addr - 0x8000),
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
+            0xFF00            => self.joypad.reg_p1_read(),
             0xFF01            => self.serial.reg_sb_read(),
 
             0xFF04            => (self.timer.div >> 8) as u8,
@@ -150,6 +196,7 @@ impl Hardware for Gameboy {
             0xA000 ... 0xBFFF => { self.cart.write(addr, v); }
             0xC000 ... 0xDFFF => { self.ram[(addr - 0xC000) as usize] = v },
             0xE000 ... 0xFDFF => { self.ram[(addr - 0xE000) as usize] = v },
+            0xFF00            => { self.joypad.reg_p1_write(v) }
             0xFF01            => { self.serial.reg_sb_write(v) },
             0xFF02            => { self.serial.reg_sc_write(v) },
 

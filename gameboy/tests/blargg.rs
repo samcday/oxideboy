@@ -41,3 +41,5 @@ fn run_blargg_serial_test(rom: &[u8]) {
 #[test] fn blargg_cpu_instrs_09() { run_blargg_serial_test(include_bytes!("blargg/cpu_instrs/09-op r,r.gb")); }
 #[test] fn blargg_cpu_instrs_10() { run_blargg_serial_test(include_bytes!("blargg/cpu_instrs/10-bit ops.gb")); }
 #[test] fn blargg_cpu_instrs_11() { run_blargg_serial_test(include_bytes!("blargg/cpu_instrs/11-op a,(hl).gb")); }
+#[test] fn blargg_instr_timing()  { run_blargg_serial_test(include_bytes!("blargg/instr_timing.gb")); }
+#[test] fn blargg_mem_timing()    { run_blargg_serial_test(include_bytes!("blargg/mem_timing.gb")); }
