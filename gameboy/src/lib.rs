@@ -159,16 +159,16 @@ impl Gameboy {
             0xC000 ... 0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000 ... 0xFDFF => self.ram[(addr - 0xE000) as usize],
             0xFE00 ... 0xFE9F => self.ppu.oam_read((addr - 0xFE00) as usize),
-            0xFEA0 ... 0xFEFF => 0x00, // Undocumented space that some ROMs seem to address...
+            0xFEA0 ... 0xFEFF => 0xFF, // Undocumented space that some ROMs seem to address...
             0xFF00            => self.joypad.reg_p1_read(),
             0xFF01            => self.serial.reg_sb_read(),
             0xFF02            => self.serial.reg_sc_read(),
-
+            0xFF03            => 0xFF,
             0xFF04            => (self.timer.div >> 8) as u8,
             0xFF05            => self.timer.tima,
             0xFF06            => self.timer.tma,
             0xFF07            => self.timer.reg_tac_read(),
-
+            0xFF08 ... 0xFF0E => 0xFF,
             0xFF0F            => 0xE0 | self.interrupts.request, // Unused IF bits are always 1
 
             0xFF10            => self.apu.reg_nr10_read(),
@@ -176,7 +176,7 @@ impl Gameboy {
             0xFF12            => self.apu.reg_nr12_read(),
             0xFF13            => self.apu.reg_nr13_read(),
             0xFF14            => self.apu.reg_nr14_read(),
-            0xFF15            => { 0xFF } // Unused address that the blargg dmg_sound tests erroneously read from
+            0xFF15            => 0xFF, // Unused address that the blargg dmg_sound tests erroneously read from
             0xFF16            => self.apu.reg_nr21_read(),
             0xFF17            => self.apu.reg_nr22_read(),
             0xFF18            => self.apu.reg_nr23_read(),
@@ -186,7 +186,7 @@ impl Gameboy {
             0xFF1C            => self.apu.reg_nr32_read(),
             0xFF1D            => self.apu.reg_nr33_read(),
             0xFF1E            => self.apu.reg_nr34_read(),
-            0xFF1F            => { 0xFF } // Unused address that the blargg dmg_sound tests erroneously read from
+            0xFF1F            => 0xFF, // Unused address that the blargg dmg_sound tests erroneously read from
             0xFF20            => self.apu.reg_nr41_read(),
             0xFF21            => self.apu.reg_nr42_read(),
             0xFF22            => self.apu.reg_nr43_read(),
@@ -194,20 +194,22 @@ impl Gameboy {
             0xFF24            => self.apu.reg_nr50_read(),
             0xFF25            => self.apu.reg_nr51_read(),
             0xFF26            => self.apu.reg_nr52_read(),
-            0xFF27 ... 0xFF2F => { 0xFF } // Unused addresses that the blargg dmg_sound tests erroneously read from
+            0xFF27 ... 0xFF2F => 0xFF, // Unused addresses that the blargg dmg_sound tests erroneously read from
             0xFF30 ... 0xFF3F => self.apu.wave_read(addr - 0xFF30),
 
             0xFF40            => self.ppu.reg_lcdc_read(),
+            0xFF41            => self.ppu.reg_stat_read(),
             0xFF42            => self.ppu.scy,
             0xFF43            => self.ppu.scx,
             0xFF44            => self.ppu.ly,
-
+            0xFF45            => self.ppu.lyc,
             0xFF46            => self.dma.reg,
             0xFF47            => self.ppu.bgp.pack(),
             0xFF48            => self.ppu.obp0.pack(),
             0xFF49            => self.ppu.obp1.pack(),
             0xFF4A            => self.ppu.wy as u8,
             0xFF4B            => self.ppu.wx as u8,
+            0xFF4C ... 0xFF7F => 0xFF, // Unused
 
             0xFF80 ... 0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF            => self.interrupts.enable,
@@ -231,12 +233,12 @@ impl Gameboy {
             0xFF00            => { self.joypad.reg_p1_write(v) }
             0xFF01            => { self.serial.reg_sb_write(v) },
             0xFF02            => { self.serial.reg_sc_write(v) },
-
+            0xFF03            => { } // Unused
             0xFF04            => { self.timer.reg_div_write() }
             0xFF05            => { self.timer.reg_tima_write(v) }
             0xFF06            => { self.timer.reg_tma_write(v) }
             0xFF07            => { if self.timer.reg_tac_write(v & 0x7) { self.interrupts.request(Interrupt::Timer) } }
-
+            0xFF08 ... 0xFF0E => { } // Unused
             0xFF0F            => { self.interrupts.reg_if_write(v & 0x1F) }
 
             0xFF10            => { self.apu.reg_nr10_write(v) }
@@ -266,18 +268,24 @@ impl Gameboy {
             0xFF30 ... 0xFF3F => { self.apu.wave_write(addr - 0xFF30, v) }
 
             0xFF40            => { self.ppu.reg_lcdc_write(v) }
+            0xFF41            => { self.ppu.reg_stat_write(v) }
             0xFF42            => { self.ppu.scy = v }
             0xFF43            => { self.ppu.scx = v }
+            0xFF44            => { }                   // LY is readonly.
+            0xFF45            => { self.ppu.lyc = v }
             0xFF46            => { self.dma.start(v) }
             0xFF47            => { self.ppu.bgp.update(v) }
             0xFF48            => { self.ppu.obp0.update(v) }
             0xFF49            => { self.ppu.obp1.update(v) }
             0xFF4A            => { self.ppu.wy = v },
             0xFF4B            => { self.ppu.wx = v },
-
-            0xFF50 if self.bootrom_enabled && v == 1 => {
-                self.bootrom_enabled = false;
+            0xFF4C ... 0xFF4F => { } // Unused
+            0xFF50            => {
+                if v == 1 {
+                    self.bootrom_enabled = false;
+                }
             }
+            0xFF51 ... 0xFF7F => { } // Unused
 
             0xFF80 ... 0xFFFE => { self.hram[(addr - 0xFF80) as usize] = v }
             0xFFFF            => { self.interrupts.reg_ie_write(v) }
@@ -320,6 +328,7 @@ impl Hardware for Gameboy {
         let (dma_active, dma_src, dma_dst) = self.dma.clock();
         if dma_active {
             let v = self.mem_get8(dma_src);
+            println!("DMA active. Copying {:X} from {:X} to {:X}", v, dma_src, dma_dst);
             self.ppu.oam_write(dma_dst, v);
         }
         self.serial.clock();

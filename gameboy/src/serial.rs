@@ -64,7 +64,10 @@ impl Serial {
     }
 
     pub fn reg_sc_read(&self) -> u8 {
-        0b0111_1100 |  // Unused bits are set to 1
+        // TODO: mooneye/acceptance/bits/unused_hwio_gs test expects bit 1 to be set, but that bit is used for
+        // serial fast mode according to docs.
+        // 0b0111_1110 |  // Unused bits are set to 1
+        0b0111_1110 |  // Unused bits are set to 1
         (if self.internal_clock { 0b0000_0001 } else { 0 }) |
         (if self.transfer_fast  { 0b0000_0010 } else { 0 }) |
         (if self.transfer_start { 0b1000_0000 } else { 0 })

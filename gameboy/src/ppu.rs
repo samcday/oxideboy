@@ -14,9 +14,15 @@ pub struct Ppu {
     obj_enabled: bool,      // 0xFF40 LCDC register bit 1
     bg_enabled: bool,       // 0xFF40 LCDC register bit 0
 
+    interrupt_lyc: bool,    // 0xFF41 STAT register bit 6
+    interrupt_oam: bool,    // 0xFF41 STAT register bit 5
+    interrupt_vblank: bool, // 0xFF41 STAT register bit 4
+    interrupt_hblank: bool, // 0xFF41 STAT register bit 3
+
     pub scy: u8,            // 0xFF42 SCY register
     pub scx: u8,            // 0xFF43 SCX register
     pub ly: u8,             // 0xFF44 LY register
+    pub lyc: u8,            // 0xFF45 LYC register
 
     pub bgp: Palette,       // 0xFF47 BGP register
     pub obp0: Palette,      // 0xFF48 OBP0 register
@@ -123,9 +129,15 @@ impl Ppu {
             obj_enabled: false,
             bg_enabled: false,
 
+            interrupt_lyc: false,
+            interrupt_oam: false,
+            interrupt_vblank: false,
+            interrupt_hblank: false,
+
             scy: 0,
             scx: 0,
             ly: 0,
+            lyc: 0,
             bgp: DEFAULT_PALETTE,
             obp0: DEFAULT_PALETTE,
             obp1: DEFAULT_PALETTE,
@@ -262,5 +274,28 @@ impl Ppu {
         self.obj_tall_mode    =    v & 0b0000_0100 > 0;
         self.obj_enabled      =    v & 0b0000_0010 > 0;
         self.bg_enabled       =    v & 0b0000_0001 > 0;
+    }
+
+    // Read from the 0xFF41 STAT register.
+    pub fn reg_stat_read(&self) -> u8 {
+        0b1000_0000 // Unused bits
+            | match self.prev_mode {
+                Mode::Mode0 => 0b0000_0000,
+                Mode::Mode1 => 0b0000_0001,
+                Mode::Mode2 => 0b0000_0010,
+                Mode::Mode3 => 0b0000_0011 }
+            | if self.ly == self.lyc   { 0b0000_0100 } else { 0 }
+            | if self.interrupt_hblank { 0b0000_1000 } else { 0 }
+            | if self.interrupt_vblank { 0b0001_0000 } else { 0 }
+            | if self.interrupt_oam    { 0b0010_0000 } else { 0 }
+            | if self.interrupt_lyc    { 0b0100_0000 } else { 0 }
+    }
+
+    // Write to the 0xFF41 STAT register.
+    pub fn reg_stat_write(&mut self, v: u8) {
+        self.interrupt_hblank = v & 0b0000_1000 > 0;
+        self.interrupt_vblank = v & 0b0001_0000 > 0;
+        self.interrupt_oam    = v & 0b0010_0000 > 0;
+        self.interrupt_lyc    = v & 0b0100_0000 > 0;
     }
 }
