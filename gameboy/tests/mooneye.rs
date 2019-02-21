@@ -62,6 +62,7 @@ fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
 #[test] fn mooneye_acceptance_timer_tma_write_reloading() { run_mooneye_test(include_bytes!("mooneye/acceptance/timer/tma_write_reloading.gb"), Model::DMG, false); }
 
 #[test] fn mooneye_acceptance_add_sp_e_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/add_sp_e_timing.gb"), Model::DMG, false); }
+// #[test] fn mooneye_acceptance_boot_div_dmg0() { run_mooneye_test(include_bytes!("mooneye/acceptance/boot_div-dmg0.gb"), Model::DMG0, false); }
 #[test] fn mooneye_acceptance_boot_hwio_dmg0() { run_mooneye_test(include_bytes!("mooneye/acceptance/boot_hwio-dmg0.gb"), Model::DMG0, false); }
 // #[test] fn mooneye_acceptance_boot_hwio_dmg0_realbootrom() { run_mooneye_test(include_bytes!("mooneye/acceptance/boot_hwio-dmg0.gb"), Model::DMG0, true); }
 #[test] fn mooneye_acceptance_boot_regs_dmg0() { run_mooneye_test(include_bytes!("mooneye/acceptance/boot_regs-dmg0.gb"), Model::DMG0, false); }
