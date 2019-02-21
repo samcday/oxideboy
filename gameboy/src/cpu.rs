@@ -144,6 +144,18 @@ impl <HW: Hardware> Cpu<HW> {
         }
     }
 
+    pub fn skip_bootrom(&mut self) {
+        self.pc = 0x100;
+        self.sp = 0xFFFE;
+        self.a = 0x01;
+        self.b = 0xFF;
+        self.c = 0x13;
+        self.e = 0xC1;
+        self.h = 0x84;
+        self.l = 0x03;
+        self.hw.skip_bootrom();
+    }
+
     /// Main entrypoint into the Cpu implementation. Fetches the next instruction, then decodes and executes it.
     pub fn fetch_decode_execute(&mut self) {
         self.process_interrupts();

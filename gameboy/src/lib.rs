@@ -59,6 +59,7 @@ pub trait Hardware {
         self.mem_write8(addr, (v & 0xFF) as u8);
     }
 
+    fn skip_bootrom(&mut self);
     fn next_interrupt(&self) -> Option<Interrupt>;
     fn clear_interrupt(&mut self, int: Interrupt);
 }
@@ -284,6 +285,77 @@ impl Hardware for Gameboy {
         self.serial.clock();
         self.ppu.clock();
         self.apu.clock();
+    }
+
+    /// Skips emulating the bootrom (scrolling Nintendo logo) and just ensures all internal state looks like it ran.
+    /// Don't call this directly - instead call Cpu#skip_bootrom
+    fn skip_bootrom(&mut self) {
+        self.timer.div = 0x1800;
+        self.interrupts.request = 0x1;
+
+        // Ensure PPU has correct state (enabled, BG enabled, etc)
+        self.ppu.reg_lcdc_write(0x91);
+        // PPU should be in the middle of a VBlank.
+        // TODO:
+        // self.ppu.mode = ppu::Mode::VBlank;
+        // self.ppu.ly = 145;
+        // self.ppu.cycles = 144;
+        // Setup Nintendo logo in tilemap.
+        let mut addr = 0x1904;
+        for v in 1..=12 {
+            self.ppu.vram_write(addr, v);
+            addr += 1;
+        }
+
+        if self.model == Model::DMG {
+            self.ppu.vram_write(addr, 0x19);
+        }
+
+        addr = 0x1924;
+        for v in 13..=24 {
+            self.ppu.vram_write(addr, v);
+            addr += 1;
+        }
+        // Copy Nintendo logo data from cart.
+        let mut vram_addr = 0x10;
+        let mut src_addr = 0x104;
+        for _ in 0..48 {
+            let b = self.mem_read8(src_addr);
+            src_addr += 1;
+            // Double up each bit in the source byte, using sorcery.
+            // The best kind of sorcery too: copy/pasted from the interwebz.
+            let z = (((b as u64).wrapping_mul(0x0101010101010101) & 0x8040201008040201).wrapping_mul(0x0102040810204081) >> 49) & 0x5555 |
+                    (((b as u64).wrapping_mul(0x0101010101010101) & 0x8040201008040201).wrapping_mul(0x0102040810204081) >> 48) & 0xAAAAu64;
+            self.ppu.vram_write(vram_addr, (z >> 8) as u8); vram_addr += 2;
+            self.ppu.vram_write(vram_addr, (z >> 8) as u8); vram_addr += 2;
+            self.ppu.vram_write(vram_addr, z as u8); vram_addr += 2;
+            self.ppu.vram_write(vram_addr, z as u8); vram_addr += 2;
+        }
+
+        if self.model == Model::DMG {
+            let mut src_addr = 0xD8;
+            for _ in 0..8 {
+                let v = self.mem_read8(src_addr);
+                self.ppu.vram_write(vram_addr, v);
+                src_addr += 1;
+                vram_addr += 2;
+            }
+        }
+
+        // After bootrom is finished, sound1 is still enabled but muted.
+        self.apu.chan1.vol_env = apu::VolumeEnvelope{
+            default: 0b1111,
+            inc: false,
+            steps: 0b011,
+            val: 0,
+            timer: 0,
+        };
+        self.apu.chan1.on = true;
+        self.apu.reg_nr11_write(0b1000_0000);
+        self.apu.reg_nr50_write(0x77);
+        self.apu.reg_nr51_write(0xF3);
+
+        self.bootrom_enabled = false;
     }
 
     fn next_interrupt(&self) -> Option<Interrupt> {

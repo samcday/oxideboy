@@ -7,7 +7,7 @@ fn run_blargg_serial_test(rom: &[u8]) {
     let mut serial_output = String::new();
     let hw = gameboy::Gameboy::new(Model::DMG, rom.to_vec());
     let mut cpu = gameboy::cpu::Cpu::new(hw);
-    // gameboy.skip_bootrom();
+    cpu.skip_bootrom();
 
     let start = Instant::now();
     loop {
@@ -32,13 +32,13 @@ fn run_blargg_serial_test(rom: &[u8]) {
 
 fn run_blargg_harness_test(rom: &[u8]) {
     let mut hw = gameboy::Gameboy::new(Model::DMG, rom.to_vec());
-    // gameboy.skip_bootrom();
 
     // The test runner writes the magic value to RAM before specifying that tests are in progress.
     // Which is kinda dumb. Anyway, we force that value now so we know when tests are *actually* done.
     hw.cart.ram[0] = 0x80;
 
     let mut cpu = gameboy::cpu::Cpu::new(hw);
+    cpu.skip_bootrom();
 
     loop {
         cpu.fetch_decode_execute();
@@ -60,7 +60,6 @@ fn run_blargg_harness_test(rom: &[u8]) {
         }
     }
 }
-
 
 #[test] fn blargg_cpu_instrs_01() { run_blargg_serial_test(include_bytes!("blargg/cpu_instrs/01-special.gb")); }
 #[test] fn blargg_cpu_instrs_02() { run_blargg_serial_test(include_bytes!("blargg/cpu_instrs/02-interrupts.gb")); }
