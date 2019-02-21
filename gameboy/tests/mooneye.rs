@@ -46,7 +46,7 @@ fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
 // #[test] fn mooneye_acceptance_ppu_intr_2_mode0_timing_sprites() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_2_mode0_timing_sprites.gb"), Model::DMG, false); }
 #[test] fn mooneye_acceptance_ppu_intr_2_mode3_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_2_mode3_timing.gb"), Model::DMG, false); }
 #[test] fn mooneye_acceptance_ppu_intr_2_oam_ok_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_2_oam_ok_timing.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_ppu_lcdon_write_timing_gs() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/lcdon_write_timing-GS.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_ppu_lcdon_write_timing_gs() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/lcdon_write_timing-GS.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_ppu_stat_irq_blocking() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/stat_irq_blocking.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_ppu_vblank_stat_intr_gs() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/vblank_stat_intr-GS.gb"), Model::DMG, false); }
 

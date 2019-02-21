@@ -11,8 +11,8 @@ fn run_blargg_serial_test(rom: &[u8]) {
 
     let start = Instant::now();
     loop {
-        if start.elapsed().as_secs() > 5 {
-            panic!("Test ran for more than 5 seconds. PC={}, Output: {}", cpu.pc, serial_output);
+        if start.elapsed().as_secs() > 10 {
+            panic!("Test ran for more than 10 seconds. PC={}, Output: {}", cpu.pc, serial_output);
         }
 
         cpu.fetch_decode_execute();

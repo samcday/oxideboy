@@ -353,7 +353,7 @@ impl Hardware for Gameboy {
         // PPU should be in the middle of a VBlank.
         self.ppu.mode = ppu::Mode::Mode1;
         self.ppu.ly = 145;
-        self.ppu.cycle_counter = 144;
+        self.ppu.cycles = 144;
 
         // Setup Nintendo logo in tilemap.
         let mut addr = 0x1904;
