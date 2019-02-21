@@ -41,6 +41,7 @@ pub struct Ppu {
     prev_mode: Mode,
     pub mode: Mode,
     pub cycle_counter: u32,
+    pub mode3_overhead: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -154,6 +155,7 @@ impl Ppu {
             prev_mode: Mode::Mode0,
             mode: Mode::Mode0,
             cycle_counter: 0,
+            mode3_overhead: 0,
         }
     }
 
@@ -172,7 +174,8 @@ impl Ppu {
 
         match self.mode {
             Mode::Mode0 => {
-                if self.cycle_counter == 51 {
+                if self.cycle_counter == 51 - self.mode3_overhead as u32 {
+                    self.mode3_overhead = 0;
                     self.ly += 1;
                     if self.interrupt_lyc && self.lyc == self.ly {
                         stat_int = true;
@@ -213,10 +216,16 @@ impl Ppu {
                 if self.cycle_counter == 20 {
                     self.cycle_counter = 0;
                     self.mode = Mode::Mode3;
+                    if self.scx % 8 > 0 {
+                        self.mode3_overhead += 1;
+                    }
+                    if self.scx % 8 > 4 {
+                        self.mode3_overhead += 1;
+                    }
                 }
             }
             Mode::Mode3 => {
-                if self.cycle_counter == 43 {
+                if self.cycle_counter == 43 + self.mode3_overhead as u32 {
                     self.cycle_counter = 0;
                     self.mode = Mode::Mode0;
                     if self.interrupt_hblank {
