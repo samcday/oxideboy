@@ -62,32 +62,32 @@ fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
 // #[test] fn mooneye_acceptance_add_sp_e_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/add_sp_e_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_boot_hwio_dmg0() { run_mooneye_test(include_bytes!("mooneye/acceptance/boot_hwio-dmg0.gb"), Model::DMG0, false); }
 // #[test] fn mooneye_acceptance_boot_hwio_dmg0_realbootrom() { run_mooneye_test(include_bytes!("mooneye/acceptance/boot_hwio-dmg0.gb"), Model::DMG0, true); }
-// #[test] fn mooneye_acceptance_boot_regs_dmg0() { run_mooneye_test(include_bytes!("mooneye/acceptance/boot_regs-dmg0.gb"), Model::DMG0, false); }
-// #[test] fn mooneye_acceptance_boot_regs_dmg0_realbootrom() { run_mooneye_test(include_bytes!("mooneye/acceptance/boot_regs-dmg0.gb"), Model::DMG0, true); }
+#[test] fn mooneye_acceptance_boot_regs_dmg0() { run_mooneye_test(include_bytes!("mooneye/acceptance/boot_regs-dmg0.gb"), Model::DMG0, false); }
+#[test] fn mooneye_acceptance_boot_regs_dmg0_realbootrom() { run_mooneye_test(include_bytes!("mooneye/acceptance/boot_regs-dmg0.gb"), Model::DMG0, true); }
 // #[test] fn mooneye_acceptance_call_cc_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/call_cc_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_call_cc_timing2() { run_mooneye_test(include_bytes!("mooneye/acceptance/call_cc_timing2.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_call_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/call_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_call_timing2() { run_mooneye_test(include_bytes!("mooneye/acceptance/call_timing2.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_div_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/div_timing.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_ei_sequence() { run_mooneye_test(include_bytes!("mooneye/acceptance/ei_sequence.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_ei_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ei_timing.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_div_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/div_timing.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_ei_sequence() { run_mooneye_test(include_bytes!("mooneye/acceptance/ei_sequence.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_ei_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ei_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_halt_ime0_ei() { run_mooneye_test(include_bytes!("mooneye/acceptance/halt_ime0_ei.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_halt_ime0_nointr_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/halt_ime0_nointr_timing.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_halt_ime1_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/halt_ime1_timing.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_if_ie_registers() { run_mooneye_test(include_bytes!("mooneye/acceptance/if_ie_registers.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_intr_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/intr_timing.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_halt_ime1_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/halt_ime1_timing.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_if_ie_registers() { run_mooneye_test(include_bytes!("mooneye/acceptance/if_ie_registers.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_intr_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/intr_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_jp_cc_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/jp_cc_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_jp_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/jp_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_ld_hl_sp_e_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ld_hl_sp_e_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_oam_dma_restart() { run_mooneye_test(include_bytes!("mooneye/acceptance/oam_dma_restart.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_oam_dma_start() { run_mooneye_test(include_bytes!("mooneye/acceptance/oam_dma_start.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_oam_dma_start() { run_mooneye_test(include_bytes!("mooneye/acceptance/oam_dma_start.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_oam_dma_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/oam_dma_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_pop_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/pop_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_push_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/push_timing.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_rapid_di_ei() { run_mooneye_test(include_bytes!("mooneye/acceptance/rapid_di_ei.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_rapid_di_ei() { run_mooneye_test(include_bytes!("mooneye/acceptance/rapid_di_ei.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_ret_cc_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ret_cc_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_ret_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ret_timing.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_reti_intr_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/reti_intr_timing.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_reti_intr_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/reti_intr_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_reti_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/reti_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_rst_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/rst_timing.gb"), Model::DMG, false); }
 
