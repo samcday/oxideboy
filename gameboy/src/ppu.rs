@@ -1,3 +1,7 @@
+//! TODO: a nice executive overview of the PPU here.
+
+// TODO: investigate this assertion on gbdev wiki: "These registers can be accessed even during Mode 3, but they have no effect until the end of the current scanline."
+
 use std::slice;
 
 const DEFAULT_PALETTE: Palette = Palette{entries: [0, 3, 3, 3], bus_conflict: 0, old_entries: [0; 4]};
@@ -154,10 +158,14 @@ impl Ppu {
     }
 
     /// Advances the PPU by a single CPU clock step.
-    pub fn clock(&mut self) {
+    /// Returns a tuple of bools specifying if the VBlank and/or STAT interrupt requests should be set, in that order.
+    pub fn clock(&mut self) -> (bool, bool) {
         if !self.enabled {
-            return;
+            return (false, false);
         }
+
+        let mut vblank_int = false;
+        let mut stat_int = false;
 
         self.prev_mode = self.mode;
         self.cycle_counter += 1;
@@ -166,23 +174,39 @@ impl Ppu {
             Mode::Mode0 => {
                 if self.cycle_counter == 51 {
                     self.ly += 1;
+                    if self.interrupt_lyc && self.lyc == self.ly {
+                        stat_int = true;
+                    }
                     self.cycle_counter = 0;
 
                     if self.ly < 144 {
                         self.mode = Mode::Mode2;
+                        if self.interrupt_oam {
+                            stat_int = true;
+                        }
                     } else {
                         self.mode = Mode::Mode1;
+                        vblank_int = true;
+                        if self.interrupt_vblank {
+                            stat_int = true;
+                        }
                     }
                 }
             }
             Mode::Mode1 => {
                 if self.cycle_counter % 114 == 0 {
                     self.ly += 1;
+                    if self.interrupt_lyc && self.lyc == self.ly {
+                        stat_int = true;
+                    }
                 }
                 if self.cycle_counter == 1140 {
                     self.cycle_counter = 0;
                     self.ly = 0;
                     self.mode = Mode::Mode2;
+                    if self.interrupt_oam {
+                        stat_int = true;
+                    }
                 }
             }
             Mode::Mode2 => {
@@ -195,9 +219,14 @@ impl Ppu {
                 if self.cycle_counter == 43 {
                     self.cycle_counter = 0;
                     self.mode = Mode::Mode0;
+                    if self.interrupt_hblank {
+                        stat_int = true;
+                    }
                 }
             }
-        }
+        };
+
+        (vblank_int, stat_int)
     }
 
     pub fn oam_read(&self, addr: usize) -> u8 {

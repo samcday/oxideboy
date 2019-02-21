@@ -158,12 +158,18 @@ impl <HW: Hardware> Cpu<HW> {
 
     pub fn core_panic(&self, msg: String) -> ! {
         panic!(
-            "{}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}",
-            msg, self.a, self.b, self.c, self.d, self.e, self.f.pack(), self.h, self.l, self.sp, self.pc);
+            "{}\nIME: {},{}\nHalt: {}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}",
+            msg, self.ime, self.ime_defer, self.halted, self.a, self.b, self.c, self.d, self.e, self.f.pack(), self.h, self.l, self.sp, self.pc);
     }
 
     /// Main entrypoint into the Cpu implementation. Fetches the next instruction, then decodes and executes it.
     pub fn fetch_decode_execute(&mut self) {
+        // If the CPU is currently halted, we need to pump a clock cycle of the other hardware, so that if there's a new
+        // interrupt available, we can wake up from HALT and continue on.
+        if self.halted {
+            self.hw.clock();
+        }
+
         self.process_interrupts();
 
         // Apply deferred change to IME register.
@@ -172,9 +178,8 @@ impl <HW: Hardware> Cpu<HW> {
             self.ime_defer = false;
         }
 
-        // If CPU is currently halted, we trigger a clock cycle to ensure other components get to run, then we exit.
+        // CPU is halted and there wasn't any pending interrupts to wake us up, we're done for now.
         if self.halted {
-            self.hw.clock();
             return;
         }
 

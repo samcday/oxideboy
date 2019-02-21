@@ -332,7 +332,13 @@ impl Hardware for Gameboy {
             self.ppu.oam_write(dma_dst, v);
         }
         self.serial.clock();
-        self.ppu.clock();
+        let (vblank_int, stat_int) = self.ppu.clock();
+        if vblank_int {
+            self.interrupts.request(Interrupt::VBlank);
+        }
+        if stat_int {
+            self.interrupts.request(Interrupt::Stat);
+        }
         self.apu.clock();
     }
 

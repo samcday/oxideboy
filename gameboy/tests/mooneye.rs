@@ -13,7 +13,7 @@ fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
         cpu.fetch_decode_execute();
 
         if start.elapsed().as_secs() > 10 {
-            panic!("Test ran for more than 10 seconds");
+            cpu.core_panic(String::from("Test ran for more than 10 seconds"));
         }
     }
 
@@ -40,12 +40,12 @@ fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
 #[test] fn mooneye_acceptance_oam_dma_reg_read() { run_mooneye_test(include_bytes!("mooneye/acceptance/oam_dma/reg_read.gb"), Model::DMG, false); }
 
 // #[test] fn mooneye_acceptance_ppu_hblank_ly_scx_timing_gs() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/hblank_ly_scx_timing-GS.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_ppu_intr_1_2_timing_gs() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_1_2_timing-GS.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_ppu_intr_2_0_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_2_0_timing.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_ppu_intr_2_mode0_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_2_mode0_timing.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_ppu_intr_1_2_timing_gs() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_1_2_timing-GS.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_ppu_intr_2_0_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_2_0_timing.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_ppu_intr_2_mode0_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_2_mode0_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_ppu_intr_2_mode0_timing_sprites() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_2_mode0_timing_sprites.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_ppu_intr_2_mode3_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_2_mode3_timing.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_ppu_intr_2_oam_ok_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_2_oam_ok_timing.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_ppu_intr_2_mode3_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_2_mode3_timing.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_ppu_intr_2_oam_ok_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ppu/intr_2_oam_ok_timing.gb"), Model::DMG, false); }
 
 #[test] fn mooneye_acceptance_timer_div_write() { run_mooneye_test(include_bytes!("mooneye/acceptance/timer/div_write.gb"), Model::DMG, false); }
 #[test] fn mooneye_acceptance_timer_rapid_toggle() { run_mooneye_test(include_bytes!("mooneye/acceptance/timer/rapid_toggle.gb"), Model::DMG, false); }
@@ -75,7 +75,7 @@ fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
 #[test] fn mooneye_acceptance_ei_sequence() { run_mooneye_test(include_bytes!("mooneye/acceptance/ei_sequence.gb"), Model::DMG, false); }
 #[test] fn mooneye_acceptance_ei_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/ei_timing.gb"), Model::DMG, false); }
 // #[test] fn mooneye_acceptance_halt_ime0_ei() { run_mooneye_test(include_bytes!("mooneye/acceptance/halt_ime0_ei.gb"), Model::DMG, false); }
-// #[test] fn mooneye_acceptance_halt_ime0_nointr_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/halt_ime0_nointr_timing.gb"), Model::DMG, false); }
+#[test] fn mooneye_acceptance_halt_ime0_nointr_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/halt_ime0_nointr_timing.gb"), Model::DMG, false); }
 #[test] fn mooneye_acceptance_halt_ime1_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/halt_ime1_timing.gb"), Model::DMG, false); }
 #[test] fn mooneye_acceptance_if_ie_registers() { run_mooneye_test(include_bytes!("mooneye/acceptance/if_ie_registers.gb"), Model::DMG, false); }
 #[test] fn mooneye_acceptance_intr_timing() { run_mooneye_test(include_bytes!("mooneye/acceptance/intr_timing.gb"), Model::DMG, false); }
