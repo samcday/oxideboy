@@ -45,7 +45,8 @@ impl WebEmu {
 
         log!("Creating emu....");
         let hw = Gameboy::new(Model::DMG0, rom);
-        let cpu = cpu::Cpu::new(hw);
+        let mut cpu = cpu::Cpu::new(hw);
+        cpu.hw.ppu.framebuffer_fmt = ppu::PixelFormat::ABGR;
         WebEmu{cpu}
     }
 

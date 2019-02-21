@@ -44,5 +44,19 @@ window.dragLeaveHandler = function(ev) {
 function runFrame() {
   const buf = emulator.run_frame();
   ctx.putImageData(new ImageData(buf, 160, 144), 0, 0);
+  ctx.drawImage( lcd, 0, 0, 2*lcd.width, 2*lcd.height );
   requestAnimationFrame(runFrame);
 }
+
+let now = Date.now();
+let count = 0;
+function fpsTest() {
+  count += 1;
+  if (Date.now() - now > 1000) {
+    console.log("FPS:", count);
+    now = Date.now();
+    count = 0;
+  }
+  requestAnimationFrame(fpsTest);
+}
+requestAnimationFrame(fpsTest);

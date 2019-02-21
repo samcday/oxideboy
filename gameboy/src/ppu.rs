@@ -8,12 +8,16 @@ use std::slice;
 
 const DEFAULT_PALETTE: Palette = Palette{entries: [0, 3, 3, 3], bus_conflict: 0, old_entries: [0; 4]};
 pub const SCREEN_SIZE: usize = 160 * 144;
-// The default palette colors, in ARGB8888 format.
-const COLOR_MAPPING: [u32; 4] = [
-    0xE0F8D0FF,
-    0x88C070FF,
-    0x346856FF,
-    0x081820FF,
+// The default palette colors, in RGBA8888 format.
+const COLOR_MAPPING: [Color; 4] = [
+    // 0xE0F8D0FF,
+    // 0x88C070FF,
+    // 0x346856FF,
+    // 0x081820FF,
+    Color{r: 0xE0, g: 0xF8, b: 0xD0},
+    Color{r: 0x88, g: 0xC0, b: 0x70},
+    Color{r: 0x34, g: 0x68, b: 0x56},
+    Color{r: 0x08, g: 0x18, b: 0x20},
 ];
 
 pub struct Ppu {
@@ -53,6 +57,29 @@ pub struct Ppu {
 
     scanline_objs: Vec<(usize, usize)>,
     pub framebuffer: Vec<u32>,
+    pub framebuffer_fmt: PixelFormat,
+}
+
+// Temporary-ish. Web Canvas expects ABGR (well, actually RGBA but wasm seems to be big endian)
+#[derive(Clone, Copy)]
+struct Color {
+    r: u32,
+    g: u32,
+    b: u32,
+}
+
+pub enum PixelFormat {
+    RGBA,
+    ABGR,
+}
+
+impl PixelFormat {
+    fn to_u32(&self, c: Color) -> u32 {
+        match self {
+            PixelFormat::RGBA => { ((c.r << 24) | (c.g << 16) | (c.b << 8) | 0xFF) },
+            PixelFormat::ABGR => { ((0xFF << 24) | (c.b << 16) | (c.g << 8) | c.r) },
+        }
+    }
 }
 
 /// Mode 3 (Pixel transfer) is rather complicated. We keep track of it all here.
@@ -313,6 +340,7 @@ impl Ppu {
             },
             scanline_objs: Vec::new(),
             framebuffer: vec![0; SCREEN_SIZE],
+            framebuffer_fmt: PixelFormat::RGBA,
 
             cycles: 0,
         }
@@ -501,7 +529,7 @@ impl Ppu {
                     self.mode3.skip_pixels -= 1;
                 } else {
                     if self.mode3.line_x >= 8 {
-                        self.framebuffer[self.mode3.fb_pos] = COLOR_MAPPING[pixel as usize];
+                        self.framebuffer[self.mode3.fb_pos] = self.framebuffer_fmt.to_u32(COLOR_MAPPING[pixel as usize]);
                         self.mode3.fb_pos += 1;
                     }
                     self.mode3.line_x += 1;
