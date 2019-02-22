@@ -4,6 +4,7 @@
 
 // TODO: investigate this assertion on gbdev wiki: "These registers can be accessed even during Mode 3, but they have no effect until the end of the current scanline."
 
+use crate::interrupt::{Interrupt, InterruptController};
 use std::slice;
 
 const DEFAULT_PALETTE: Palette = Palette {
@@ -379,14 +380,10 @@ impl Ppu {
     }
 
     /// Advances the PPU by a single CPU clock step.
-    /// Returns a tuple of bools specifying if the VBlank and/or STAT interrupt requests should be set, in that order.
-    pub fn clock(&mut self) -> (bool, bool) {
+    pub fn clock(&mut self, interrupts: &mut InterruptController) {
         if !self.enabled {
-            return (false, false);
+            return;
         }
-
-        let mut vblank_int = false;
-        let mut stat_int = false;
 
         self.prev_mode = self.mode;
         self.cycles += 1;
@@ -397,20 +394,20 @@ impl Ppu {
                 if self.cycles == hblank_cycles {
                     self.ly += 1;
                     if self.interrupt_lyc && self.lyc == self.ly {
-                        stat_int = true;
+                        interrupts.request(Interrupt::Stat);
                     }
                     self.cycles = 0;
 
                     if self.ly < 144 {
                         self.mode = Mode::Mode2;
                         if self.interrupt_oam {
-                            stat_int = true;
+                            interrupts.request(Interrupt::Stat);
                         }
                     } else {
                         self.mode = Mode::Mode1;
-                        vblank_int = true;
+                        interrupts.request(Interrupt::VBlank);
                         if self.interrupt_vblank {
-                            stat_int = true;
+                            interrupts.request(Interrupt::Stat);
                         }
                     }
                 }
@@ -421,7 +418,7 @@ impl Ppu {
                     // Every 114 clock cycles we increment LY, from 144 to 154.
                     self.ly += 1;
                     if self.interrupt_lyc && self.lyc == self.ly {
-                        stat_int = true;
+                        interrupts.request(Interrupt::Stat);
                     }
                 }
                 if self.cycles == 1140 {
@@ -432,7 +429,7 @@ impl Ppu {
 
                     // Also trigger STAT interrupt if OAM interrupt is enabled.
                     if self.interrupt_oam {
-                        stat_int = true;
+                        interrupts.request(Interrupt::Stat);
                     }
                 }
             }
@@ -451,11 +448,9 @@ impl Ppu {
             }
             Mode::Mode3 => {
                 // Pixel transfer
-                stat_int = self.pixel_transfer();
+                self.pixel_transfer(interrupts);
             }
         };
-
-        (vblank_int, stat_int)
     }
 
     // Searches through the OAM table to find any OBJs that overlap the line we're currently drawing.
@@ -491,9 +486,7 @@ impl Ppu {
     /// This is where we fetch BG/window/OBJ tiles and flush pixels out to the LCD.
     /// We emulate the main CPU at a 1Mhz instruction cycle granularity, but the PPU runs at 4Mhz. So the implementation
     /// here is modelled on 4Mhz steps.
-    fn pixel_transfer(&mut self) -> bool {
-        let mut stat_interrupt = false;
-
+    fn pixel_transfer(&mut self, interrupts: &mut InterruptController) {
         if self.cycles == 1 {
             // We're just starting a new Mode 3, reset all the state data.
             self.mode3 = Default::default();
@@ -720,11 +713,9 @@ impl Ppu {
 
             // If HBlank STAT interrupt is enabled, we send it now.
             if self.interrupt_hblank {
-                stat_interrupt = true;
+                interrupts.request(Interrupt::Stat);
             }
         }
-
-        stat_interrupt
     }
 
     pub fn oam_read(&self, addr: usize) -> u8 {

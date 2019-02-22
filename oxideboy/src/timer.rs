@@ -1,5 +1,7 @@
 //! Implementation of the timer unit in the Gameboy LR35902 chip.
 
+use crate::interrupt::{Interrupt, InterruptController};
+
 pub struct Timer {
     enabled: bool,       // Controls whether the timer unit is running.
     freq: u16,           // Expressed as a divisor of the DIV register.
@@ -23,10 +25,8 @@ impl Timer {
         }
     }
 
-    /// Advances the timer by a single CPU clock step. Returning true means the timer interrupt request should be set.
-    pub fn clock(&mut self) -> bool {
-        let mut timer_interrupt = false;
-
+    /// Advances the timer by a single CPU clock step.
+    pub fn clock(&mut self, interrupts: &mut InterruptController) {
         // DIV is a 16 bit register (of which only the upper 8 bits are addressable) that increments
         // at the same speed as the CPU clock - 4.194304Mhz.
         self.div = self.div.wrapping_add(4);
@@ -36,7 +36,7 @@ impl Timer {
         // See the code below here for when we set tima_overflow.
         if self.tima_overflow {
             self.tima = self.tma;
-            timer_interrupt = true;
+            interrupts.request(Interrupt::Timer);
             self.tima_overflow = false;
             self.tima_reloaded = true;
         }
@@ -49,8 +49,6 @@ impl Timer {
                 self.tima_overflow = true;
             }
         }
-
-        timer_interrupt
     }
 
     /// Write to the 0xFF04 DIV register.
@@ -123,10 +121,8 @@ impl Timer {
     }
 
     /// Write to the 0xFF07 TAC register.
-    /// Sometimes writes to the TAC register can cause a glitchy spurious timer interrupt request. In those cases we
-    /// return true here to signal that Timer interrupt request should be set.
-    pub fn reg_tac_write(&mut self, v: u8) -> bool {
-        let mut timer_interrupt = false;
+    /// Sometimes writes to the TAC register can cause a glitchy spurious timer interrupt request.
+    pub fn reg_tac_write(&mut self, v: u8, interrupts: &mut InterruptController) {
         let was_enabled = self.enabled;
         let orig_freq = self.freq;
 
@@ -161,10 +157,8 @@ impl Timer {
             self.tima = self.tima.wrapping_add(1);
             if self.tima == 0 {
                 self.tima = self.tma;
-                timer_interrupt = true;
+                interrupts.request(Interrupt::Timer)
             }
         }
-
-        timer_interrupt
     }
 }

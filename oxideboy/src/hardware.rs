@@ -4,7 +4,7 @@
 use crate::apu::Apu;
 use crate::cartridge::Cartridge;
 use crate::dma::DmaController;
-use crate::interrupt::{Interrupt, InterruptController};
+use crate::interrupt::InterruptController;
 use crate::joypad::Joypad;
 use crate::ppu::Ppu;
 use crate::serial::Serial;
@@ -166,11 +166,7 @@ impl GameboyHardware {
             0xFF04 => self.timer.reg_div_write(),
             0xFF05 => self.timer.reg_tima_write(v),
             0xFF06 => self.timer.reg_tma_write(v),
-            0xFF07 => {
-                if self.timer.reg_tac_write(v & 0x7) {
-                    self.interrupts.request(Interrupt::Timer)
-                }
-            }
+            0xFF07 => self.timer.reg_tac_write(v & 0x7, &mut self.interrupts),
             0xFF0F => self.interrupts.reg_if_write(v & 0x1F),
             0xFF10 => self.apu.reg_nr10_write(v),
             0xFF11 => self.apu.reg_nr11_write(v),
@@ -218,22 +214,14 @@ impl GameboyHardware {
     }
 
     pub fn clock(&mut self) {
-        if self.timer.clock() {
-            self.interrupts.request(Interrupt::Timer);
-        }
+        self.timer.clock(&mut self.interrupts);
         let (dma_active, dma_src, dma_dst) = self.dma.clock();
         if dma_active {
             let v = self.mem_get(dma_src);
             self.ppu.oam_write(dma_dst, v);
         }
         self.serial.clock();
-        let (vblank_int, stat_int) = self.ppu.clock();
-        if vblank_int {
-            self.interrupts.request(Interrupt::VBlank);
-        }
-        if stat_int {
-            self.interrupts.request(Interrupt::Stat);
-        }
+        self.ppu.clock(&mut self.interrupts);
         self.apu.clock();
     }
 }
