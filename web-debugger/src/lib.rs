@@ -1,16 +1,13 @@
 extern crate cfg_if;
 extern crate wasm_bindgen;
-extern crate gameboy;
-extern crate js_sys;
-extern crate web_sys;
 
 mod utils;
 
-use std::slice;
-use gameboy::*;
 use cfg_if::cfg_if;
-use wasm_bindgen::prelude::*;
 use js_sys::{Uint8Array, Uint8ClampedArray};
+use oxideboy::*;
+use std::slice;
+use wasm_bindgen::prelude::*;
 
 macro_rules! log {
     ( $( $t:tt )* ) => {
@@ -30,7 +27,7 @@ cfg_if! {
 
 #[wasm_bindgen]
 pub struct WebEmu {
-    cpu: cpu::Cpu<Gameboy>,
+    gb: Gameboy,
 }
 
 #[wasm_bindgen]
@@ -44,17 +41,21 @@ impl WebEmu {
         data.copy_to(&mut rom);
 
         log!("Creating emu....");
-        let hw = Gameboy::new(Model::DMG0, rom);
-        let mut cpu = cpu::Cpu::new(hw);
-        cpu.hw.ppu.framebuffer_fmt = ppu::PixelFormat::ABGR;
-        WebEmu{cpu}
+        let mut gb = Gameboy::new(Model::DMG0, rom);
+        gb.hw.ppu.framebuffer_fmt = ppu::PixelFormat::ABGR;
+        WebEmu { gb }
     }
 
     pub fn run_frame(&mut self) -> Uint8ClampedArray {
-        for _  in 0..17556 {
-            self.cpu.fetch_decode_execute();
+        for _ in 0..17556 {
+            self.gb.run_instruction();
         }
 
-        unsafe { Uint8ClampedArray::view(slice::from_raw_parts_mut((&mut self.cpu.hw.ppu.framebuffer).as_ptr() as *mut u8, 160*144*4)) }
+        unsafe {
+            Uint8ClampedArray::view(slice::from_raw_parts_mut(
+                (&mut self.gb.hw.ppu.framebuffer).as_ptr() as *mut u8,
+                160 * 144 * 4,
+            ))
+        }
     }
 }

@@ -2,6 +2,7 @@
 name = "web-debugger"
 version = "0.1.0"
 authors = ["Sam Day <me@samcday.com>"]
+edition = "2018"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -33,8 +34,8 @@ features = [
   "console",
 ]
 
-[dependencies.gameboy]
-path = "../gameboy"
+[dependencies.oxideboy]
+path = "../oxideboy"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.2"

@@ -65,13 +65,15 @@ impl Timer {
         // circuitry works.
         // See http://gbdev.gg8.se/wiki/articles/Timer_Obscure_Behaviour
         if self.enabled {
-            let should_inc = old_div & match self.freq {
-                1024 => 0b0000_0010_0000_0000,
-                16   => 0b0000_0000_0000_1000,
-                64   => 0b0000_0000_0010_0000,
-                256  => 0b0000_0000_1000_0000,
-                _ => unreachable!("All timer frequencies covered")
-            } > 0;
+            let should_inc = old_div
+                & match self.freq {
+                    1024 => 0b0000_0010_0000_0000,
+                    16 => 0b0000_0000_0000_1000,
+                    64 => 0b0000_0000_0010_0000,
+                    256 => 0b0000_0000_1000_0000,
+                    _ => unreachable!("All timer frequencies covered"),
+                }
+                > 0;
             if should_inc {
                 self.tima = self.tima.wrapping_add(1);
                 if self.tima == 0 {
@@ -149,7 +151,9 @@ impl Timer {
             } else {
                 (self.div & (orig_freq / 2) != 0) && (self.div & (self.freq / 2) == 0)
             }
-        } else { false };
+        } else {
+            false
+        };
         if glitch {
             // A cut down version of what we do in advance_timer.
             // Note how here we're not delaying the TIMA reset or interrupt request to the next cycle.

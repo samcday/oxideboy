@@ -5,12 +5,12 @@ pub struct Serial {
     pub serial_out: Option<u8>, // When serial port is active, SB register will get shifted to here to be read out.
     serial_in: Option<u8>,      // When serial port is active, this incoming value will be read into the SB register.
 
-    sb: u8,                     // Value of the SB register (0xFF01)
-    internal_clock: bool,       // Are we using the internal clock to read/write the serial port?
-    transfer_start: bool,       // Are we performing a transfer right now?
-    transfer_fast: bool,        // Are we transferring serial data at "normal" speed or fast (32x faster) speed?
+    sb: u8,               // Value of the SB register (0xFF01)
+    internal_clock: bool, // Are we using the internal clock to read/write the serial port?
+    transfer_start: bool, // Are we performing a transfer right now?
+    transfer_fast: bool,  // Are we transferring serial data at "normal" speed or fast (32x faster) speed?
 
-    transfer_countdown: u16,     // Tracks how many more clock cycles we need until next transfer takes place.
+    transfer_countdown: u16, // Tracks how many more clock cycles we need until next transfer takes place.
 }
 
 impl Serial {
@@ -75,7 +75,7 @@ impl Serial {
 
     pub fn reg_sc_write(&mut self, v: u8) {
         self.transfer_start = if (v & 0b1000_0000) > 0 { true } else { false };
-        self.transfer_fast  = if (v & 0b0000_0010) > 0 { true } else { false };
+        self.transfer_fast = if (v & 0b0000_0010) > 0 { true } else { false };
         self.internal_clock = if (v & 0b0000_0001) > 0 { true } else { false };
 
         if self.internal_clock && self.transfer_start {

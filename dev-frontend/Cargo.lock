@@ -25,7 +25,7 @@ dependencies = [
 name = "dev-frontend"
 version = "0.1.0"
 dependencies = [
- "gameboy 0.1.0",
+ "oxideboy 0.1.0",
  "sdl2 0.32.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -33,10 +33,6 @@ dependencies = [
 name = "fuchsia-cprng"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-
-[[package]]
-name = "gameboy"
-version = "0.1.0"
 
 [[package]]
 name = "lazy_static"
@@ -79,6 +75,10 @@ dependencies = [
 name = "num-traits"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "oxideboy"
+version = "0.1.0"
 
 [[package]]
 name = "rand"

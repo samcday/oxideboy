@@ -3,10 +3,10 @@
 
 const SAMPLE_RATE: f64 = 44100.0;
 const DUTY_CYCLES: [[f32; 8]; 4] = [
-    [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0,  1.0],
-    [ 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0,  1.0],
-    [ 1.0, -1.0, -1.0, -1.0, -1.0,  1.0,  1.0,  1.0],
-    [-1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0, -1.0],
+    [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0],
+    [1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0],
+    [1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0],
+    [-1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0],
 ];
 const NOISE_DIVISORS: [u16; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
@@ -14,7 +14,7 @@ pub struct Apu {
     sample_cycles: f64,
 
     timer: u16,
-    frame_seq_timer: u8,         // Main timer to drive other clocks. Increments @ 512hz (2048 CPU cycles)
+    frame_seq_timer: u8, // Main timer to drive other clocks. Increments @ 512hz (2048 CPU cycles)
 
     enabled: bool,
     left_vol: u8,
@@ -23,9 +23,9 @@ pub struct Apu {
     right_vin: bool,
 
     pub chan1: Channel1, // Tone & Sweep voice
-    chan2: Channel2, // Tone voice
-    chan3: Channel3, // Wave voice
-    chan4: Channel4, // Noise voice
+    chan2: Channel2,     // Tone voice
+    chan3: Channel3,     // Wave voice
+    chan4: Channel4,     // Noise voice
 
     wave_ram: [u8; 32],
 
@@ -35,7 +35,8 @@ pub struct Apu {
 #[derive(Debug, Default)]
 pub struct Channel1 {
     pub on: bool,
-    left: bool, right: bool,
+    left: bool,
+    right: bool,
     sweep_shift: u8,
     sweep_sub: bool,
     sweep_period: u8,
@@ -109,7 +110,8 @@ impl Channel1 {
     fn sweep_next_freq(&mut self) -> u16 {
         self.sweep_has_negated = self.sweep_sub;
         if self.sweep_sub {
-            self.sweep_shadow_freq.saturating_sub(self.sweep_shadow_freq >> self.sweep_shift)
+            self.sweep_shadow_freq
+                .saturating_sub(self.sweep_shadow_freq >> self.sweep_shift)
         } else {
             self.sweep_shadow_freq + (self.sweep_shadow_freq >> self.sweep_shift)
         }
@@ -148,18 +150,19 @@ impl Channel1 {
 
         if self.sweep_shift > 0 {
             self.sweep_next_freq() <= 2047
-        } else { true }
+        } else {
+            true
+        }
     }
 
     fn get_output(&self, l: f32, r: f32) -> (f32, f32) {
         if !self.on {
             return (l, r);
         }
-        let val = DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize]
-            * (self.vol_env.val as f32) / 15.0;
+        let val = DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize] * (self.vol_env.val as f32) / 15.0;
         (
-            l + if self.left  { val } else { 0.0 },
-            r + if self.right { val } else { 0.0 }
+            l + if self.left { val } else { 0.0 },
+            r + if self.right { val } else { 0.0 },
         )
     }
 }
@@ -169,11 +172,10 @@ impl Channel2 {
         if !self.on {
             return (l, r);
         }
-        let val = DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize]
-            * (self.vol_env.val as f32) / 15.0;
+        let val = DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize] * (self.vol_env.val as f32) / 15.0;
         (
-            l + if self.left  { val } else { 0.0 },
-            r + if self.right { val } else { 0.0 }
+            l + if self.left { val } else { 0.0 },
+            r + if self.right { val } else { 0.0 },
         )
     }
 }
@@ -183,12 +185,16 @@ impl Channel3 {
         if !self.on {
             return (l, r);
         }
-        let wav = (if self.level == 0 { 0. }
-                   else if self.level == 1 { (wav as f32) - 7. }
-                   else { ((wav >> (self.level - 1)) as f32) - 7. }) / 7.;
+        let wav = (if self.level == 0 {
+            0.
+        } else if self.level == 1 {
+            (wav as f32) - 7.
+        } else {
+            ((wav >> (self.level - 1)) as f32) - 7.
+        }) / 7.;
         (
-            l + if self.left  { wav } else { 0.0 },
-            r + if self.right { wav } else { 0.0 }
+            l + if self.left { wav } else { 0.0 },
+            r + if self.right { wav } else { 0.0 },
         )
     }
 }
@@ -198,26 +204,27 @@ impl Channel4 {
         let new_bit = (self.lfsr & 1) ^ ((self.lfsr & 2) >> 1);
         self.lfsr >>= 1;
         self.lfsr |= new_bit << 14;
-        if self.poly_7bit { self.lfsr |= new_bit << 6; }
+        if self.poly_7bit {
+            self.lfsr |= new_bit << 6;
+        }
     }
 
     fn get_output(&self, l: f32, r: f32) -> (f32, f32) {
         if !self.on {
             return (l, r);
         }
-        let val = if (self.lfsr & 1) ^ 1 == 1 { 1.0 } else { -1.0 }
-            * (self.vol_env.val as f32) / 15.0;;
+        let val = if (self.lfsr & 1) ^ 1 == 1 { 1.0 } else { -1.0 } * (self.vol_env.val as f32) / 15.0;;
         (
-            l + if self.left  { val } else { 0.0 },
-            r + if self.right { val } else { 0.0 }
+            l + if self.left { val } else { 0.0 },
+            r + if self.right { val } else { 0.0 },
         )
     }
 }
 
 impl VolumeEnvelope {
     fn unpack(&mut self, v: u8) {
-        self.steps   =  v & 0b0000_0111;
-        self.inc     =  v & 0b0000_1000 > 0;
+        self.steps = v & 0b0000_0111;
+        self.inc = v & 0b0000_1000 > 0;
         self.default = (v & 0b1111_0000) >> 4;
 
         if self.steps == 0 {
@@ -226,10 +233,7 @@ impl VolumeEnvelope {
     }
 
     fn pack(&self) -> u8 {
-        0
-            | self.steps
-            | if self.inc { 0b0000_1000 } else { 0 }
-            | (self.default << 4)
+        0 | self.steps | if self.inc { 0b0000_1000 } else { 0 } | (self.default << 4)
     }
 
     fn is_zero(&self) -> bool {
@@ -246,7 +250,7 @@ impl VolumeEnvelope {
             self.timer = self.timer.saturating_sub(1);
             if self.timer == 0 {
                 self.val = if self.inc {
-                     (self.val + 1).min(15)
+                    (self.val + 1).min(15)
                 } else {
                     self.val.saturating_sub(1)
                 };
@@ -258,13 +262,16 @@ impl VolumeEnvelope {
 
 impl Apu {
     pub fn new() -> Apu {
-        Apu{
+        Apu {
             sample_cycles: 0.0,
-            timer: 0, frame_seq_timer: 0,
+            timer: 0,
+            frame_seq_timer: 0,
 
             enabled: true,
-            left_vol: 0, right_vol: 0,
-            left_vin: false, right_vin: false,
+            left_vol: 0,
+            right_vol: 0,
+            left_vin: false,
+            right_vin: false,
 
             chan1: Default::default(),
             chan2: Default::default(),
@@ -290,10 +297,18 @@ impl Apu {
             self.frame_seq_timer = self.frame_seq_timer.wrapping_add(1);
 
             if self.frame_seq_timer % 2 == 1 {
-                if self.chan1.counter { Apu::length_clock(64,  &mut self.chan1.length, &mut self.chan1.on); }
-                if self.chan2.counter { Apu::length_clock(64,  &mut self.chan2.length, &mut self.chan2.on); }
-                if self.chan3.counter { Apu::length_clock(256, &mut self.chan3.length, &mut self.chan3.on); }
-                if self.chan4.counter { Apu::length_clock(64,  &mut self.chan4.length, &mut self.chan4.on); }
+                if self.chan1.counter {
+                    Apu::length_clock(64, &mut self.chan1.length, &mut self.chan1.on);
+                }
+                if self.chan2.counter {
+                    Apu::length_clock(64, &mut self.chan2.length, &mut self.chan2.on);
+                }
+                if self.chan3.counter {
+                    Apu::length_clock(256, &mut self.chan3.length, &mut self.chan3.on);
+                }
+                if self.chan4.counter {
+                    Apu::length_clock(64, &mut self.chan4.length, &mut self.chan4.on);
+                }
             }
             if self.frame_seq_timer % 4 == 3 {
                 self.chan1.sweep_clock();
@@ -367,7 +382,7 @@ impl Apu {
         let (l, r) = self.chan4.get_output(l, r);
 
         // Divide each value by the number of channels.
-        let l = l / 4.; 
+        let l = l / 4.;
         let r = r / 4.;
 
         // Master volume control.
@@ -394,8 +409,8 @@ impl Apu {
             return;
         }
         let was_sub = self.chan1.sweep_sub;
-        self.chan1.sweep_shift  =  v & 0b0000_0111;
-        self.chan1.sweep_sub    =  v & 0b0000_1000 > 0;
+        self.chan1.sweep_shift = v & 0b0000_0111;
+        self.chan1.sweep_sub = v & 0b0000_1000 > 0;
         self.chan1.sweep_period = (v & 0b0111_0000) >> 4;
 
         // If, since enabling sweep, we've subtracted freqency, then switching from subtraction mode to
@@ -406,7 +421,8 @@ impl Apu {
     }
 
     pub fn reg_nr11_read(&self) -> u8 {
-        /* Unreadable bits */ 0b0011_1111 | (self.chan1.duty << 6)
+        /* Unreadable bits */
+        0b0011_1111 | (self.chan1.duty << 6)
     }
 
     pub fn reg_nr11_write(&mut self, v: u8) {
@@ -439,7 +455,8 @@ impl Apu {
     }
 
     pub fn reg_nr14_read(&self) -> u8 {
-        /* Unreadable bits */ 0b1011_1111 | (if self.chan1.counter { 0b0100_0000 } else { 0 })
+        /* Unreadable bits */
+        0b1011_1111 | (if self.chan1.counter { 0b0100_0000 } else { 0 })
     }
 
     pub fn reg_nr14_write(&mut self, v: u8) {
@@ -472,13 +489,18 @@ impl Apu {
             }
 
             if self.chan1.length == 64 {
-                self.chan1.length = if self.chan1.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
+                self.chan1.length = if self.chan1.counter && self.frame_seq_timer % 2 == 1 {
+                    1
+                } else {
+                    0
+                };
             }
         }
     }
 
     pub fn reg_nr21_read(&self) -> u8 {
-        /* Unreadable bits */ 0b0011_1111 | (self.chan2.duty << 6)
+        /* Unreadable bits */
+        0b0011_1111 | (self.chan2.duty << 6)
     }
 
     pub fn reg_nr21_write(&mut self, v: u8) {
@@ -511,7 +533,8 @@ impl Apu {
     }
 
     pub fn reg_nr24_read(&self) -> u8 {
-        /* Unreadable bits */ 0b1011_1111 | (if self.chan2.counter { 0b0100_0000 } else { 0 })
+        /* Unreadable bits */
+        0b1011_1111 | (if self.chan2.counter { 0b0100_0000 } else { 0 })
     }
 
     pub fn reg_nr24_write(&mut self, v: u8) {
@@ -537,13 +560,18 @@ impl Apu {
                 self.chan2.on = true;
             }
             if self.chan2.length == 64 {
-                self.chan2.length = if self.chan2.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
+                self.chan2.length = if self.chan2.counter && self.frame_seq_timer % 2 == 1 {
+                    1
+                } else {
+                    0
+                };
             }
         }
     }
 
     pub fn reg_nr30_read(&self) -> u8 {
-        /* Unreadable bits */ 0b0111_1111 | (if self.chan3.enabled { 0b1000_0000 } else { 0 })
+        /* Unreadable bits */
+        0b0111_1111 | (if self.chan3.enabled { 0b1000_0000 } else { 0 })
     }
 
     pub fn reg_nr30_write(&mut self, v: u8) {
@@ -565,7 +593,8 @@ impl Apu {
     }
 
     pub fn reg_nr32_read(&self) -> u8 {
-        /* Unreadable bits */ 0b1001_1111 | (self.chan3.level << 5)
+        /* Unreadable bits */
+        0b1001_1111 | (self.chan3.level << 5)
     }
 
     pub fn reg_nr32_write(&mut self, v: u8) {
@@ -592,7 +621,8 @@ impl Apu {
     }
 
     pub fn reg_nr34_read(&self) -> u8 {
-        /* Unreadable bits */ 0b1011_1111 | (if self.chan3.counter { 0b0100_0000 } else { 0 })
+        /* Unreadable bits */
+        0b1011_1111 | (if self.chan3.counter { 0b0100_0000 } else { 0 })
     }
 
     pub fn reg_nr34_write(&mut self, v: u8) {
@@ -619,7 +649,11 @@ impl Apu {
             }
 
             if self.chan3.length == 256 {
-                self.chan3.length = if self.chan3.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
+                self.chan3.length = if self.chan3.counter && self.frame_seq_timer % 2 == 1 {
+                    1
+                } else {
+                    0
+                };
             }
         }
     }
@@ -647,23 +681,21 @@ impl Apu {
     }
 
     pub fn reg_nr43_read(&self) -> u8 {
-        0
-            | self.chan4.div_ratio
-            | if self.chan4.poly_7bit { 0b0000_1000 } else { 0 }
-            | (self.chan4.poly_freq << 4)
+        0 | self.chan4.div_ratio | if self.chan4.poly_7bit { 0b0000_1000 } else { 0 } | (self.chan4.poly_freq << 4)
     }
 
     pub fn reg_nr43_write(&mut self, v: u8) {
         if !self.enabled {
             return;
         }
-        self.chan4.div_ratio  = v & 0b0000_0111;
-        self.chan4.poly_7bit  = v & 0b0000_1000 > 0;
+        self.chan4.div_ratio = v & 0b0000_0111;
+        self.chan4.poly_7bit = v & 0b0000_1000 > 0;
         self.chan4.poly_freq = (v & 0b1111_0000) >> 4;
     }
 
     pub fn reg_nr44_read(&self) -> u8 {
-        /* Unreadable bits */ 0b1011_1111 | (if self.chan4.counter { 0b0100_0000 } else { 0 })
+        /* Unreadable bits */
+        0b1011_1111 | (if self.chan4.counter { 0b0100_0000 } else { 0 })
     }
 
     pub fn reg_nr44_write(&mut self, v: u8) {
@@ -692,14 +724,17 @@ impl Apu {
             }
 
             if self.chan4.length == 64 {
-                self.chan4.length = if self.chan4.counter && self.frame_seq_timer % 2 == 1 { 1 } else { 0 };
+                self.chan4.length = if self.chan4.counter && self.frame_seq_timer % 2 == 1 {
+                    1
+                } else {
+                    0
+                };
             }
         }
     }
 
     pub fn reg_nr50_read(&self) -> u8 {
-        0
-            | self.left_vol
+        0 | self.left_vol
             | if self.left_vin { 0b0000_1000 } else { 0 }
             | (self.right_vol << 4)
             | if self.right_vin { 0b1000_0000 } else { 0 }
@@ -709,22 +744,21 @@ impl Apu {
         if !self.enabled {
             return;
         }
-        self.left_vol  = v & 7;
-        self.left_vin  = v & 0b0000_1000 > 0;
+        self.left_vol = v & 7;
+        self.left_vin = v & 0b0000_1000 > 0;
         self.right_vol = (v >> 4) & 7;
         self.right_vin = v & 0b1000_0000 > 0;
     }
 
     pub fn reg_nr51_read(&self) -> u8 {
-        0
-            | if self.chan1.right { 0b0000_0001 } else { 0 }
+        0 | if self.chan1.right { 0b0000_0001 } else { 0 }
             | if self.chan2.right { 0b0000_0010 } else { 0 }
             | if self.chan3.right { 0b0000_0100 } else { 0 }
             | if self.chan4.right { 0b0000_1000 } else { 0 }
-            | if self.chan1.left  { 0b0001_0000 } else { 0 }
-            | if self.chan2.left  { 0b0010_0000 } else { 0 }
-            | if self.chan3.left  { 0b0100_0000 } else { 0 }
-            | if self.chan4.left  { 0b1000_0000 } else { 0 }
+            | if self.chan1.left { 0b0001_0000 } else { 0 }
+            | if self.chan2.left { 0b0010_0000 } else { 0 }
+            | if self.chan3.left { 0b0100_0000 } else { 0 }
+            | if self.chan4.left { 0b1000_0000 } else { 0 }
     }
 
     pub fn reg_nr51_write(&mut self, v: u8) {
@@ -733,10 +767,10 @@ impl Apu {
             self.chan2.right = v & 0b0000_0010 > 0;
             self.chan3.right = v & 0b0000_0100 > 0;
             self.chan4.right = v & 0b0000_1000 > 0;
-            self.chan1.left  = v & 0b0001_0000 > 0;
-            self.chan2.left  = v & 0b0010_0000 > 0;
-            self.chan3.left  = v & 0b0100_0000 > 0;
-            self.chan4.left  = v & 0b1000_0000 > 0;
+            self.chan1.left = v & 0b0001_0000 > 0;
+            self.chan2.left = v & 0b0010_0000 > 0;
+            self.chan3.left = v & 0b0100_0000 > 0;
+            self.chan4.left = v & 0b1000_0000 > 0;
         }
     }
 
@@ -756,10 +790,22 @@ impl Apu {
             self.frame_seq_timer = 0;
             self.sample_cycles = 0.0;
             // When resetting the channels, we preserve the length field only.
-            self.chan1 = Channel1{ length: self.chan1.length, ..Default::default() };
-            self.chan2 = Channel2{ length: self.chan2.length, ..Default::default() };
-            self.chan3 = Channel3{ length: self.chan3.length, ..Default::default() };
-            self.chan4 = Channel4{ length: self.chan4.length, ..Default::default() };
+            self.chan1 = Channel1 {
+                length: self.chan1.length,
+                ..Default::default()
+            };
+            self.chan2 = Channel2 {
+                length: self.chan2.length,
+                ..Default::default()
+            };
+            self.chan3 = Channel3 {
+                length: self.chan3.length,
+                ..Default::default()
+            };
+            self.chan4 = Channel4 {
+                length: self.chan4.length,
+                ..Default::default()
+            };
             self.left_vol = 0;
             self.left_vin = false;
             self.right_vol = 0;
@@ -776,8 +822,8 @@ impl Apu {
             addr = self.chan3.pos as u16;
         }
 
-        let base = (addr as usize)*2;
-        (self.wave_ram[base] << 4) | self.wave_ram[base+1]
+        let base = (addr as usize) * 2;
+        (self.wave_ram[base] << 4) | self.wave_ram[base + 1]
     }
 
     pub fn wave_write(&mut self, addr: u16, v: u8) {

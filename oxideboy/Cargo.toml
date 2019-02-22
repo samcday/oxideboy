@@ -1,5 +1,5 @@
 [package]
-name = "gameboy"
+name = "oxideboy"
 version = "0.1.0"
 authors = ["Sam Day <me@samcday.com>"]
 edition = "2018"
