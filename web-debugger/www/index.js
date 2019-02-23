@@ -41,20 +41,32 @@ window.dragLeaveHandler = function(ev) {
   document.querySelector('#lcd').style.border = "";
 };
 
+let overhead_start = performance.now();
+let overhead = 0;
 function runFrame() {
+  const start = performance.now();
   const buf = emulator.run_frame();
+
+  overhead += performance.now() - start;
+  if (performance.now() - overhead_start > 1000) {
+    console.log("Spent", overhead, "ms emulating");
+    overhead_start = performance.now();
+    overhead = 0;
+  }
+
   ctx.putImageData(new ImageData(buf, 160, 144), 0, 0);
   ctx.drawImage( lcd, 0, 0, 2*lcd.width, 2*lcd.height );
+
   requestAnimationFrame(runFrame);
 }
 
-let now = Date.now();
+let now = performance.now();
 let count = 0;
 function fpsTest() {
   count += 1;
-  if (Date.now() - now > 1000) {
+  if (performance.now() - now > 1000) {
     console.log("FPS:", count);
-    now = Date.now();
+    now = performance.now();
     count = 0;
   }
   requestAnimationFrame(fpsTest);
