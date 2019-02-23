@@ -14,6 +14,16 @@ function toPaddedHexString(num, len) {
     return "0".repeat(len - str.length) + str;
 }
 
+window.keyDown = function(ev) {
+  if(!emulator) { return; }
+  emulator.set_joypad_state(ev.key, true);
+}
+
+window.keyUp = function(ev) {
+  if(!emulator) { return; }
+  emulator.set_joypad_state(ev.key, false);
+}
+
 window.dropHandler = function(ev) {
   document.querySelector('#lcd').style.border = "";
   ev.preventDefault();

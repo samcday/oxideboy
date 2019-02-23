@@ -84,4 +84,18 @@ impl WebEmu {
     pub fn get_ime_defer(&self) -> bool {
         self.gb.cpu.ime_defer
     }
+
+    pub fn set_joypad_state(&mut self, key: &str, pressed: bool) {
+        match key {
+            "ArrowUp" | "Up" => self.gb.hw.joypad.up = pressed,
+            "ArrowDown" | "Down" => self.gb.hw.joypad.down = pressed,
+            "ArrowLeft" | "Left" => self.gb.hw.joypad.left = pressed,
+            "ArrowRight" | "Right" => self.gb.hw.joypad.right = pressed,
+            "Enter" => self.gb.hw.joypad.start = pressed,
+            "Shift" => self.gb.hw.joypad.select = pressed,
+            "a" => self.gb.hw.joypad.a = pressed,
+            "s" => self.gb.hw.joypad.b = pressed,
+            _ => {}
+        }
+    }
 }
