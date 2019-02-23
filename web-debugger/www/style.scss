@@ -1,0 +1,12 @@
+@import "custom";
+@import "~bootstrap/scss/bootstrap";
+
+#root {
+	padding: 0;
+	margin: 0;
+}
+
+#fps {
+  white-space: pre;
+  font-family: monospace;
+}

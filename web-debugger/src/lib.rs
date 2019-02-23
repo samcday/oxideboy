@@ -60,4 +60,8 @@ impl WebEmu {
 
         new_frame
     }
+
+    pub fn mem_read(&self, addr: u16) -> u8 {
+        self.gb.hw.mem_get(addr)
+    }
 }

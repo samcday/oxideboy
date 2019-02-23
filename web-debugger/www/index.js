@@ -1,10 +1,17 @@
+import "./style.scss";
+
 import * as wasm from "web-debugger";
-import('./style.css');
+import 'bootstrap';
 
 var emulator = null;
 let framebuffer = null;
 var lcd = null;
 let ctx = null;
+
+function toPaddedHexString(num, len) {
+    const str = num.toString(16);
+    return "0".repeat(len - str.length) + str;
+}
 
 window.dropHandler = function(ev) {
   document.querySelector('#lcd').style.border = "";
@@ -27,8 +34,6 @@ window.dropHandler = function(ev) {
     emulator = wasm.WebEmu.new(rom);
     lcd = document.querySelector('#lcd');
     ctx = lcd.getContext('2d');
-    fpsStart = performance.now();
-    totalFrames = 0;
     runFrame();
   };
   reader.readAsArrayBuffer(file);
@@ -43,8 +48,11 @@ window.dragLeaveHandler = function(ev) {
   document.querySelector('#lcd').style.border = "";
 };
 
-var totalFrames = 0;
-var fpsStart = null;
+function updateRegisters() {
+  for (const register of document.querySelectorAll('.register')) {
+    register.value = toPaddedHexString(emulator.mem_read(parseInt(register.dataset.address)), 2);
+  }
+}
 
 var lastFrameTimestamp = null;
 let overhead_start = performance.now();
@@ -63,28 +71,59 @@ function runFrame(timestamp) {
   const start = performance.now();
   const new_frame = emulator.run_frame(delta * 1000, framebuffer);
   if (new_frame) {
-    totalFrames += 1;
+    fps.render();
     ctx.putImageData(new ImageData(framebuffer, 160, 144), 0, 0);
     ctx.drawImage( lcd, 0, 0, 2*lcd.width, 2*lcd.height );
   }
   overhead += performance.now() - start;
   if (performance.now() - overhead_start > 1000) {
     console.log("Spent", overhead, "ms emulating");
-    console.log("Gameboy framerate: ", totalFrames / (performance.now() - fpsStart) * 1000);
     overhead_start = performance.now();
     overhead = 0;
   }
+
+  updateRegisters();
 }
 
-var lastTimestamp = null;
-function fpsTest(timestamp) {
-  requestAnimationFrame(fpsTest);
-
-  if (lastTimestamp === null) {
-    lastTimestamp = timestamp;
-    return;
+const fps = new class {
+  constructor() {
+    this.fps = document.getElementById("fps");
+    this.frames = [];
+    this.lastFrameTimeStamp = performance.now();
   }
-  // console.log("Frame time:", (timestamp - lastTimestamp) * 1000, "microseconds");
-  lastTimestamp = timestamp;
-}
-requestAnimationFrame(fpsTest);
+
+  render() {
+    // Convert the delta time since the last frame render into a measure
+    // of frames per second.
+    const now = performance.now();
+    const delta = now - this.lastFrameTimeStamp;
+    this.lastFrameTimeStamp = now;
+    const fps = 1 / delta * 1000;
+
+    // Save only the latest 100 timings.
+    this.frames.push(fps);
+    if (this.frames.length > 100) {
+      this.frames.shift();
+    }
+
+    // Find the max, min, and mean of our 100 latest timings.
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    for (let i = 0; i < this.frames.length; i++) {
+      sum += this.frames[i];
+      min = Math.min(this.frames[i], min);
+      max = Math.max(this.frames[i], max);
+    }
+    let mean = sum / this.frames.length;
+
+    // Render the statistics.
+    this.fps.textContent = `
+Frames per Second:
+         latest = ${fps.toFixed(2)}
+avg of last 100 = ${mean.toFixed(2)}
+min of last 100 = ${min.toFixed(2)}
+max of last 100 = ${max.toFixed(2)}
+`.trim();
+  }
+};

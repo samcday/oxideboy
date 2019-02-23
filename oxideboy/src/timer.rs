@@ -107,7 +107,7 @@ impl Timer {
     }
 
     /// Read from the 0xFF07 TAC register.
-    pub fn reg_tac_read(&mut self) -> u8 {
+    pub fn reg_tac_read(&self) -> u8 {
         0b1111_1000 // Unused bits.
             | (if self.enabled { 0b100 } else { 0 })
             | match self.freq {

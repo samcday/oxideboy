@@ -69,7 +69,7 @@ impl GameboyHardware {
     /// Handles reads from the memory bus. This method is responsible for resolving memory addresses to the correct
     /// memory segments and registers. Generally though, mem_read should be used since it ensures components are
     /// clocked correctly and reads are prevented during situations like active DMA transfers.
-    pub fn mem_get(&mut self, addr: u16) -> u8 {
+    pub fn mem_get(&self, addr: u16) -> u8 {
         match addr {
             0x0000...0x0100 if self.bootrom_enabled => self.bootrom_read(addr),
             0x0000...0x3FFF => self.cart.rom_lo(&self.rom)[addr as usize],
