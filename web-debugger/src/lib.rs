@@ -64,4 +64,24 @@ impl WebEmu {
     pub fn mem_read(&self, addr: u16) -> u8 {
         self.gb.hw.mem_get(addr)
     }
+
+    pub fn reg_read(&self, reg: &str) -> u16 {
+        match reg {
+            "af" => self.gb.cpu.register16_get(cpu::Register16::AF),
+            "bc" => self.gb.cpu.register16_get(cpu::Register16::BC),
+            "de" => self.gb.cpu.register16_get(cpu::Register16::DE),
+            "hl" => self.gb.cpu.register16_get(cpu::Register16::HL),
+            "pc" => self.gb.cpu.pc,
+            "sp" => self.gb.cpu.sp,
+            v => panic!("unknown reg_read: {}", v),
+        }
+    }
+
+    pub fn get_ime(&self) -> bool {
+        self.gb.cpu.ime
+    }
+
+    pub fn get_ime_defer(&self) -> bool {
+        self.gb.cpu.ime_defer
+    }
 }

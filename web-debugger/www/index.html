@@ -7,278 +7,332 @@
   </head>
   <body>
     <div id="root" class="container-fluid">
-      <div class="row no-gutters">
-        <div class="col" style="width: 320px; max-width: 320px;">
+      <div class="row">
+        <div class="col border-right" style="width: 320px; max-width: 320px;">
           <div class="container">
-            <div class="row">
+            <div class="row pt-3">
               <canvas style='background:red' id="lcd" ondrop="dropHandler(event)" ondragover="dragOverHandler(event)" ondragleave="dragLeaveHandler(event)" width=320 height=288></canvas>
             </div>
-            <div class="row text-monospace">
-              <div class="col-3 px-1">
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF04">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF04">DIV</abbr>&nbsp;</span>
-                  </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF05">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF05">TIMA</abbr></span>
-                  </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF06">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF06">TMA</abbr></span>
-                  </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF07">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF07">TAC</abbr></span>
-                  </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF0F">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF0F">IF</abbr>&nbsp;</span>
-                  </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFFFF">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFFFF">IE</abbr>&nbsp;</span>
-                  </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF00">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF00">P1</abbr>&nbsp;</span>
-                  </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF01">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF01">SB</abbr>&nbsp;</span>
-                  </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF02">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF02">SC</abbr>&nbsp;</span>
-                  </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF40">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF40">LCDC</abbr></span>
-                  </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF41">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF41">STAT</abbr></span>
-                  </div>
-                </div>
-              </div>
+            <div class="row mt-1">              
+              <div class="col-12 p-0">
+                <h6>CPU</h6>
 
-              <div class="col-3 px-1">
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF42">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF42">SCY</abbr></span>
+                <form class="form-inline text-monospace">
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">AF</span>
+                    </div>
+                    <input type="text" class="form-control cpu-register" id="cpu-af" size=4 data-register="af">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF43">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF43">SCX</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">BC</span>
+                    </div>
+                    <input type="text" class="form-control cpu-register" size=4 data-register="bc">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF44">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF44">LY</abbr>&nbsp;</span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">DE</span>
+                    </div>
+                    <input type="text" class="form-control cpu-register" size=4 data-register="de">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF45">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF45">LYC</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">HL</span>
+                    </div>
+                    <input type="text" class="form-control cpu-register" size=4 data-register="hl">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF46">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF46">DMA</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">SP</span>
+                    </div>
+                    <input type="text" class="form-control cpu-register" size=4 data-register="sp">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF47">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF47">BGP</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">PC</span>
+                    </div>
+                    <input type="text" class="form-control cpu-register" size=4 data-register="pc">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF48">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF48">OBP0</abbr></span>
+                  <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="checkbox" value="" id="ime">
+                    <label for="ime">IME</label>
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF49">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF49">OBP1</abbr></span>
+                  <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="checkbox" value="" id="ime_defer">
+                    <label for="ime_defer">IME defer</label>
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF4A">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF4A">WY</abbr>&nbsp;</span>
+                </form><br/>
+
+                <h6>Timer / Interrupts / Misc</h6>
+                <form class="form-inline text-monospace">
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF04">DIV</abbr>&nbsp;</span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF04">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF4B">
-                  <div class="input-group-append">
-                    <span class="input-group-text">&nbsp;<abbr title="0xFF4B">WX</abbr>&nbsp;</span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF05">TIMA</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF05">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF10">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF10">NR10</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF06">TMA</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF06">
                   </div>
-                </div>
-              </div>
-              <div class="col-3 px-1">
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF11">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF11">NR11</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF07">TAC</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF07">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF12">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF12">NR12</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF0F">IF</abbr>&nbsp;</span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF0F">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF13">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF13">NR13</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFFFF">IE</abbr>&nbsp;</span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFFFF">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF14">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF14">NR14</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF00">P1</abbr>&nbsp;</span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF00">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF16">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF16">NR21</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF01">SB</abbr>&nbsp;</span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF01">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF17">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF17">NR22</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF02">SC</abbr>&nbsp;</span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF02">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF18">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF18">NR23</abbr></span>
+                </form><br/>
+
+                <h6>PPU</h6>
+                <form class="form-inline text-monospace">
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF40">LCDC</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF40">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF19">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF19">NR24</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF41">STAT</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF41">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF1A">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF1A">NR30</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF42">SCY&nbsp;</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF42">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF1B">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF1B">NR31</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF43">SCX</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF43">
                   </div>
-                </div>
-              </div>
-              <div class="col-3 px-1">
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF1C">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF1C">NR32</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF44">LY</abbr>&nbsp;</span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF44">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF1D">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF1D">NR33</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF45">LYC</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF45">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF1E">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF1E">NR34</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF46">DMA</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF46">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF20">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF20">NR41</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF47">BGP</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF47">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF21">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF21">NR42</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF48">OBP0</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF48">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF22">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF22">NR43</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF49">OBP1</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF49">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF23">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF23">NR44</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF4A">WY</abbr>&nbsp;</span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF4A">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF24">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF24">NR50</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text">&nbsp;<abbr title="0xFF4B">WX</abbr>&nbsp;</span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF4B">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF25">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF25">NR51</abbr></span>
+                </form><br/>
+
+                <h6>APU</h6>
+                <form class="form-inline text-monospace">
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF10">NR10</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF10">
                   </div>
-                </div>
-                <div class="input-group input-group-sm ">
-                  <input type="text" class="form-control register" data-address="0xFF26">
-                  <div class="input-group-append">
-                    <span class="input-group-text"><abbr title="0xFF26">NR52</abbr></span>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF11">NR11</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF11">
                   </div>
-                </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF12">NR12</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF12">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF13">NR13</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF13">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF14">NR14</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF14">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF16">NR21</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF16">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF17">NR22</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF17">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF18">NR23</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF18">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF19">NR24</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF19">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF1A">NR30</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF1A">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF1B">NR31</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF1B">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF1C">NR32</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF1C">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF1D">NR33</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF1D">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF1E">NR34</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF1E">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF20">NR41</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF20">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF21">NR42</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF21">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF22">NR43</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF22">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF23">NR44</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF23">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF24">NR50</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF24">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF25">NR51</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF25">
+                  </div>
+                  <div class="input-group input-group-sm w-25">
+                    <div class="input-group-prepend">
+                      <span class="input-group-text"><abbr title="0xFF26">NR52</abbr></span>
+                    </div>
+                    <input type="text" class="form-control register" size=2 data-address="0xFF26">
+                  </div>
+                </form>
               </div>
             </div>
           </div>
         </div>
         <div class="col-sm-8">
+          <i class="fas fa-pause"></i>
           Main area 'ere.
         </div>
       </div>

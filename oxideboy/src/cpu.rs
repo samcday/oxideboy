@@ -335,7 +335,7 @@ impl Cpu {
     }
 
     /// Returns the current value of a 16-bit CPU register.
-    fn register16_get(&self, reg: Register16) -> u16 {
+    pub fn register16_get(&self, reg: Register16) -> u16 {
         let (hi, lo) = match reg {
             AF => (self.a, self.f.pack()),
             BC => (self.b, self.c),
@@ -348,7 +348,7 @@ impl Cpu {
     }
 
     /// Sets a new value for a 16-bit CPU register.
-    fn register16_set(&mut self, reg: Register16, v: u16) {
+    pub fn register16_set(&mut self, reg: Register16, v: u16) {
         let (hi, lo) = match reg {
             AF => {
                 self.a = ((v & 0xFF00) >> 8) as u8;

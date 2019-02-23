@@ -2,6 +2,7 @@ import "./style.scss";
 
 import * as wasm from "web-debugger";
 import 'bootstrap';
+import '@fortawesome/fontawesome-free/css/all.css';
 
 var emulator = null;
 let framebuffer = null;
@@ -52,6 +53,11 @@ function updateRegisters() {
   for (const register of document.querySelectorAll('.register')) {
     register.value = toPaddedHexString(emulator.mem_read(parseInt(register.dataset.address)), 2);
   }
+  for (const register of document.querySelectorAll('.cpu-register')) {
+    register.value = toPaddedHexString(emulator.reg_read(register.dataset.register), 4);
+  }
+  document.querySelector('#ime').checked = emulator.get_ime();
+  document.querySelector('#ime_defer').checked = emulator.get_ime_defer();
 }
 
 var lastFrameTimestamp = null;
@@ -65,7 +71,7 @@ function runFrame(timestamp) {
     return;
   }
 
-  const delta = timestamp - lastFrameTimestamp;
+  const delta = Math.min(1000, timestamp - lastFrameTimestamp) // Don't try and emulate more than a second of time;
   lastFrameTimestamp = timestamp;
 
   const start = performance.now();
