@@ -35,27 +35,29 @@ impl WebEmu {
     pub fn new(data: Uint8Array) -> WebEmu {
         utils::set_panic_hook();
 
-        log!("Copying ROM.... {}", data.byte_length());
-        // let mut rom: Vec<u8> = Vec::with_capacity(data.byte_length() as usize);
         let mut rom: Vec<u8> = vec![0; data.byte_length() as usize];
         data.copy_to(&mut rom);
 
-        log!("Creating emu....");
         let mut gb = Gameboy::new(Model::DMG0, rom);
+        gb.skip_bootrom();
         gb.hw.ppu.framebuffer_fmt = ppu::PixelFormat::ABGR;
         WebEmu { gb }
     }
 
-    pub fn run_frame(&mut self) -> Uint8ClampedArray {
-        for _ in 0..17556 {
-            self.gb.run_instruction();
-        }
+    pub fn run_frame(&mut self, microseconds: f32, framebuffer: Uint8ClampedArray) -> bool {
+        let mut new_frame = false;
 
-        unsafe {
-            Uint8ClampedArray::view(slice::from_raw_parts_mut(
-                (&mut self.gb.hw.ppu.framebuffer).as_ptr() as *mut u8,
-                160 * 144 * 4,
-            ))
-        }
+        let frame_cb = |ppu_buf: &[u32]| {
+            new_frame = true;
+            // Copy the PPU framebuffer to the JS Canvas framebuffer.
+            let buf = unsafe {
+                Uint8ClampedArray::view(slice::from_raw_parts((ppu_buf).as_ptr() as *const u8, 160 * 144 * 4))
+            };
+            framebuffer.set(&buf, 0);
+        };
+
+        self.gb.run_for_microseconds(microseconds, frame_cb);
+
+        new_frame
     }
 }

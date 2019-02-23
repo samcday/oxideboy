@@ -380,10 +380,13 @@ impl Ppu {
     }
 
     /// Advances the PPU by a single CPU clock step.
-    pub fn clock(&mut self, interrupts: &mut InterruptController) {
+    /// Returns true if this clock cycle started the VBlank
+    pub fn clock(&mut self, interrupts: &mut InterruptController) -> bool {
         if !self.enabled {
-            return;
+            return false;
         }
+
+        let mut hit_vblank = false;
 
         self.prev_mode = self.mode;
         self.cycles += 1;
@@ -409,6 +412,7 @@ impl Ppu {
                         if self.interrupt_vblank {
                             interrupts.request(Interrupt::Stat);
                         }
+                        hit_vblank = true;
                     }
                 }
             }
@@ -451,6 +455,7 @@ impl Ppu {
                 self.pixel_transfer(interrupts);
             }
         };
+        hit_vblank
     }
 
     // Searches through the OAM table to find any OBJs that overlap the line we're currently drawing.

@@ -12,6 +12,8 @@ pub mod timer;
 use cpu::Cpu;
 use hardware::GameboyHardware;
 
+const CYCLES_PER_MICRO: f32 = 1048576.0 / 1000000.0;
+
 // The main entrypoint into Oxideboy. Represents an emulation session for a Gameboy.
 pub struct Gameboy {
     pub cpu: Cpu,
@@ -37,6 +39,26 @@ impl Gameboy {
     /// Run the Gameboy for a single CPU instruction. Useful for debuggers / tests.
     pub fn run_instruction(&mut self) {
         self.cpu.step(&mut self.hw);
+    }
+
+    /// Run the Gameboy for the specified number of microseconds.
+    /// This entrypoint is useful for emulating the Gameboy in real-time, while adhering to a refresh rate or some other
+    /// external timing control. For example, the web emulator uses requestAnimationFrame to drive emulation, which
+    /// provides a microsecond-resolution timestamp that can be used to determine how many microseconds passed since the
+    /// last emulation step.
+    /// While executing, a new video frame may become available. If so, the provided closure will be called.
+    pub fn run_for_microseconds<T: FnMut(&[u32])>(&mut self, num_micros: f32, mut frame_cb: T) {
+        self.hw.cycle_count = 0;
+        let desired_cycles = (CYCLES_PER_MICRO * num_micros) as u32;
+
+        while self.hw.cycle_count < desired_cycles {
+            self.cpu.step(&mut self.hw);
+
+            if self.hw.new_frame {
+                self.hw.new_frame = false;
+                frame_cb(&self.hw.ppu.framebuffer);
+            }
+        }
     }
 
     pub fn skip_bootrom(&mut self) {

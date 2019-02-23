@@ -30,6 +30,9 @@ pub struct GameboyHardware {
 
     pub rom: Vec<u8>,
     pub bootrom_enabled: bool,
+
+    pub cycle_count: u32,
+    pub new_frame: bool, // Set to true when a vsync occurs.
 }
 
 impl GameboyHardware {
@@ -49,8 +52,10 @@ impl GameboyHardware {
             timer: Timer::new(),
             ram: [0; 0x2000],
             hram: [0; 0x7F],
-
             bootrom_enabled: true,
+
+            cycle_count: 0,
+            new_frame: false,
         }
     }
 
@@ -214,6 +219,8 @@ impl GameboyHardware {
     }
 
     pub fn clock(&mut self) {
+        self.cycle_count += 1;
+
         self.timer.clock(&mut self.interrupts);
         let (dma_active, dma_src, dma_dst) = self.dma.clock();
         if dma_active {
@@ -221,7 +228,9 @@ impl GameboyHardware {
             self.ppu.oam_write(dma_dst, v);
         }
         self.serial.clock();
-        self.ppu.clock(&mut self.interrupts);
+        if self.ppu.clock(&mut self.interrupts) {
+            self.new_frame = true;
+        }
         self.apu.clock();
     }
 }
