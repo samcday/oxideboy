@@ -1,6 +1,16 @@
 @import "custom";
 @import "~bootstrap/scss/bootstrap";
 
+.registers {
+	font-size: 0.65625rem;
+}
+.registers input {
+	border: 0 none;
+}
+
+td.label {
+	text-align: right;
+}
 
 #fps {
   white-space: pre;
