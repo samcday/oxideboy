@@ -13,11 +13,12 @@ use cpu::Cpu;
 use hardware::GameboyHardware;
 
 const CYCLES_PER_MICRO: f32 = 1048576.0 / 1000000.0;
+pub const NOOP_LISTENER: NoopListener = NoopListener {};
 
 // The main entrypoint into Oxideboy. Represents an emulation session for a Gameboy.
-pub struct Gameboy {
+pub struct Gameboy<T: EventListener> {
     pub cpu: Cpu,
-    pub hw: GameboyHardware,
+    pub hw: GameboyHardware<T>,
 }
 
 /// There are different models of the Gameboy that each behave slightly differently (different HW quirks, etc).
@@ -28,11 +29,32 @@ pub enum Model {
     DMG,
 }
 
-impl Gameboy {
-    pub fn new(model: Model, rom: Vec<u8>) -> Gameboy {
+/// This trait can be implemented to get notified when interesting things occur inside the emulator.
+pub trait EventListener {
+    /// Called when the PPU has completed a frame.
+    fn on_frame(&mut self, frame: &[u32]);
+
+    /// Called when a memory address is written to.
+    fn on_memory_write(&mut self, addr: u16, v: u8);
+
+    /// The LD B,B instruction is informally considered a debug breakpoint instruction.
+    fn on_debug_breakpoint(&mut self);
+}
+
+/// An empty EventListener. Use NOOP_LISTENER if you're not interested in anything that occurs inside the emulator.
+pub struct NoopListener {}
+
+impl EventListener for NoopListener {
+    fn on_frame(&mut self, _: &[u32]) {}
+    fn on_memory_write(&mut self, _: u16, _: u8) {}
+    fn on_debug_breakpoint(&mut self) {}
+}
+
+impl<T: EventListener> Gameboy<T> {
+    pub fn new(model: Model, rom: Vec<u8>, listener: T) -> Gameboy<T> {
         Gameboy {
             cpu: Cpu::new(),
-            hw: GameboyHardware::new(model, rom),
+            hw: GameboyHardware::new(model, rom, listener),
         }
     }
 
@@ -47,7 +69,7 @@ impl Gameboy {
     /// provides a microsecond-resolution timestamp that can be used to determine how many microseconds passed since the
     /// last emulation step.
     /// While executing, a new video frame may become available. If so, the provided closure will be called.
-    pub fn run_for_microseconds<T: FnMut(&[u32])>(&mut self, num_micros: f32, mut frame_cb: T) {
+    pub fn run_for_microseconds(&mut self, num_micros: f32) {
         self.hw.cycle_count = 0;
         let desired_cycles = (CYCLES_PER_MICRO * num_micros) as u32;
 
@@ -56,7 +78,7 @@ impl Gameboy {
 
             if self.hw.new_frame {
                 self.hw.new_frame = false;
-                frame_cb(&self.hw.ppu.framebuffer);
+                // frame_cb(&self.hw.ppu.framebuffer);
             }
         }
     }

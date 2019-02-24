@@ -2,7 +2,7 @@ use oxideboy::*;
 use std::time::Instant;
 
 fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
-    let mut gb = Gameboy::new(model, rom.to_vec());
+    let mut gb = Gameboy::new(model, rom.to_vec(), NoopListener {});
     if !enable_bootrom {
         gb.skip_bootrom();
     }

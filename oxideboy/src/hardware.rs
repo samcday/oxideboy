@@ -9,13 +9,14 @@ use crate::joypad::Joypad;
 use crate::ppu::Ppu;
 use crate::serial::Serial;
 use crate::timer::Timer;
+use crate::EventListener;
 use crate::Model;
 
 static DMG0_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg0.rom");
 static DMG_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg.rom");
 
 /// Holds all the various components of the Gameboy, aside from the CPU.
-pub struct GameboyHardware {
+pub struct GameboyHardware<T: EventListener> {
     pub model: Model,
     pub cart: Cartridge,
     pub apu: Apu,
@@ -33,10 +34,12 @@ pub struct GameboyHardware {
 
     pub cycle_count: u32,
     pub new_frame: bool, // Set to true when a vsync occurs.
+
+    listener: T,
 }
 
-impl GameboyHardware {
-    pub fn new(model: Model, rom: Vec<u8>) -> GameboyHardware {
+impl<T: EventListener> GameboyHardware<T> {
+    pub fn new(model: Model, rom: Vec<u8>, listener: T) -> GameboyHardware<T> {
         let cart = Cartridge::from_rom(&rom);
 
         GameboyHardware {
@@ -56,6 +59,7 @@ impl GameboyHardware {
 
             cycle_count: 0,
             new_frame: false,
+            listener,
         }
     }
 

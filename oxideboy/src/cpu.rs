@@ -7,6 +7,7 @@
 // TODO: remove me when refactor is complete.
 #![allow(dead_code)]
 
+use crate::EventListener;
 use crate::GameboyHardware;
 
 /// The main Cpu struct, containing all the CPU registers and core CPU state. Many of the CPU instructions modify the
@@ -171,7 +172,7 @@ impl Cpu {
 
     /// Runs the CPU for a single fetch-decode-execute step. The actual number of cycles this will take depends on which
     /// instruction is executed.
-    pub fn step(&mut self, hw: &mut GameboyHardware) {
+    pub fn step<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>) {
         // If the CPU is currently halted, we need to pump a clock cycle of the other hardware, so that if there's a new
         // interrupt available, we can wake up from HALT and continue on.
         if self.halted {
@@ -258,7 +259,7 @@ impl Cpu {
     }
 
     /// Process any pending interrupts. Called before the CPU fetches the next instruction to execute.
-    fn process_interrupts(&mut self, hw: &mut GameboyHardware) {
+    fn process_interrupts<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>) {
         // We can bail quickly if there's no interrupts to process.
         if !hw.interrupts.pending {
             return;
@@ -369,7 +370,7 @@ impl Cpu {
     }
 
     /// Resolves this Operand into a concrete 8-bit value.
-    pub fn operand_get(&mut self, hw: &mut GameboyHardware, o: Operand) -> u8 {
+    pub fn operand_get<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand) -> u8 {
         match o {
             Operand::Register(r) => self.register_get(r),
             Operand::Immediate(d) => d,
@@ -403,7 +404,7 @@ impl Cpu {
     }
 
     /// Saves provided 8-bit value into Operand destination.
-    pub fn operand_set(&mut self, hw: &mut GameboyHardware, o: Operand, v: u8) {
+    pub fn operand_set<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand, v: u8) {
         match o {
             Operand::Register(r) => self.register_set(r, v),
             Operand::Immediate(_) => panic!("Attempted to write to immediate operand"),
@@ -431,7 +432,7 @@ impl Cpu {
     }
 
     /// Resolves the value for a given 16-bit instruction operand.
-    fn operand16_get(&mut self, hw: &mut GameboyHardware, o: Operand16) -> u16 {
+    fn operand16_get<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand16) -> u16 {
         match o {
             Operand16::Register(r) => self.register16_get(r),
             Operand16::Immediate(d) => d,
@@ -440,7 +441,7 @@ impl Cpu {
     }
 
     /// Writes a new value to the target of a 16-bit instruction operand.
-    fn operand16_set(&mut self, hw: &mut GameboyHardware, o: Operand16, v: u16) {
+    fn operand16_set<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand16, v: u16) {
         match o {
             Operand16::Register(r) => self.register16_set(r, v),
             Operand16::Immediate(_) => panic!("Attempted to write to immediate operand"),
@@ -468,7 +469,7 @@ impl Cpu {
         }
     }
 
-    fn inc(&mut self, hw: &mut GameboyHardware, o: Operand) {
+    fn inc<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand) {
         let v = self.operand_get(hw, o).wrapping_add(1);
         self.f.z = v == 0;
         self.f.n = false;
@@ -476,7 +477,7 @@ impl Cpu {
         self.operand_set(hw, o, v);
     }
 
-    fn inc16(&mut self, hw: &mut GameboyHardware, reg: Register16) {
+    fn inc16<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, reg: Register16) {
         let v = self.register16_get(reg);
         if v >= 0xFE00 && v <= 0xFEFF {
             // TODO: this potentially triggers OAM corruption bug.
@@ -485,7 +486,7 @@ impl Cpu {
         hw.clock();
     }
 
-    fn dec(&mut self, hw: &mut GameboyHardware, o: Operand) {
+    fn dec<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand) {
         let v = self.operand_get(hw, o).wrapping_sub(1);
         self.f.z = v == 0;
         self.f.n = true;
@@ -493,7 +494,7 @@ impl Cpu {
         self.operand_set(hw, o, v);
     }
 
-    fn dec16(&mut self, hw: &mut GameboyHardware, r: Register16) {
+    fn dec16<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, r: Register16) {
         let v = self.register16_get(r);
         if v >= 0xFE00 && v <= 0xFEFF {
             // TODO: this potentially triggers OAM corruption bug.
@@ -502,7 +503,7 @@ impl Cpu {
         hw.clock();
     }
 
-    fn add(&mut self, hw: &mut GameboyHardware, o: Operand, carry: bool) {
+    fn add<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand, carry: bool) {
         let carry = if carry && self.f.c { 1 } else { 0 };
 
         let old = self.a;
@@ -515,7 +516,7 @@ impl Cpu {
         self.f.c = (old as u16) + (v as u16) + (carry as u16) > 0xFF;
     }
 
-    fn add16(&mut self, hw: &mut GameboyHardware, r: Register16) {
+    fn add16<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, r: Register16) {
         let hl = self.register16_get(HL);
         let v = self.register16_get(r);
         let (new_hl, overflow) = hl.overflowing_add(v);
@@ -528,7 +529,7 @@ impl Cpu {
         self.f.c = overflow;
     }
 
-    fn add_sp_r8(&mut self, hw: &mut GameboyHardware, d: i8) {
+    fn add_sp_r8<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, d: i8) {
         let d = d as i16 as u16;
         let sp = self.sp;
 
@@ -543,7 +544,7 @@ impl Cpu {
         self.f.c = ((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0;
     }
 
-    fn sub(&mut self, hw: &mut GameboyHardware, o: Operand, carry: bool, store: bool) {
+    fn sub<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand, carry: bool, store: bool) {
         let carry = if carry && self.f.c { 1 } else { 0 };
 
         let a = self.a;
@@ -559,12 +560,18 @@ impl Cpu {
         self.f.c = (a as u16) < (v as u16) + (carry as u16);
     }
 
-    fn ld(&mut self, hw: &mut GameboyHardware, lhs: Operand, rhs: Operand) {
+    fn ld<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, lhs: Operand, rhs: Operand) {
         let v = self.operand_get(hw, rhs);
         self.operand_set(hw, lhs, v);
     }
 
-    fn ld16(&mut self, hw: &mut GameboyHardware, lhs: Operand16, rhs: Operand16, extra_clock: bool) {
+    fn ld16<T: EventListener>(
+        &mut self,
+        hw: &mut GameboyHardware<T>,
+        lhs: Operand16,
+        rhs: Operand16,
+        extra_clock: bool,
+    ) {
         let v = self.operand16_get(hw, rhs);
         self.operand16_set(hw, lhs, v);
 
@@ -575,7 +582,7 @@ impl Cpu {
         }
     }
 
-    fn ld_hl_sp(&mut self, hw: &mut GameboyHardware, d: i8) {
+    fn ld_hl_sp<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, d: i8) {
         let sp = self.sp;
         let d = d as i16 as u16;
         let v = sp.wrapping_add(d);
@@ -628,7 +635,7 @@ impl Cpu {
         self.f.c = true;
     }
 
-    fn bitwise(&mut self, hw: &mut GameboyHardware, op: BitwiseOp, o: Operand) {
+    fn bitwise<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, op: BitwiseOp, o: Operand) {
         let a = self.a;
         let v = self.operand_get(hw, o);
         let mut hc = false;
@@ -646,19 +653,19 @@ impl Cpu {
         self.f.h = hc;
     }
 
-    fn bit(&mut self, hw: &mut GameboyHardware, b: u8, o: Operand) {
+    fn bit<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, b: u8, o: Operand) {
         let v = self.operand_get(hw, o) & (1 << b);
         self.f.z = v == 0;
         self.f.n = false;
         self.f.h = true;
     }
 
-    fn setbit(&mut self, hw: &mut GameboyHardware, b: u8, o: Operand, on: bool) {
+    fn setbit<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, b: u8, o: Operand, on: bool) {
         let v = self.operand_get(hw, o);
         self.operand_set(hw, o, if on { v | 1 << b } else { v & !(1 << b) });
     }
 
-    fn rl(&mut self, hw: &mut GameboyHardware, o: Operand, set_zero: bool, preserve_lsb: bool) {
+    fn rl<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand, set_zero: bool, preserve_lsb: bool) {
         let v = self.operand_get(hw, o);
         let lsb = if preserve_lsb && self.f.c { 1 } else { 0 };
         let carry = v & 0x80 > 0;
@@ -669,7 +676,7 @@ impl Cpu {
         self.f.c = carry;
     }
 
-    fn rlc(&mut self, hw: &mut GameboyHardware, o: Operand, extended: bool) {
+    fn rlc<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand, extended: bool) {
         let v = self.operand_get(hw, o);
         let carry = v & 0x80 > 0;
         let lsb = if carry { 1 } else { 0 };
@@ -680,7 +687,7 @@ impl Cpu {
         self.f.c = carry;
     }
 
-    fn rr(&mut self, hw: &mut GameboyHardware, o: Operand, extended: bool) {
+    fn rr<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand, extended: bool) {
         let v = self.operand_get(hw, o);
         let msb = if self.f.c { 0x80 } else { 0 };
         let carry = v & 0x1 > 0;
@@ -691,7 +698,7 @@ impl Cpu {
         self.f.c = carry;
     }
 
-    fn rrc(&mut self, hw: &mut GameboyHardware, o: Operand, extended: bool) {
+    fn rrc<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand, extended: bool) {
         let v = self.operand_get(hw, o);
         let carry = v & 0x1 > 0;
         let msb = if carry { 0x80 } else { 0 };
@@ -702,7 +709,7 @@ impl Cpu {
         self.f.c = carry;
     }
 
-    fn shift_right(&mut self, hw: &mut GameboyHardware, o: Operand, preserve_msb: bool) {
+    fn shift_right<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand, preserve_msb: bool) {
         let v = self.operand_get(hw, o);
         let carry = v & 0x01 > 0;
         let preserve = if preserve_msb { v & 0x80 } else { 0 };
@@ -713,7 +720,7 @@ impl Cpu {
         self.f.c = carry;
     }
 
-    fn swap(&mut self, hw: &mut GameboyHardware, o: Operand) {
+    fn swap<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, o: Operand) {
         let v = self.operand_get(hw, o);
         let v = ((v & 0xF) << 4) | ((v & 0xF0) >> 4);
         self.operand_set(hw, o, v);
@@ -721,7 +728,7 @@ impl Cpu {
         self.f.z = v == 0;
     }
 
-    fn stack_push(&mut self, hw: &mut GameboyHardware, v: u16) {
+    fn stack_push<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, v: u16) {
         if self.sp >= 0xFE00 && self.sp <= 0xFEFF {
             // TODO: this potentially triggers OAM corruption bug.
         }
@@ -731,7 +738,7 @@ impl Cpu {
         hw.mem_write16(sp, v);
     }
 
-    fn stack_pop(&mut self, hw: &mut GameboyHardware) -> u16 {
+    fn stack_pop<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>) -> u16 {
         if self.sp >= 0xFDFF && self.sp <= 0xFEFE {
             // TODO: this potentially triggers OAM corruption bug.
         }
@@ -743,13 +750,13 @@ impl Cpu {
         v
     }
 
-    fn push(&mut self, hw: &mut GameboyHardware, r: Register16) {
+    fn push<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, r: Register16) {
         let v = self.register16_get(r);
         hw.clock();
         self.stack_push(hw, v);
     }
 
-    fn pop(&mut self, hw: &mut GameboyHardware, r: Register16) {
+    fn pop<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, r: Register16) {
         let mut v = self.stack_pop(hw);
         if let AF = r {
             // Reset bits 0-3 in F.
@@ -758,13 +765,13 @@ impl Cpu {
         self.register16_set(r, v);
     }
 
-    fn push_and_jump(&mut self, hw: &mut GameboyHardware, addr: u16) {
+    fn push_and_jump<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, addr: u16) {
         let pc = self.pc;
         self.stack_push(hw, pc);
         self.pc = addr;
     }
 
-    fn call(&mut self, hw: &mut GameboyHardware, cc: Option<FlagCondition>, addr: u16) {
+    fn call<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, cc: Option<FlagCondition>, addr: u16) {
         if !self.f.check_jmp_condition(cc) {
             return;
         }
@@ -772,7 +779,7 @@ impl Cpu {
         self.push_and_jump(hw, addr);
     }
 
-    fn jp(&mut self, hw: &mut GameboyHardware, cc: Option<FlagCondition>, o: Operand16) {
+    fn jp<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, cc: Option<FlagCondition>, o: Operand16) {
         if !self.f.check_jmp_condition(cc) {
             return;
         }
@@ -787,7 +794,7 @@ impl Cpu {
         }
     }
 
-    fn jr(&mut self, hw: &mut GameboyHardware, cc: Option<FlagCondition>, n: u8) {
+    fn jr<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, cc: Option<FlagCondition>, n: u8) {
         if !self.f.check_jmp_condition(cc) {
             return;
         }
@@ -795,7 +802,7 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(n as i8 as i16 as u16);
     }
 
-    fn ret(&mut self, hw: &mut GameboyHardware, cc: Option<FlagCondition>, ei: bool) {
+    fn ret<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, cc: Option<FlagCondition>, ei: bool) {
         if !self.f.check_jmp_condition(cc) {
             hw.clock();
             return;
@@ -812,7 +819,7 @@ impl Cpu {
         self.pc = pc;
     }
 
-    fn rst(&mut self, hw: &mut GameboyHardware, a: u8) {
+    fn rst<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, a: u8) {
         hw.clock();
         self.push_and_jump(hw, a as u16);
     }
