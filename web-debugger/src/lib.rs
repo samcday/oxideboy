@@ -25,40 +25,51 @@ cfg_if! {
     }
 }
 
+struct DebugListener {
+    mem_writes: Vec<u16>,
+    frame_cb: js_sys::Function,
+}
+
+impl EventListener for DebugListener {
+    fn on_frame(&mut self, ppu_buf: &[u32]) {
+        // Copy the PPU framebuffer to the JS Canvas framebuffer.
+        let buf =
+            unsafe { Uint8ClampedArray::view(slice::from_raw_parts((ppu_buf).as_ptr() as *const u8, 160 * 144 * 4)) };
+
+        let _ = self.frame_cb.call1(&JsValue::NULL, &buf);
+    }
+    fn on_memory_write(&mut self, addr: u16, _: u8) {
+        self.mem_writes.push(addr);
+    }
+    fn on_debug_breakpoint(&mut self) {}
+}
+
 #[wasm_bindgen]
 pub struct WebEmu {
-    gb: Gameboy,
+    gb: Gameboy<DebugListener>,
 }
 
 #[wasm_bindgen]
 impl WebEmu {
-    pub fn new(data: Uint8Array) -> WebEmu {
+    pub fn new(data: Uint8Array, frame_cb: js_sys::Function) -> WebEmu {
         utils::set_panic_hook();
+
+        let listener = DebugListener {
+            mem_writes: Vec::new(),
+            frame_cb,
+        };
 
         let mut rom: Vec<u8> = vec![0; data.byte_length() as usize];
         data.copy_to(&mut rom);
 
-        let mut gb = Gameboy::new(Model::DMG0, rom);
+        let mut gb = Gameboy::new(Model::DMG0, rom, listener);
         gb.skip_bootrom();
         gb.hw.ppu.framebuffer_fmt = ppu::PixelFormat::ABGR;
         WebEmu { gb }
     }
 
-    pub fn run_frame(&mut self, microseconds: f32, framebuffer: Uint8ClampedArray) -> bool {
-        let mut new_frame = false;
-
-        let frame_cb = |ppu_buf: &[u32]| {
-            new_frame = true;
-            // Copy the PPU framebuffer to the JS Canvas framebuffer.
-            let buf = unsafe {
-                Uint8ClampedArray::view(slice::from_raw_parts((ppu_buf).as_ptr() as *const u8, 160 * 144 * 4))
-            };
-            framebuffer.set(&buf, 0);
-        };
-
-        self.gb.run_for_microseconds(microseconds, frame_cb);
-
-        new_frame
+    pub fn run(&mut self, microseconds: f32) {
+        self.gb.run_for_microseconds(microseconds);
     }
 
     pub fn mem_read(&self, addr: u16) -> u8 {

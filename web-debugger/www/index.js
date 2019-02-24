@@ -5,7 +5,6 @@ import 'bootstrap';
 import '@fortawesome/fontawesome-free/css/all.css';
 
 var emulator = null;
-let framebuffer = null;
 var lcd = null;
 let ctx = null;
 
@@ -41,8 +40,11 @@ window.dropHandler = function(ev) {
   var reader = new FileReader();
   reader.onload = function(e) {
     let rom = new Uint8Array(e.target.result);
-    framebuffer = new Uint8ClampedArray(160 * 144 * 4);
-    emulator = wasm.WebEmu.new(rom);
+    emulator = wasm.WebEmu.new(rom, (framebuffer) => {
+      fps.render();
+      ctx.putImageData(new ImageData(framebuffer, 160, 144), 0, 0);
+      ctx.drawImage( lcd, 0, 0, 2*lcd.width, 2*lcd.height );
+    });
     lcd = document.querySelector('#lcd');
     ctx = lcd.getContext('2d');
     runFrame();
@@ -85,12 +87,7 @@ function runFrame(timestamp) {
   lastFrameTimestamp = timestamp;
 
   const start = performance.now();
-  const new_frame = emulator.run_frame(delta * 1000, framebuffer);
-  if (new_frame) {
-    fps.render();
-    ctx.putImageData(new ImageData(framebuffer, 160, 144), 0, 0);
-    ctx.drawImage( lcd, 0, 0, 2*lcd.width, 2*lcd.height );
-  }
+  emulator.run(delta * 1000);
   overhead += performance.now() - start;
   if (performance.now() - overhead_start > 1000) {
     console.log("Spent", overhead, "ms emulating");
@@ -143,3 +140,42 @@ max of last 100 = ${max.toFixed(2)}
 `.trim();
   }
 };
+
+const tbody = document.querySelector("#memory_viewer table tbody");
+
+// console.time("memory_viewer DOM");
+// for (var i = 0; i < 65535; ) {
+//   const row = document.createElement("tr");
+//   const addrCell = document.createElement("td");
+//   addrCell.innerText = toPaddedHexString(i, 4).toUpperCase();
+//   row.appendChild(addrCell);
+
+//   for (var j = 0; j < 16; j++, i++) {
+//     const cell = document.createElement("td");
+//     cell.dataset.loc = i;
+//     cell.id = `memory_cell_${i}`;
+//     cell.innerText = "FF";
+//     row.appendChild(cell);
+//   }
+//   tbody.appendChild(row);
+// }
+// console.timeEnd("memory_viewer DOM");
+
+console.time("memory_viewer innerHTML");
+var html = "";
+for (var i = 0; i < 65535;) {
+  html += "<tr>";
+  html += "<td>";
+  html += toPaddedHexString(i, 4).toUpperCase();
+  html += "</td>";
+
+  for (var j = 0; j < 16; j++, i++) {
+    html += `<td id="memory_cell_${i}" data-loc="${i}">`;
+    html += "FF";
+    html += "</td>";
+  }
+  html += "<td></td>";
+  html += "</tr>";
+}
+tbody.innerHTML = html;
+console.timeEnd("memory_viewer innerHTML");

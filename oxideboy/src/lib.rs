@@ -68,18 +68,12 @@ impl<T: EventListener> Gameboy<T> {
     /// external timing control. For example, the web emulator uses requestAnimationFrame to drive emulation, which
     /// provides a microsecond-resolution timestamp that can be used to determine how many microseconds passed since the
     /// last emulation step.
-    /// While executing, a new video frame may become available. If so, the provided closure will be called.
     pub fn run_for_microseconds(&mut self, num_micros: f32) {
         self.hw.cycle_count = 0;
         let desired_cycles = (CYCLES_PER_MICRO * num_micros) as u32;
 
         while self.hw.cycle_count < desired_cycles {
             self.cpu.step(&mut self.hw);
-
-            if self.hw.new_frame {
-                self.hw.new_frame = false;
-                // frame_cb(&self.hw.ppu.framebuffer);
-            }
         }
     }
 

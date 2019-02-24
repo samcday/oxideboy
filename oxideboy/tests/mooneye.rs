@@ -1,35 +1,26 @@
-use core::cell::RefCell;
 use oxideboy::*;
-use std::rc::Rc;
 use std::time::Instant;
 
 struct DebugBreakpointListener {
-    breakpoint_hit: Rc<RefCell<bool>>,
+    breakpoint_hit: bool,
 }
 
 impl EventListener for DebugBreakpointListener {
     fn on_frame(&mut self, _: &[u32]) {}
     fn on_memory_write(&mut self, _: u16, _: u8) {}
     fn on_debug_breakpoint(&mut self) {
-        self.breakpoint_hit.replace(true);
+        self.breakpoint_hit = true
     }
 }
 
 fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
-    let breakpoint_hit = Rc::new(RefCell::new(false));
-    let mut gb = Gameboy::new(
-        model,
-        rom.to_vec(),
-        DebugBreakpointListener {
-            breakpoint_hit: breakpoint_hit.clone(),
-        },
-    );
+    let mut gb = Gameboy::new(model, rom.to_vec(), DebugBreakpointListener { breakpoint_hit: false });
     if !enable_bootrom {
         gb.skip_bootrom();
     }
 
     let start = Instant::now();
-    while !(*breakpoint_hit.borrow()) {
+    while !gb.hw.listener.breakpoint_hit {
         gb.run_instruction();
 
         if start.elapsed().as_secs() > 10 {

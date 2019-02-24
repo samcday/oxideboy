@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     let mut rom = Vec::new();
     f.read_to_end(&mut rom)?;
 
-    let mut gb = Gameboy::new(Model::DMG0, rom);
+    let mut gb = Gameboy::new(Model::DMG0, rom, NoopListener {});
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();

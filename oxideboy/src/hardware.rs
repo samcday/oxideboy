@@ -33,7 +33,6 @@ pub struct GameboyHardware<T: EventListener> {
     pub bootrom_enabled: bool,
 
     pub cycle_count: u32,
-    pub new_frame: bool, // Set to true when a vsync occurs.
 
     pub listener: T,
 }
@@ -58,7 +57,6 @@ impl<T: EventListener> GameboyHardware<T> {
             bootrom_enabled: true,
 
             cycle_count: 0,
-            new_frame: false,
             listener,
         }
     }
@@ -162,6 +160,8 @@ impl<T: EventListener> GameboyHardware<T> {
             return;
         }
 
+        self.listener.on_memory_write(addr, v);
+
         match addr {
             0x0000...0x7FFF => self.cart.write(addr, v),
             0x8000...0x9FFF => self.ppu.vram_write(addr - 0x8000, v),
@@ -233,7 +233,7 @@ impl<T: EventListener> GameboyHardware<T> {
         }
         self.serial.clock();
         if self.ppu.clock(&mut self.interrupts) {
-            self.new_frame = true;
+            self.listener.on_frame(&self.ppu.framebuffer);
         }
         self.apu.clock();
     }
