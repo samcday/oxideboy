@@ -35,7 +35,7 @@ pub struct GameboyHardware<T: EventListener> {
     pub cycle_count: u32,
     pub new_frame: bool, // Set to true when a vsync occurs.
 
-    listener: T,
+    pub listener: T,
 }
 
 impl<T: EventListener> GameboyHardware<T> {

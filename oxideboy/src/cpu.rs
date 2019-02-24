@@ -28,8 +28,6 @@ pub struct Cpu {
     pub ime: bool,
     pub ime_defer: bool,
     pub halted: bool,
-
-    pub mooneye_breakpoint: bool,
 }
 
 /// CPU flags contained in the "F" register:
@@ -166,7 +164,6 @@ impl Cpu {
             ime: false,
             ime_defer: false,
             halted: false,
-            mooneye_breakpoint: false,
         }
     }
 
@@ -221,7 +218,7 @@ impl Cpu {
             JP(cc, o) => self.jp(hw, cc, o),
             JR(cc, r8) => self.jr(hw, cc, r8),
             LD(lhs @ Operand::Register(B), rhs @ Operand::Register(B)) => {
-                self.mooneye_breakpoint = true;
+                hw.listener.on_debug_breakpoint();
                 self.ld(hw, lhs, rhs);
             }
             LD(lhs, rhs) => self.ld(hw, lhs, rhs),
