@@ -2,11 +2,82 @@ import "./style.scss";
 
 import React from "react";
 import ReactDOM from "react-dom";
-
+import SplitPane from "react-split-pane";
+import {FixedSizeList} from "react-window";
 import * as wasm from "web-debugger";
 import 'bootstrap';
 import '@fortawesome/fontawesome-free/css/all.css';
 
+function toPaddedHexString(num, len) {
+    const str = num.toString(16);
+    return "0".repeat(len - str.length) + str;
+}
+
+class App extends React.Component {
+  constructor(props) {
+    super(props);
+
+    let memoryMap = new Uint8Array(65536);
+    memoryMap.fill(255, 0, 65536);
+
+    this.state = {memoryViewerHeight: 200, memoryMap};
+  }
+
+  render() {
+    return (
+      <div className="d-flex min-vh-100">
+        <div className="left-sidebar min-vh-100 border-right">
+          <canvas width="320" height="288" className="border-bottom" />
+        </div>
+        <div className="bg-light flex-fill position-relative">
+          <SplitPane ref="split" split="horizontal" defaultSize="80%" onChange={this.resizeMemoryViewer.bind(this)}>
+            <MemoryViewer height={this.state.memoryViewerHeight} map={this.state.memoryMap} />
+            <div>
+            </div>
+          </SplitPane>
+        </div>
+      </div>
+    );
+  }
+
+  componentDidMount() {
+    this.setState({memoryViewerHeight: this.refs.split.pane1.getBoundingClientRect().height});
+  }
+
+  resizeMemoryViewer(newSize) {
+    this.setState({memoryViewerHeight: newSize});
+  }
+};
+
+class MemoryViewer extends React.Component {
+  render() {
+    return (
+      <FixedSizeList height={this.props.height} itemCount={4096} itemSize={35} width="100%">
+        {this.row.bind(this)}
+      </FixedSizeList>
+    );
+  }
+
+  row({index, style}) {
+    const address = index * 16;
+
+    let values = [];
+    for (let i = 0; i < 16; i++) {
+      values.push(<div key={`address_${address+i}`} className="px-1">{toPaddedHexString(this.props.map[address+i], 2)}</div>);
+    }
+
+    return (
+      <div style={style} className="d-flex">
+        <div>{toPaddedHexString(address, 4)}</div>
+        {values}
+      </div>
+    );
+  }
+}
+
+ReactDOM.render(<App/>, document.getElementById("root"));
+
+/*
 class App {
   constructor(rom) {
     this.lcd = document.querySelector('#lcd');
@@ -88,11 +159,6 @@ class App {
 }
 
 let app = null;
-
-function toPaddedHexString(num, len) {
-    const str = num.toString(16);
-    return "0".repeat(len - str.length) + str;
-}
 
 window.keyDown = function(ev) {
   if(!app) { return; }
@@ -214,3 +280,4 @@ max of last 100 = ${max.toFixed(2)}
   tbody.innerHTML = html;
   console.timeEnd("memory_viewer innerHTML");
 })();
+*/
