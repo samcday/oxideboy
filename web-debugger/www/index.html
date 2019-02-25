@@ -6,13 +6,13 @@
     <title>Hello wasm-pack!</title>
   </head>
   <body onkeydown="keyDown(event)" onkeyup="keyUp(event);">
-    <div id="root" class="container-fluid min-vh-100" style="">
-      <div class="row">
+    <div id="root" class="container-fluid min-vh-100 p-0" style="">
+      <div class="row no-gutters">
         <div class="col border-right min-vh-100" style="max-width: 320px; position: sticky; box-sizing: content-box;">
-          <canvas class="mt-3" style='background:red' id="lcd" ondrop="dropHandler(event)" ondragover="dragOverHandler(event)" ondragleave="dragLeaveHandler(event)" width=320 height=288></canvas>
+          <canvas style='background:red' id="lcd" ondrop="dropHandler(event)" ondragover="dragOverHandler(event)" ondragleave="dragLeaveHandler(event)" width=320 height=288></canvas>
 
 
-          <div class="row registers">
+          <div class="row registers px-3">
             <div class="col d-flex justify-content-between">
               <table class="text-monospace">
                 <tbody>
@@ -152,7 +152,7 @@
               </table>
             </div>
           </div>
-          <div class="row registers">
+          <div class="row registers px-3">
             <div class="col d-flex justify-content-between">
               <table>
                 <tbody>
@@ -261,8 +261,8 @@
             </div>
           </div>
         </div>
-        <div class="col" style="max-height: 100vh; overflow-y: scroll">
-          <div id="memory_viewer" class="text-monospace">
+        <div class="col" style="height: 100vh;">
+          <div id="memory_viewer" class="text-monospace" style='max-height: 70vh; overflow-y: scroll'>
             <table width=100%>
               <thead>
                 <tr>
@@ -290,9 +290,42 @@
               </tbody>
             </table>
           </div>
+          <div id="instruction_viewer" class="border-top" style='height: 30vh;'>
+            <div class="btn-group" role="group" aria-label="Basic example">
+              <button type="button" class="btn btn-outline-secondary" id="start_pause"><i class="fas fa-pause"></i></button>
+              <button type="button" class="btn btn-outline-secondary" id="next" disabled><i class="fas fa-forward"></i></button>
+            </div>
+          </div>
         </div>
-        <div class="col-3">
-          asdf
+        <div class="col-3 min-vh-100 border-left">
+          <div class="accordion min-vh-100" id="sidebar">
+            <div class="card">
+              <div class="card-header" id="breakpointsHeading">
+                <h2 class="mb-0">
+                  <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#breakpoints" aria-expanded="true" aria-controls="breakpoints">Breakpoints</button>
+                </h2>
+              </div>
+
+              <div id="breakpoints" class="collapse show" aria-labelledby="breakpointsHeading" >
+                <div class="card-body">
+                  TODO.
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header" id="watchesHeading">
+                <h2 class="mb-0">
+                  <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#watches" aria-expanded="true" aria-controls="watches">Watches</button>
+                </h2>
+              </div>
+
+              <div id="watches" class="collapse show" aria-labelledby="breakpointsHeading" >
+                <div class="card-body">
+                  TODO.
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

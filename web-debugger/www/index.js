@@ -4,9 +4,87 @@ import * as wasm from "web-debugger";
 import 'bootstrap';
 import '@fortawesome/fontawesome-free/css/all.css';
 
-var emulator = null;
-var lcd = null;
-let ctx = null;
+class App {
+  constructor(rom) {
+    this.lcd = document.querySelector('#lcd');
+    this.ctx = this.lcd.getContext('2d');
+
+    this.emulator = wasm.WebEmu.new(rom, (framebuffer) => {
+      fps.render();
+      try {
+        this.ctx.putImageData(new ImageData(framebuffer, 160, 144), 0, 0);
+        this.ctx.drawImage( this.lcd, 0, 0, 2*this.lcd.width, 2*this.lcd.height );
+      } catch(err) {
+        console.error(err);
+      }
+    });
+
+    this.memRegisterElements = document.querySelectorAll('.register');
+    this.cpuRegisterElements = document.querySelectorAll('.cpu-register');
+    this.updateMemory();
+
+    this.lastFrameTimestamp = null;
+    this.overhead_start = performance.now();
+
+    document.getElementById("start_pause").addEventListener("click", this.pause.bind(this));
+  }
+
+  updateMemory() {
+    console.time("updateMemory");
+    for (let i = 0; i < 65535; i++) {
+      document.getElementById(`memory_cell_${i}`).innerText = toPaddedHexString(this.emulator.mem_read(i), 2);
+    }
+    console.timeEnd("updateMemory");
+  }
+
+  updateRegisters() {
+    for (const register of this.memRegisterElements) {
+      register.value = toPaddedHexString(this.emulator.mem_read(parseInt(register.dataset.address)), 2);
+    }
+    for (const register of this.cpuRegisterElements) {
+      register.value = toPaddedHexString(this.emulator.reg_read(register.dataset.register), 4);
+    }
+    document.querySelector('#ime').checked = this.emulator.get_ime();
+    document.querySelector('#ime_defer').checked = this.emulator.get_ime_defer();
+
+    (document.querySelector('.memory_pc') || {}).className = '';
+    document.getElementById(`memory_cell_${this.emulator.reg_read('pc')}`).className = 'memory_pc rounded-pill bg-info';
+  }
+
+  runFrame(timestamp) {
+    this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
+
+    if (this.lastFrameTimestamp === null) {
+      this.lastFrameTimestamp = timestamp;
+      return;
+    }
+
+    const delta = Math.min(1000, timestamp - this.lastFrameTimestamp) // Don't try and emulate more than a second of time;
+    this.lastFrameTimestamp = timestamp;
+
+    const start = performance.now();
+    this.emulator.run(delta * 1000);
+    this.overhead += performance.now() - start;
+    if (performance.now() - this.overhead_start > 1000) {
+      console.log("Spent", this.overhead, "ms emulating");
+      this.overhead_start = performance.now();
+      this.overhead = 0;
+    }
+
+    this.updateRegisters();
+  }
+
+  pause() {
+    cancelAnimationFrame(this.nextFrame);
+    console.log("Pausing.");
+  }
+
+  start() {
+    this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
+  }
+}
+
+let app = null;
 
 function toPaddedHexString(num, len) {
     const str = num.toString(16);
@@ -14,40 +92,29 @@ function toPaddedHexString(num, len) {
 }
 
 window.keyDown = function(ev) {
-  if(!emulator) { return; }
-  emulator.set_joypad_state(ev.key, true);
+  if(!app) { return; }
+  app.emulator.set_joypad_state(ev.key, true);
 }
 
 window.keyUp = function(ev) {
-  if(!emulator) { return; }
-  emulator.set_joypad_state(ev.key, false);
+  if(!app) { return; }
+  app.emulator.set_joypad_state(ev.key, false);
 }
 
 window.dropHandler = function(ev) {
   document.querySelector('#lcd').style.border = "";
   ev.preventDefault();
 
-  if (!ev.dataTransfer.items) {
-    return;
-  }
-
-  if (ev.dataTransfer.items[0].kind !== 'file') {
+  if (!ev.dataTransfer.items || ev.dataTransfer.items[0].kind !== 'file') {
     return;
   }
 
   var file = ev.dataTransfer.items[0].getAsFile();
-
   var reader = new FileReader();
   reader.onload = function(e) {
     let rom = new Uint8Array(e.target.result);
-    emulator = wasm.WebEmu.new(rom, (framebuffer) => {
-      fps.render();
-      ctx.putImageData(new ImageData(framebuffer, 160, 144), 0, 0);
-      ctx.drawImage( lcd, 0, 0, 2*lcd.width, 2*lcd.height );
-    });
-    lcd = document.querySelector('#lcd');
-    ctx = lcd.getContext('2d');
-    runFrame();
+    app = new App(rom);
+    app.start();
   };
   reader.readAsArrayBuffer(file);
 };
@@ -60,43 +127,6 @@ window.dragOverHandler = function(ev) {
 window.dragLeaveHandler = function(ev) {
   document.querySelector('#lcd').style.border = "";
 };
-
-function updateRegisters() {
-  for (const register of document.querySelectorAll('.register')) {
-    register.value = toPaddedHexString(emulator.mem_read(parseInt(register.dataset.address)), 2);
-  }
-  for (const register of document.querySelectorAll('.cpu-register')) {
-    register.value = toPaddedHexString(emulator.reg_read(register.dataset.register), 4);
-  }
-  document.querySelector('#ime').checked = emulator.get_ime();
-  document.querySelector('#ime_defer').checked = emulator.get_ime_defer();
-}
-
-var lastFrameTimestamp = null;
-let overhead_start = performance.now();
-let overhead = 0;
-function runFrame(timestamp) {
-  requestAnimationFrame(runFrame);
-
-  if (lastFrameTimestamp === null) {
-    lastFrameTimestamp = timestamp;
-    return;
-  }
-
-  const delta = Math.min(1000, timestamp - lastFrameTimestamp) // Don't try and emulate more than a second of time;
-  lastFrameTimestamp = timestamp;
-
-  const start = performance.now();
-  emulator.run(delta * 1000);
-  overhead += performance.now() - start;
-  if (performance.now() - overhead_start > 1000) {
-    console.log("Spent", overhead, "ms emulating");
-    overhead_start = performance.now();
-    overhead = 0;
-  }
-
-  updateRegisters();
-}
 
 const fps = new class {
   constructor() {
@@ -141,41 +171,43 @@ max of last 100 = ${max.toFixed(2)}
   }
 };
 
-const tbody = document.querySelector("#memory_viewer table tbody");
+(() => {
+  const tbody = document.querySelector("#memory_viewer table tbody");
 
-// console.time("memory_viewer DOM");
-// for (var i = 0; i < 65535; ) {
-//   const row = document.createElement("tr");
-//   const addrCell = document.createElement("td");
-//   addrCell.innerText = toPaddedHexString(i, 4).toUpperCase();
-//   row.appendChild(addrCell);
+  // console.time("memory_viewer DOM");
+  // for (var i = 0; i < 65535; ) {
+  //   const row = document.createElement("tr");
+  //   const addrCell = document.createElement("td");
+  //   addrCell.innerText = toPaddedHexString(i, 4).toUpperCase();
+  //   row.appendChild(addrCell);
 
-//   for (var j = 0; j < 16; j++, i++) {
-//     const cell = document.createElement("td");
-//     cell.dataset.loc = i;
-//     cell.id = `memory_cell_${i}`;
-//     cell.innerText = "FF";
-//     row.appendChild(cell);
-//   }
-//   tbody.appendChild(row);
-// }
-// console.timeEnd("memory_viewer DOM");
+  //   for (var j = 0; j < 16; j++, i++) {
+  //     const cell = document.createElement("td");
+  //     cell.dataset.loc = i;
+  //     cell.id = `memory_cell_${i}`;
+  //     cell.innerText = "FF";
+  //     row.appendChild(cell);
+  //   }
+  //   tbody.appendChild(row);
+  // }
+  // console.timeEnd("memory_viewer DOM");
 
-console.time("memory_viewer innerHTML");
-var html = "";
-for (var i = 0; i < 65535;) {
-  html += "<tr>";
-  html += "<td>";
-  html += toPaddedHexString(i, 4).toUpperCase();
-  html += "</td>";
-
-  for (var j = 0; j < 16; j++, i++) {
-    html += `<td id="memory_cell_${i}" data-loc="${i}">`;
-    html += "FF";
+  console.time("memory_viewer innerHTML");
+  var html = "";
+  for (var i = 0; i < 65535;) {
+    html += "<tr>";
+    html += "<td>";
+    html += toPaddedHexString(i, 4).toUpperCase();
     html += "</td>";
+
+    for (var j = 0; j < 16; j++, i++) {
+      html += `<td id="memory_cell_${i}" data-loc="${i}">`;
+      html += "FF";
+      html += "</td>";
+    }
+    html += "<td></td>";
+    html += "</tr>";
   }
-  html += "<td></td>";
-  html += "</tr>";
-}
-tbody.innerHTML = html;
-console.timeEnd("memory_viewer innerHTML");
+  tbody.innerHTML = html;
+  console.timeEnd("memory_viewer innerHTML");
+})();
