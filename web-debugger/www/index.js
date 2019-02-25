@@ -1,5 +1,8 @@
 import "./style.scss";
 
+import React from "react";
+import ReactDOM from "react-dom";
+
 import * as wasm from "web-debugger";
 import 'bootstrap';
 import '@fortawesome/fontawesome-free/css/all.css';

@@ -2,6 +2,8 @@ const CopyWebpackPlugin = require("copy-webpack-plugin");
 const path = require('path');
 
 module.exports = {
+  devtool: 'eval-source-map',
+
   entry: "./bootstrap.js",
   output: {
     path: path.resolve(__dirname, "dist"),
@@ -13,7 +15,12 @@ module.exports = {
   ],
   module:{
     rules:[
-      { 
+      {
+        test: /\.js$/,
+        exclude: /node_modules/,
+        loader: 'babel-loader'
+      },
+      {
         test: /\.woff(2)?(\?v=[0-9]\.[0-9]\.[0-9])?$/, 
         loader: "url-loader?limit=10000&mimetype=application/font-woff" 
       },
