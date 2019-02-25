@@ -1,4 +1,6 @@
-@import "custom";
+$font-size-base: 0.75rem;
+$line-height-base: 1;
+
 @import "~bootstrap/scss/bootstrap";
 
 .registers {
@@ -25,3 +27,4 @@ td.label {
 .pc {
 	
 }
+
