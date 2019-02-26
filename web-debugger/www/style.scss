@@ -7,9 +7,15 @@ $line-height-base: 1;
 	width: 320px;
 }
 
+.memory-address {
+	display: inline-block;
+	line-height: 25px;
+}
 
-
-
+.memory-cell {
+	display: inline-block;
+	line-height: 25px;
+}
 
 .registers {
 	font-size: 0.65625rem;

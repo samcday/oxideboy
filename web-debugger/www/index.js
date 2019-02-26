@@ -17,10 +17,17 @@ class App extends React.Component {
   constructor(props) {
     super(props);
 
-    let memoryMap = new Uint8Array(65536);
-    memoryMap.fill(255, 0, 65536);
+    this.memoryMap = new Uint8Array(65536);
+    this.memoryMap.fill(255, 0, 65536);
 
-    this.state = {memoryViewerHeight: 200, memoryMap};
+    // setInterval(() => {
+    //   for (let i = 0; i < 100; i++) {
+    //     this.memoryMap[i] = Math.random() * 255;
+    //   }
+    //   this.setState({memoryMap: {buf: this.memoryMap}});
+    // }, 17);
+
+    this.state = {memoryViewerHeight: 200, memoryMap: {buf: this.memoryMap}};
   }
 
   render() {
@@ -29,10 +36,11 @@ class App extends React.Component {
         <div className="left-sidebar min-vh-100 border-right">
           <canvas width="320" height="288" className="border-bottom" />
         </div>
-        <div className="bg-light flex-fill position-relative">
+        <div className="flex-fill position-relative">
           <SplitPane ref="split" split="horizontal" defaultSize="80%" onChange={this.resizeMemoryViewer.bind(this)}>
             <MemoryViewer height={this.state.memoryViewerHeight} map={this.state.memoryMap} />
             <div>
+
             </div>
           </SplitPane>
         </div>
@@ -52,23 +60,23 @@ class App extends React.Component {
 class MemoryViewer extends React.Component {
   render() {
     return (
-      <FixedSizeList height={this.props.height} itemCount={4096} itemSize={35} width="100%">
-        {this.row.bind(this)}
+      <FixedSizeList height={this.props.height} itemCount={4096} itemSize={25} itemData={this.props.map} width="100%" className="text-monospace">
+        {this.row}
       </FixedSizeList>
     );
   }
 
-  row({index, style}) {
+  row({data, index, style}) {
     const address = index * 16;
 
     let values = [];
     for (let i = 0; i < 16; i++) {
-      values.push(<div key={`address_${address+i}`} className="px-1">{toPaddedHexString(this.props.map[address+i], 2)}</div>);
+      values.push(<div key={`address_${address+i}`} className="memory-cell mx-1">{toPaddedHexString(data.buf[address+i], 2)}</div>);
     }
 
     return (
-      <div style={style} className="d-flex">
-        <div>{toPaddedHexString(address, 4)}</div>
+      <div style={style}>
+        <div className="memory-address bg-light px-1 mr-2">{toPaddedHexString(address, 4)}</div>
         {values}
       </div>
     );
