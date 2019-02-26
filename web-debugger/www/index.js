@@ -212,10 +212,6 @@ class Register extends React.Component {
 }
 
 class MemoryViewer extends React.Component {
-  shouldComponentUpdate(nextProps) {
-    return nextProps.dirty > this.props.dirty;
-  }
-
   render() {
     return (
       <FixedSizeList height={this.props.height} itemCount={4096} itemSize={25} itemData={[this.props.dirty, this.props.fn]} width="100%" className="text-monospace">
