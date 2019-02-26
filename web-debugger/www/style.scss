@@ -28,19 +28,31 @@ $line-height-base: 1;
 
 .register {
     width: 25%;
-}
+    margin-bottom: 0.5rem;
 
-.register label {
-    width: 50%;
-    font-weight: bold;
-    text-align: right;
-}
-.register input {
-    border: 0 none;
-    display: inline-block;
-    width: 50%;
-}
+    label {
+        display: inline-block;
+        margin: 0;
+        width: 50%;
+        font-weight: bold;
+        text-align: right;
+        height: 16px;
+        line-height: 16px;
+        vertical-align: top;
+        margin-right: 0.2rem;
+    }
 
+    input {
+        display: inline-block;
+        vertical-align: top;
+        height: 16px;
+        line-height: 16px;
+    }
+
+    input[type="text"] {
+        border: 0 none;
+    }
+}
 
 .Resizer {
     background: #000;

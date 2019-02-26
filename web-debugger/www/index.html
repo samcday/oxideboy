@@ -6,68 +6,36 @@
     <title>oxideboy debugger</title>
   </head>
   <body>
-    <div id="root" class="container-fluid min-vh-100 p-0">
-      <div class="row no-gutters">
-        <div class="col border-right min-vh-100" style="max-width: 320px; position: sticky; box-sizing: content-box;">
+    <div id="root" class="min-vh-100 p-0"></div>
 
-          <div class="row registers px-3">
-            <div class="col d-flex justify-content-between">
-              <table class="text-monospace">
-                <tbody>
-                  <tr>
-                    <td class="label">IME:</td>
-                    <td><input type="checkbox" value="" id="ime"></td>
-                  </tr>
-                  <tr>
-                    <td class="label">IMD:</td>
-                    <td><input type="checkbox" value="" id="ime_defer"></td>
-                  </tr>
-                  </tbody>
-              </table>
+     <!--  <div class="accordion min-vh-100" id="sidebar">
+        <div class="card">
+          <div class="card-header" id="breakpointsHeading">
+            <h2 class="mb-0">
+              <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#breakpoints" aria-expanded="true" aria-controls="breakpoints">Breakpoints</button>
+            </h2>
+          </div>
+
+          <div id="breakpoints" class="collapse show" aria-labelledby="breakpointsHeading" >
+            <div class="card-body">
+              TODO.
             </div>
           </div>
         </div>
-          <div id="instruction_viewer" class="border-top" style='height: 30vh;'>
-            <div class="btn-group" role="group" aria-label="Basic example">
-              <button type="button" class="btn btn-outline-secondary" id="start_pause"><i class="fas fa-pause"></i></button>
-              <button type="button" class="btn btn-outline-secondary" id="next" disabled><i class="fas fa-forward"></i></button>
+        <div class="card">
+          <div class="card-header" id="watchesHeading">
+            <h2 class="mb-0">
+              <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#watches" aria-expanded="true" aria-controls="watches">Watches</button>
+            </h2>
+          </div>
+
+          <div id="watches" class="collapse show" aria-labelledby="breakpointsHeading" >
+            <div class="card-body">
+              TODO.
             </div>
           </div>
         </div>
-        <div class="col-3 min-vh-100 border-left">
-          <div class="accordion min-vh-100" id="sidebar">
-            <div class="card">
-              <div class="card-header" id="breakpointsHeading">
-                <h2 class="mb-0">
-                  <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#breakpoints" aria-expanded="true" aria-controls="breakpoints">Breakpoints</button>
-                </h2>
-              </div>
-
-              <div id="breakpoints" class="collapse show" aria-labelledby="breakpointsHeading" >
-                <div class="card-body">
-                  TODO.
-                </div>
-              </div>
-            </div>
-            <div class="card">
-              <div class="card-header" id="watchesHeading">
-                <h2 class="mb-0">
-                  <button class="btn btn-link" type="button" data-toggle="collapse" data-target="#watches" aria-expanded="true" aria-controls="watches">Watches</button>
-                </h2>
-              </div>
-
-              <div id="watches" class="collapse show" aria-labelledby="breakpointsHeading" >
-                <div class="card-body">
-                  TODO.
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div id="fps"></div>
-
+      </div> -->
     <script src="./bootstrap.js"></script>
   </body>
 </html>

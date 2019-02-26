@@ -65,13 +65,32 @@ class App extends React.Component {
   constructor(props) {
     super(props);
 
-    this.state = {memoryViewerHeight: 200, memDirty: 1, cpuDirty: 1};
+    this.state = {memoryViewerHeight: 200, memDirty: 1, cpuDirty: 1, paused: true, active: false};
   }
 
   componentDidMount() {
     this.lcd = this.refs.lcd;
     this.ctx = this.lcd.getContext('2d');
     this.setState({memoryViewerHeight: this.refs.split.pane1.getBoundingClientRect().height});
+
+    document.addEventListener("keydown", this.keyDown = (ev) => {
+      if(!this.emulator || ev.target !== document.body) {
+        return;
+      }
+      this.emulator.set_joypad_state(ev.key, true);
+    });
+
+    document.addEventListener("keyup", this.keyUp = (ev) => {
+      if (!this.emulator || ev.target !== document.body) {
+        return;
+      }
+      this.emulator.set_joypad_state(ev.key, false);
+    });
+  }
+
+  componentWillUnmount() {
+    document.removeEventListener("keyDown", this.keyDown);
+    document.removeEventListener("keyUp", this.keyUp);
   }
 
   render() {
@@ -85,6 +104,14 @@ class App extends React.Component {
                 <CpuRegister name={reg} key={reg} fn={this.read_register.bind(this)} dirty={this.state.cpuDirty} />
               )
             }
+            <div className="register">
+              <label htmlFor={`cpu_register_ime`}>IME:</label>
+              <input type="checkbox" readOnly id={`cpu_register_ime`} checked={this.emulator ? this.emulator.get_ime() : false} dirty={this.state.cpuDirty} />
+            </div>
+            <div className="register">
+              <label htmlFor={`cpu_register_imd`}>IMD:</label>
+              <input type="checkbox" readOnly id={`cpu_register_imd`} checked={this.emulator ? this.emulator.get_ime_defer() : false} dirty={this.state.cpuDirty} />
+            </div>
             {
               Object.keys(MEM_REGISTERS).map((reg) =>
                 <Register name={reg} addr={MEM_REGISTERS[reg]} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} key={reg} />
@@ -96,7 +123,21 @@ class App extends React.Component {
           <SplitPane ref="split" split="horizontal" defaultSize="80%" onChange={this.resizeMemoryViewer.bind(this)}>
             <MemoryViewer height={this.state.memoryViewerHeight} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} />
             <div>
-
+              <div className="btn-group" role="group">
+                { this.state.paused &&
+                  <button type="button" className="btn btn-outline-secondary" id="start" onClick={this.start.bind(this)} disabled={!this.state.active}>
+                    <i className="fas fa-play"></i>
+                  </button>
+                }
+                { !this.state.paused &&
+                  <button type="button" className="btn btn-outline-secondary" id="pause" onClick={this.pause.bind(this)}  disabled={!this.state.active}>
+                    <i className="fas fa-pause"></i>
+                  </button>
+                }
+                <button type="button" className="btn btn-outline-secondary" id="next" disabled={!this.active || !this.paused}>
+                  <i className="fas fa-forward"></i>
+                </button>
+              </div>
             </div>
           </SplitPane>
         </div>
@@ -130,7 +171,6 @@ class App extends React.Component {
     reader.onload = (e) => {
       const rom = new Uint8Array(e.target.result);
       this.emulator = wasm.WebEmu.new(rom, (framebuffer) => {
-        // fps.render();
         try {
           this.ctx.putImageData(new ImageData(framebuffer, 160, 144), 0, 0);
           this.ctx.drawImage( this.lcd, 0, 0, 2*this.lcd.width, 2*this.lcd.height );
@@ -138,44 +178,59 @@ class App extends React.Component {
           console.error(err);
         }
       });
+      this.setState({active: true});
       this.start();
     };
     reader.readAsArrayBuffer(file);
   }
 
   start() {
-    requestAnimationFrame(this.runFrame.bind(this));
+    if (!this.state.paused) {
+      return;
+    }
+    this.setState({paused: false});
+    this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
+  }
+
+  pause() {
+    console.log("buh?", this);
+    if (this.state.paused) {
+      return;
+    }
+    this.setState({paused: true});
+    cancelAnimationFrame(this.nextFrame);
+    this.lastFrameTimestamp = null;
+
+    // Scroll to PC.
+  }
+
+  step() {
+    if (!this.state.paused) {
+      return;
+    }
   }
 
   runFrame(timestamp) {
-    requestAnimationFrame(this.runFrame.bind(this));
+    this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
 
-    if (!this.lastFrameTimestamp) {
-      this.lastFrameTimestamp = timestamp;
-      return;
+    let delta = 16; // Default delta amount - enough to render a frame.
+    if (this.lastFrameTimestamp) {
+      delta = Math.min(1000, timestamp - this.lastFrameTimestamp) // Don't try and emulate more than a second of time.
     }
-
-    const delta = Math.min(1000, timestamp - this.lastFrameTimestamp) // Don't try and emulate more than a second of time;
     this.lastFrameTimestamp = timestamp;
 
-    // const start = performance.now();
     this.emulator.run(delta * 1000);
-    // this.overhead += performance.now() - start;
-    // if (performance.now() - this.overhead_start > 1000) {
-    //   console.log("Spent", this.overhead, "ms emulating");
-    //   this.overhead_start = performance.now();
-    //   this.overhead = 0;
-    // }
     this.setState(({cpuDirty, memDirty}) => {
       return {
         memDirty: memDirty + 1,
         cpuDirty: cpuDirty + 1,
       };
-    })
+    });
   }
 
   resizeMemoryViewer(newSize) {
-    this.setState({memoryViewerHeight: newSize});
+    clearTimeout(this.resizeTimeout);
+    this.resizeTimeout = setTimeout(() => { console.log("resize."); this.setState({memoryViewerHeight: newSize}) }, 10);
   }
 };
 
@@ -188,7 +243,7 @@ class CpuRegister extends React.Component {
     return (
       <div className="register">
         <label htmlFor={`cpu_register_${this.props.name}`}>{this.props.name}:</label>
-        <input readOnly id={`cpu_register_${this.props.name}`} size={4} value={toPaddedHexString(this.props.fn(this.props.name) || 65535, 4)} />
+        <input type="text" readOnly id={`cpu_register_${this.props.name}`} size={4} value={toPaddedHexString(this.props.fn(this.props.name) || 65535, 4)} />
       </div>
     );
   }
@@ -205,7 +260,7 @@ class Register extends React.Component {
         <label htmlFor={`register_${this.props.name}`}>
           <abbr title={`0x${toPaddedHexString(this.props.addr, 4).toUpperCase()}`}>{this.props.name}</abbr>:
         </label>
-        <input readOnly id={`register_${this.props.name}`} size={2} value={toPaddedHexString(this.props.fn(this.props.addr), 2)} />
+        <input type="text" readOnly id={`register_${this.props.name}`} size={2} value={toPaddedHexString(this.props.fn(this.props.addr), 2)} />
       </div>
     );
   }
@@ -239,104 +294,3 @@ class MemoryViewer extends React.Component {
 }
 
 ReactDOM.render(<App/>, document.getElementById("root"));
-
-/*
-class App {
-  constructor(rom) {
-    this.updateMemory();
-
-    this.lastFrameTimestamp = null;
-    this.overhead_start = performance.now();
-
-    document.getElementById("start_pause").addEventListener("click", this.pause.bind(this));
-  }
-
-  updateMemory() {
-    console.time("updateMemory");
-    for (let i = 0; i < 65535; i++) {
-      document.getElementById(`memory_cell_${i}`).innerText = toPaddedHexString(this.emulator.mem_read(i), 2);
-    }
-    console.timeEnd("updateMemory");
-  }
-
-  updateRegisters() {
-    for (const register of this.memRegisterElements) {
-      register.value = toPaddedHexString(this.emulator.mem_read(parseInt(register.dataset.address)), 2);
-    }
-    for (const register of this.cpuRegisterElements) {
-      register.value = toPaddedHexString(this.emulator.reg_read(register.dataset.register), 4);
-    }
-    document.querySelector('#ime').checked = this.emulator.get_ime();
-    document.querySelector('#ime_defer').checked = this.emulator.get_ime_defer();
-
-    (document.querySelector('.memory_pc') || {}).className = '';
-    document.getElementById(`memory_cell_${this.emulator.reg_read('pc')}`).className = 'memory_pc rounded-pill bg-info';
-  }
-
-
-  pause() {
-    cancelAnimationFrame(this.nextFrame);
-    console.log("Pausing.");
-  }
-
-  start() {
-    this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
-  }
-}
-
-let app = null;
-
-window.keyDown = function(ev) {
-  if(!app) { return; }
-  app.emulator.set_joypad_state(ev.key, true);
-}
-
-window.keyUp = function(ev) {
-  if(!app) { return; }
-  app.emulator.set_joypad_state(ev.key, false);
-}
-
-const fps = new class {
-  constructor() {
-    this.fps = document.getElementById("fps");
-    this.frames = [];
-    this.lastFrameTimeStamp = performance.now();
-  }
-
-  render() {
-    // Convert the delta time since the last frame render into a measure
-    // of frames per second.
-    const now = performance.now();
-    const delta = now - this.lastFrameTimeStamp;
-    this.lastFrameTimeStamp = now;
-    const fps = 1 / delta * 1000;
-
-    // Save only the latest 100 timings.
-    this.frames.push(fps);
-    if (this.frames.length > 100) {
-      this.frames.shift();
-    }
-
-    // Find the max, min, and mean of our 100 latest timings.
-    let min = Infinity;
-    let max = -Infinity;
-    let sum = 0;
-    for (let i = 0; i < this.frames.length; i++) {
-      sum += this.frames[i];
-      min = Math.min(this.frames[i], min);
-      max = Math.max(this.frames[i], max);
-    }
-    let mean = sum / this.frames.length;
-
-    // Render the statistics.
-    this.fps.textContent = `
-Frames per Second:
-         latest = ${fps.toFixed(2)}
-avg of last 100 = ${mean.toFixed(2)}
-min of last 100 = ${min.toFixed(2)}
-max of last 100 = ${max.toFixed(2)}
-`.trim();
-  }
-};
-
-*/
