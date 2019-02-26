@@ -13,6 +13,52 @@ function toPaddedHexString(num, len) {
     return "0".repeat(len - str.length) + str;
 }
 
+const CPU_REGISTERS = ['AF', 'BC', 'DE', 'HL', 'SP', 'PC'];
+const MEM_REGISTERS = {
+    IF: 0xFF0F,
+    IE: 0xFFFF,
+   DIV: 0xFF04,
+  TIMA: 0xFF05,
+   TMA: 0xFF06,
+   TAC: 0xFF07,
+    P1: 0xFF00,
+    SB: 0xFF01,
+    SC: 0xFF02,
+  LCDC: 0xFF40,
+  STAT: 0xFF41,
+   SCY: 0xFF42,
+   SCX: 0xFF43,
+    LY: 0xFF44,
+   LYC: 0xFF45,
+   DMA: 0xFF46,
+   BGP: 0xFF47,
+  OBP0: 0xFF48,
+  OBP1: 0xFF49,
+    WY: 0xFF4A,
+    WX: 0xFF4B,
+  NR10: 0xFF10,
+  NR11: 0xFF11,
+  NR12: 0xFF12,
+  NR13: 0xFF13,
+  NR14: 0xFF14,
+  NR21: 0xFF16,
+  NR22: 0xFF17,
+  NR23: 0xFF18,
+  NR24: 0xFF19,
+  NR30: 0xFF1A,
+  NR31: 0xFF1B,
+  NR32: 0xFF1C,
+  NR33: 0xFF1D,
+  NR34: 0xFF1E,
+  NR41: 0xFF20,
+  NR42: 0xFF21,
+  NR43: 0xFF22,
+  NR44: 0xFF23,
+  NR50: 0xFF24,
+  NR51: 0xFF25,
+  NR52: 0xFF26,
+};
+
 class App extends React.Component {
   constructor(props) {
     super(props);
@@ -22,7 +68,7 @@ class App extends React.Component {
 
     // setInterval(() => {
     //   for (let i = 0; i < 100; i++) {
-    //     this.memoryMap[i] = Math.random() * 255;
+    //     this.memoryMap[0xFF00 + i] = Math.random() * 255;
     //   }
     //   this.setState({memoryMap: {buf: this.memoryMap}});
     // }, 17);
@@ -30,11 +76,28 @@ class App extends React.Component {
     this.state = {memoryViewerHeight: 200, memoryMap: {buf: this.memoryMap}};
   }
 
+  componentDidMount() {
+    this.lcd = this.refs.lcd;
+    this.ctx = this.lcd.getContext('2d');
+  }
+
   render() {
     return (
       <div className="d-flex min-vh-100">
         <div className="left-sidebar min-vh-100 border-right">
-          <canvas width="320" height="288" className="border-bottom" />
+          <canvas ref="lcd" width="320" height="288" className="border-bottom" />
+          <div className="d-flex px-3 flex-wrap text-monospace registers">
+            {
+              CPU_REGISTERS.map((reg) =>
+                <CpuRegister name={reg} key={reg} />
+              )
+            }
+            {
+              Object.keys(MEM_REGISTERS).map((reg) =>
+                <Register name={reg} addr={MEM_REGISTERS[reg]} map={this.state.memoryMap} key={reg} />
+              )
+            }
+          </div>
         </div>
         <div className="flex-fill position-relative">
           <SplitPane ref="split" split="horizontal" defaultSize="80%" onChange={this.resizeMemoryViewer.bind(this)}>
@@ -56,6 +119,30 @@ class App extends React.Component {
     this.setState({memoryViewerHeight: newSize});
   }
 };
+
+class CpuRegister extends React.Component {
+  render() {
+    return (
+      <div className="register">
+        <label htmlFor={`cpu_register_${this.props.name}`}>{this.props.name}:</label>
+        <input readOnly id={`cpu_register_${this.props.name}`} size={4} value="DE12" />
+      </div>
+    );
+  }
+}
+
+class Register extends React.Component {
+  render() {
+    return (
+      <div className="register">
+        <label htmlFor={`register_${this.props.name}`}>
+          <abbr title={`0x${toPaddedHexString(this.props.addr, 4).toUpperCase()}`}>{this.props.name}</abbr>:
+        </label>
+        <input readOnly id={`register_${this.props.name}`} size={2} value={toPaddedHexString(this.props.map.buf[this.props.addr], 2)} />
+      </div>
+    );
+  }
+}
 
 class MemoryViewer extends React.Component {
   render() {
@@ -248,44 +335,4 @@ max of last 100 = ${max.toFixed(2)}
   }
 };
 
-(() => {
-  const tbody = document.querySelector("#memory_viewer table tbody");
-
-  // console.time("memory_viewer DOM");
-  // for (var i = 0; i < 65535; ) {
-  //   const row = document.createElement("tr");
-  //   const addrCell = document.createElement("td");
-  //   addrCell.innerText = toPaddedHexString(i, 4).toUpperCase();
-  //   row.appendChild(addrCell);
-
-  //   for (var j = 0; j < 16; j++, i++) {
-  //     const cell = document.createElement("td");
-  //     cell.dataset.loc = i;
-  //     cell.id = `memory_cell_${i}`;
-  //     cell.innerText = "FF";
-  //     row.appendChild(cell);
-  //   }
-  //   tbody.appendChild(row);
-  // }
-  // console.timeEnd("memory_viewer DOM");
-
-  console.time("memory_viewer innerHTML");
-  var html = "";
-  for (var i = 0; i < 65535;) {
-    html += "<tr>";
-    html += "<td>";
-    html += toPaddedHexString(i, 4).toUpperCase();
-    html += "</td>";
-
-    for (var j = 0; j < 16; j++, i++) {
-      html += `<td id="memory_cell_${i}" data-loc="${i}">`;
-      html += "FF";
-      html += "</td>";
-    }
-    html += "<td></td>";
-    html += "</tr>";
-  }
-  tbody.innerHTML = html;
-  console.timeEnd("memory_viewer innerHTML");
-})();
 */
