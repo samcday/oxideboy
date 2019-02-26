@@ -8,11 +8,6 @@ import * as wasm from "web-debugger";
 import 'bootstrap';
 import '@fortawesome/fontawesome-free/css/all.css';
 
-function toPaddedHexString(num, len) {
-    const str = num.toString(16);
-    return "0".repeat(len - str.length) + str;
-}
-
 // TODO: debounce memory view resize handler.
 
 const CPU_REGISTERS = ['AF', 'BC', 'DE', 'HL', 'SP', 'PC'];
@@ -120,23 +115,57 @@ class App extends React.Component {
           </div>
         </div>
         <div className="flex-fill position-relative">
-          <SplitPane ref="split" split="horizontal" defaultSize="80%" onChange={this.resizeMemoryViewer.bind(this)}>
-            <MemoryViewer height={this.state.memoryViewerHeight} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} />
+          <SplitPane split="vertical" height="100%" defaultSize="80%">
+            <SplitPane ref="split" split="horizontal" defaultSize="80%" onChange={this.resizeMemoryViewer.bind(this)}>
+              <MemoryViewer height={this.state.memoryViewerHeight} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} />
+              <div>
+                <div className="btn-group" role="group">
+                  { this.state.paused &&
+                    <button type="button" className="btn btn-outline-secondary" id="start" onClick={this.start.bind(this)} disabled={!this.state.active}>
+                      <i className="fas fa-play"></i>
+                    </button>
+                  }
+                  { !this.state.paused &&
+                    <button type="button" className="btn btn-outline-secondary" id="pause" onClick={this.pause.bind(this)}  disabled={!this.state.active}>
+                      <i className="fas fa-pause"></i>
+                    </button>
+                  }
+                  <button type="button" className="btn btn-outline-secondary" id="next" disabled={!this.active || !this.paused}>
+                    <i className="fas fa-forward"></i>
+                  </button>
+
+                  <div>{this.state.instruction}</div>
+                </div>
+              </div>
+            </SplitPane>
             <div>
-              <div className="btn-group" role="group">
-                { this.state.paused &&
-                  <button type="button" className="btn btn-outline-secondary" id="start" onClick={this.start.bind(this)} disabled={!this.state.active}>
-                    <i className="fas fa-play"></i>
-                  </button>
-                }
-                { !this.state.paused &&
-                  <button type="button" className="btn btn-outline-secondary" id="pause" onClick={this.pause.bind(this)}  disabled={!this.state.active}>
-                    <i className="fas fa-pause"></i>
-                  </button>
-                }
-                <button type="button" className="btn btn-outline-secondary" id="next" disabled={!this.active || !this.paused}>
-                  <i className="fas fa-forward"></i>
-                </button>
+              <div className="accordion min-vh-100" id="sidebar">
+                <div className="card">
+                  <div className="card-header" id="breakpointsHeading">
+                    <h2 className="mb-0">
+                      <button className="btn btn-link" type="button" data-toggle="collapse" data-target="#breakpoints" aria-expanded="true" aria-controls="breakpoints">Breakpoints</button>
+                    </h2>
+                  </div>
+
+                  <div id="breakpoints" className="collapse show" aria-labelledby="breakpointsHeading" >
+                    <div className="card-body">
+                      TODO.
+                    </div>
+                  </div>
+                </div>
+                <div className="card">
+                  <div className="card-header" id="watchesHeading">
+                    <h2 className="mb-0">
+                      <button className="btn btn-link" type="button" data-toggle="collapse" data-target="#watches" aria-expanded="true" aria-controls="watches">Watches</button>
+                    </h2>
+                  </div>
+
+                  <div id="watches" className="collapse show" aria-labelledby="breakpointsHeading" >
+                    <div className="card-body">
+                      TODO.
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </SplitPane>
@@ -194,7 +223,9 @@ class App extends React.Component {
     cancelAnimationFrame(this.nextFrame);
     this.lastFrameTimestamp = null;
 
+    this.updateInstruction();
     // Scroll to PC.
+
   }
 
   step() {
@@ -222,6 +253,10 @@ class App extends React.Component {
     });
 
     this.pause();
+  }
+
+  updateInstruction() {
+    this.setState({instruction: this.emulator.current_instruction()});
   }
 
   runFrame(timestamp) {
@@ -308,3 +343,8 @@ class MemoryViewer extends React.Component {
 }
 
 ReactDOM.render(<App/>, document.getElementById("root"));
+
+function toPaddedHexString(num, len) {
+    const str = num.toString(16);
+    return "0".repeat(len - str.length) + str;
+}

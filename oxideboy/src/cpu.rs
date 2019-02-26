@@ -860,6 +860,129 @@ impl Flags {
     }
 }
 
+impl std::fmt::Display for Register {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            A => write!(f, "a"),
+            B => write!(f, "b"),
+            C => write!(f, "c"),
+            D => write!(f, "d"),
+            E => write!(f, "e"),
+            H => write!(f, "h"),
+            L => write!(f, "l"),
+        }
+    }
+}
+
+impl std::fmt::Display for Register16 {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            AF => write!(f, "af"),
+            BC => write!(f, "bc"),
+            DE => write!(f, "de"),
+            HL => write!(f, "hl"),
+            SP => write!(f, "sp"),
+        }
+    }
+}
+
+impl std::fmt::Display for Operand {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Operand::Register(r) => write!(f, "{:?}", r),
+            Operand::Immediate(n8) => write!(f, "${:2x}", n8),
+            Operand::Address(rr) => write!(f, "[{:?}]", rr),
+            Operand::AddressInc(rr) => write!(f, "[{:?}+]", rr),
+            Operand::AddressDec(rr) => write!(f, "[{:?}-]", rr),
+            Operand::ImmediateAddress(n16) => write!(f, "[${:4x}]", n16),
+            Operand::ImmediateAddressHigh(n8) => write!(f, "[$ff00+${:2x}]", n8),
+            Operand::AddressHigh(r) => write!(f, "[$ff00+{:?}]", r),
+        }
+    }
+}
+
+impl std::fmt::Display for Operand16 {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Operand16::Register(r) => write!(f, "{:?}", r),
+            Operand16::Immediate(n16) => write!(f, "${:4x}", n16),
+            Operand16::ImmediateAddress(addr) => write!(f, "[${:4x}]", addr),
+        }
+    }
+}
+
+impl std::fmt::Display for FlagCondition {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            FlagCondition::NZ => write!(f, "nz"),
+            FlagCondition::Z => write!(f, "z"),
+            FlagCondition::NC => write!(f, "nc"),
+            FlagCondition::C => write!(f, "c"),
+        }
+    }
+}
+
+impl std::fmt::Display for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ADC(o) => write!(f, "adc a, {}", o),
+            ADD(o) => write!(f, "add a, {}", o),
+            ADD16(rr) => write!(f, "add hl, {:?}", rr),
+            ADD_SP_r8(r8) => write!(f, "add sp, ${:2x}", r8),
+            AND(o) => write!(f, "and {}", o),
+            BIT(b, o) => write!(f, "bit {}, {}", b, o),
+            CALL(None, addr) => write!(f, "call {}", addr),
+            CALL(cc, addr) => write!(f, "call {}, {}", cc.unwrap(), addr),
+            CCF => write!(f, "ccf"),
+            CP(o) => write!(f, "cp {}", o),
+            CPL => write!(f, "cpl"),
+            DAA => write!(f, "daa"),
+            DEC(o) => write!(f, "dec {}", o),
+            DEC16(rr) => write!(f, "dec {}", rr),
+            DI => write!(f, "di"),
+            EI => write!(f, "ei"),
+            HALT => write!(f, "halt"),
+            INC(o) => write!(f, "inc {}", o),
+            INC16(rr) => write!(f, "inc {}", rr),
+            JP(None, o) => write!(f, "jp {}", o),
+            JP(cc, o) => write!(f, "jp {}, {}", cc.unwrap(), o),
+            JR(None, r8) => write!(f, "jr {}", r8),
+            JR(cc, r8) => write!(f, "jr {}, {}", cc.unwrap(), r8),
+            LD(lhs, rhs) => write!(f, "ld {}, {}", lhs, rhs),
+            LD16(lhs, rhs) => write!(f, "ld {}, {}", lhs, rhs),
+            LD_HL_SP(e8) => write!(f, "ld hl, sp+${:2x}", e8),
+            NOP => write!(f, "nop"),
+            OR(o) => write!(f, "or {}", o),
+            POP(rr) => write!(f, "pop {}", rr),
+            PUSH(rr) => write!(f, "push {}", rr),
+            RES(b, o) => write!(f, "res {}, {}", b, o),
+            RET(None) => write!(f, "ret"),
+            RET(cc) => write!(f, "ret {}", cc.unwrap()),
+            RETI => write!(f, "reti"),
+            RL(o) => write!(f, "rl {}", o),
+            RLA => write!(f, "rla"),
+            RLC(o) => write!(f, "rlc {}", o),
+            RLCA => write!(f, "rlca"),
+            RR(o) => write!(f, "rr {}", o),
+            RRA => write!(f, "rra"),
+            RRC(o) => write!(f, "rrc {}", o),
+            RRCA => write!(f, "rrca"),
+            RST(vec) => write!(f, "rst ${:2x}", vec),
+            SBC(o) => write!(f, "sbc a, {}", o),
+            SCF => write!(f, "scf"),
+            SET(b, o) => write!(f, "set {}, {}", b, o),
+            SLA(o) => write!(f, "sla {}", o),
+            SRA(o) => write!(f, "sra {}", o),
+            SRL(o) => write!(f, "srl {}", o),
+            STOP => write!(f, "stop"),
+            SUB(o) => write!(f, "sub a, {}", o),
+            SWAP(o) => write!(f, "swap {}", o),
+            XOR(o) => write!(f, "xor a, {}", o),
+            Invalid(op) => write!(f, "unknown opcode ${:2x}", op),
+        }
+    }
+}
+
 /// The instruction decoder. Fetches the next 8-bit opcode from an arbitrary source, decodes it into an instruction, and
 /// then possibly fetches another 1-2 bytes used by that instruction. The "arbitrary source" in the main case will be
 /// the CPU fetching the next byte from the memory address pointed to by the PC register (and then bumping it), but this

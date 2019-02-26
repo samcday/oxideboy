@@ -30,6 +30,7 @@ cfg_if! {
 struct DebugListener {
     frame_cb: Function,
     breakpoint_cb: Function,
+    breakpoint_hit: bool,
 }
 
 impl EventListener for DebugListener {
@@ -44,6 +45,7 @@ impl EventListener for DebugListener {
     }
     fn on_memory_write(&mut self, _addr: u16, _: u8) {}
     fn on_debug_breakpoint(&mut self) {
+        self.breakpoint_hit = true;
         let _ = window().unwrap().set_timeout_with_callback(&self.breakpoint_cb);
     }
 }
@@ -62,6 +64,7 @@ impl WebEmu {
         let listener = DebugListener {
             frame_cb,
             breakpoint_cb,
+            breakpoint_hit: false,
         };
 
         let mut gb = Gameboy::new(Model::DMG0, rom.to_vec(), listener);
@@ -77,7 +80,7 @@ impl WebEmu {
         self.gb.hw.cycle_count = 0;
         let desired_cycles = (CYCLES_PER_MICRO * microseconds) as u32;
 
-        while self.gb.hw.cycle_count < desired_cycles {
+        while !self.gb.hw.listener.breakpoint_hit && self.gb.hw.cycle_count < desired_cycles {
             // Check breakpoints.
             if self.pc_breakpoints.contains(&self.gb.cpu.pc) {
                 let _ = window()
@@ -87,21 +90,33 @@ impl WebEmu {
             }
             self.gb.cpu.step(&mut self.gb.hw);
         }
+
+        self.gb.hw.listener.breakpoint_hit = false;
+    }
+
+    pub fn current_instruction(&self) -> String {
+        let mut pc = self.gb.cpu.pc;
+        cpu::decode_instruction(|| {
+            let loc = pc;
+            pc = pc.wrapping_add(1);
+            self.gb.hw.mem_get(loc)
+        })
+        .to_string()
     }
 
     pub fn mem_read(&self, addr: u16) -> u8 {
         self.gb.hw.mem_get(addr)
     }
 
-    pub fn reg_read(&self, reg: &str) -> u16 {
+    pub fn reg_read(&self, reg: &str) -> Option<u16> {
         match reg {
-            "AF" => self.gb.cpu.register16_get(cpu::Register16::AF),
-            "BC" => self.gb.cpu.register16_get(cpu::Register16::BC),
-            "DE" => self.gb.cpu.register16_get(cpu::Register16::DE),
-            "HL" => self.gb.cpu.register16_get(cpu::Register16::HL),
-            "PC" => self.gb.cpu.pc,
-            "SP" => self.gb.cpu.sp,
-            v => panic!("unknown reg_read: {}", v),
+            "AF" => Some(self.gb.cpu.register16_get(cpu::Register16::AF)),
+            "BC" => Some(self.gb.cpu.register16_get(cpu::Register16::BC)),
+            "DE" => Some(self.gb.cpu.register16_get(cpu::Register16::DE)),
+            "HL" => Some(self.gb.cpu.register16_get(cpu::Register16::HL)),
+            "PC" => Some(self.gb.cpu.pc),
+            "SP" => Some(self.gb.cpu.sp),
+            _ => None,
         }
     }
 
