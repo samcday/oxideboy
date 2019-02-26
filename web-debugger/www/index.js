@@ -215,7 +215,6 @@ class App extends React.Component {
   }
 
   pause() {
-    console.log("buh?", this);
     if (this.state.paused) {
       return;
     }
@@ -244,7 +243,6 @@ class App extends React.Component {
   }
 
   breakpointHit() {
-    console.log("woot.");
     this.setState(({cpuDirty, memDirty}) => {
       return {
         memDirty: memDirty + 1,
@@ -279,7 +277,7 @@ class App extends React.Component {
 
   resizeMemoryViewer(newSize) {
     clearTimeout(this.resizeTimeout);
-    this.resizeTimeout = setTimeout(() => { console.log("resize."); this.setState({memoryViewerHeight: newSize}) }, 10);
+    this.resizeTimeout = setTimeout(() => { this.setState({memoryViewerHeight: newSize}) }, 10);
   }
 };
 
