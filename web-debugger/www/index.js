@@ -13,6 +13,8 @@ function toPaddedHexString(num, len) {
     return "0".repeat(len - str.length) + str;
 }
 
+// TODO: debounce memory view resize handler.
+
 const CPU_REGISTERS = ['AF', 'BC', 'DE', 'HL', 'SP', 'PC'];
 const MEM_REGISTERS = {
     IF: 0xFF0F,
@@ -63,45 +65,36 @@ class App extends React.Component {
   constructor(props) {
     super(props);
 
-    this.memoryMap = new Uint8Array(65536);
-    this.memoryMap.fill(255, 0, 65536);
-
-    // setInterval(() => {
-    //   for (let i = 0; i < 100; i++) {
-    //     this.memoryMap[0xFF00 + i] = Math.random() * 255;
-    //   }
-    //   this.setState({memoryMap: {buf: this.memoryMap}});
-    // }, 17);
-
-    this.state = {memoryViewerHeight: 200, memoryMap: {buf: this.memoryMap}};
+    this.state = {memoryViewerHeight: 200, memDirty: 1, cpuDirty: 1};
   }
 
   componentDidMount() {
     this.lcd = this.refs.lcd;
     this.ctx = this.lcd.getContext('2d');
+    this.setState({memoryViewerHeight: this.refs.split.pane1.getBoundingClientRect().height});
   }
 
   render() {
     return (
-      <div className="d-flex min-vh-100">
+      <div className="d-flex min-vh-100" onDragOver={this.onDragOver} onDrop={this.onDrop.bind(this)}>
         <div className="left-sidebar min-vh-100 border-right">
           <canvas ref="lcd" width="320" height="288" className="border-bottom" />
           <div className="d-flex px-3 flex-wrap text-monospace registers">
             {
               CPU_REGISTERS.map((reg) =>
-                <CpuRegister name={reg} key={reg} />
+                <CpuRegister name={reg} key={reg} fn={this.read_register.bind(this)} dirty={this.state.cpuDirty} />
               )
             }
             {
               Object.keys(MEM_REGISTERS).map((reg) =>
-                <Register name={reg} addr={MEM_REGISTERS[reg]} map={this.state.memoryMap} key={reg} />
+                <Register name={reg} addr={MEM_REGISTERS[reg]} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} key={reg} />
               )
             }
           </div>
         </div>
         <div className="flex-fill position-relative">
           <SplitPane ref="split" split="horizontal" defaultSize="80%" onChange={this.resizeMemoryViewer.bind(this)}>
-            <MemoryViewer height={this.state.memoryViewerHeight} map={this.state.memoryMap} />
+            <MemoryViewer height={this.state.memoryViewerHeight} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} />
             <div>
 
             </div>
@@ -111,8 +104,74 @@ class App extends React.Component {
     );
   }
 
-  componentDidMount() {
-    this.setState({memoryViewerHeight: this.refs.split.pane1.getBoundingClientRect().height});
+  read_register(reg) {
+    if (!this.emulator) { return 0xFFFF };
+    return this.emulator.reg_read(reg);
+  }
+
+  read_memory(addr) {
+    if (!this.emulator) { return 0xFF };
+    return this.emulator.mem_read(addr);
+  }
+
+  onDragOver(ev) {
+    ev.preventDefault();
+  }
+
+  onDrop(ev) {
+    ev.preventDefault();
+
+    if (!ev.dataTransfer.items || ev.dataTransfer.items[0].kind !== 'file') {
+      return;
+    }
+
+    var file = ev.dataTransfer.items[0].getAsFile();
+    var reader = new FileReader();
+    reader.onload = (e) => {
+      const rom = new Uint8Array(e.target.result);
+      this.emulator = wasm.WebEmu.new(rom, (framebuffer) => {
+        // fps.render();
+        try {
+          this.ctx.putImageData(new ImageData(framebuffer, 160, 144), 0, 0);
+          this.ctx.drawImage( this.lcd, 0, 0, 2*this.lcd.width, 2*this.lcd.height );
+        } catch(err) {
+          console.error(err);
+        }
+      });
+      this.start();
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  start() {
+    requestAnimationFrame(this.runFrame.bind(this));
+  }
+
+  runFrame(timestamp) {
+    requestAnimationFrame(this.runFrame.bind(this));
+
+    if (!this.lastFrameTimestamp) {
+      this.lastFrameTimestamp = timestamp;
+      return;
+    }
+
+    const delta = Math.min(1000, timestamp - this.lastFrameTimestamp) // Don't try and emulate more than a second of time;
+    this.lastFrameTimestamp = timestamp;
+
+    // const start = performance.now();
+    this.emulator.run(delta * 1000);
+    // this.overhead += performance.now() - start;
+    // if (performance.now() - this.overhead_start > 1000) {
+    //   console.log("Spent", this.overhead, "ms emulating");
+    //   this.overhead_start = performance.now();
+    //   this.overhead = 0;
+    // }
+    this.setState(({cpuDirty, memDirty}) => {
+      return {
+        memDirty: memDirty + 1,
+        cpuDirty: cpuDirty + 1,
+      };
+    })
   }
 
   resizeMemoryViewer(newSize) {
@@ -121,33 +180,45 @@ class App extends React.Component {
 };
 
 class CpuRegister extends React.Component {
+  shouldComponentUpdate(nextProps) {
+    return nextProps.dirty > this.props.dirty;
+  }
+
   render() {
     return (
       <div className="register">
         <label htmlFor={`cpu_register_${this.props.name}`}>{this.props.name}:</label>
-        <input readOnly id={`cpu_register_${this.props.name}`} size={4} value="DE12" />
+        <input readOnly id={`cpu_register_${this.props.name}`} size={4} value={toPaddedHexString(this.props.fn(this.props.name) || 65535, 4)} />
       </div>
     );
   }
 }
 
 class Register extends React.Component {
+  shouldComponentUpdate(nextProps) {
+    return nextProps.dirty > this.props.dirty;
+  }
+
   render() {
     return (
       <div className="register">
         <label htmlFor={`register_${this.props.name}`}>
           <abbr title={`0x${toPaddedHexString(this.props.addr, 4).toUpperCase()}`}>{this.props.name}</abbr>:
         </label>
-        <input readOnly id={`register_${this.props.name}`} size={2} value={toPaddedHexString(this.props.map.buf[this.props.addr], 2)} />
+        <input readOnly id={`register_${this.props.name}`} size={2} value={toPaddedHexString(this.props.fn(this.props.addr), 2)} />
       </div>
     );
   }
 }
 
 class MemoryViewer extends React.Component {
+  shouldComponentUpdate(nextProps) {
+    return nextProps.dirty > this.props.dirty;
+  }
+
   render() {
     return (
-      <FixedSizeList height={this.props.height} itemCount={4096} itemSize={25} itemData={this.props.map} width="100%" className="text-monospace">
+      <FixedSizeList height={this.props.height} itemCount={4096} itemSize={25} itemData={[this.props.dirty, this.props.fn]} width="100%" className="text-monospace">
         {this.row}
       </FixedSizeList>
     );
@@ -155,15 +226,16 @@ class MemoryViewer extends React.Component {
 
   row({data, index, style}) {
     const address = index * 16;
+    const [_, fn] = data;
 
     let values = [];
     for (let i = 0; i < 16; i++) {
-      values.push(<div key={`address_${address+i}`} className="memory-cell mx-1">{toPaddedHexString(data.buf[address+i], 2)}</div>);
+      values.push(<div key={`address_${address+i}`} className="memory-cell mx-1">{toPaddedHexString(fn(address+i), 2)}</div>);
     }
 
     return (
       <div style={style}>
-        <div className="memory-address bg-light px-1 mr-2">{toPaddedHexString(address, 4)}</div>
+        <div className="memory-address bg-light pl-1 pr-2 mr-2">0x{toPaddedHexString(address, 4)}</div>
         {values}
       </div>
     );
@@ -175,21 +247,6 @@ ReactDOM.render(<App/>, document.getElementById("root"));
 /*
 class App {
   constructor(rom) {
-    this.lcd = document.querySelector('#lcd');
-    this.ctx = this.lcd.getContext('2d');
-
-    this.emulator = wasm.WebEmu.new(rom, (framebuffer) => {
-      fps.render();
-      try {
-        this.ctx.putImageData(new ImageData(framebuffer, 160, 144), 0, 0);
-        this.ctx.drawImage( this.lcd, 0, 0, 2*this.lcd.width, 2*this.lcd.height );
-      } catch(err) {
-        console.error(err);
-      }
-    });
-
-    this.memRegisterElements = document.querySelectorAll('.register');
-    this.cpuRegisterElements = document.querySelectorAll('.cpu-register');
     this.updateMemory();
 
     this.lastFrameTimestamp = null;
@@ -220,28 +277,6 @@ class App {
     document.getElementById(`memory_cell_${this.emulator.reg_read('pc')}`).className = 'memory_pc rounded-pill bg-info';
   }
 
-  runFrame(timestamp) {
-    this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
-
-    if (this.lastFrameTimestamp === null) {
-      this.lastFrameTimestamp = timestamp;
-      return;
-    }
-
-    const delta = Math.min(1000, timestamp - this.lastFrameTimestamp) // Don't try and emulate more than a second of time;
-    this.lastFrameTimestamp = timestamp;
-
-    const start = performance.now();
-    this.emulator.run(delta * 1000);
-    this.overhead += performance.now() - start;
-    if (performance.now() - this.overhead_start > 1000) {
-      console.log("Spent", this.overhead, "ms emulating");
-      this.overhead_start = performance.now();
-      this.overhead = 0;
-    }
-
-    this.updateRegisters();
-  }
 
   pause() {
     cancelAnimationFrame(this.nextFrame);
@@ -264,33 +299,6 @@ window.keyUp = function(ev) {
   if(!app) { return; }
   app.emulator.set_joypad_state(ev.key, false);
 }
-
-window.dropHandler = function(ev) {
-  document.querySelector('#lcd').style.border = "";
-  ev.preventDefault();
-
-  if (!ev.dataTransfer.items || ev.dataTransfer.items[0].kind !== 'file') {
-    return;
-  }
-
-  var file = ev.dataTransfer.items[0].getAsFile();
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    let rom = new Uint8Array(e.target.result);
-    app = new App(rom);
-    app.start();
-  };
-  reader.readAsArrayBuffer(file);
-};
-
-window.dragOverHandler = function(ev) {
-  ev.preventDefault();
-  document.querySelector('#lcd').style.border = "1px solid black";
-};
-
-window.dragLeaveHandler = function(ev) {
-  document.querySelector('#lcd').style.border = "";
-};
 
 const fps = new class {
   constructor() {

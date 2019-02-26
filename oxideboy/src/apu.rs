@@ -822,7 +822,9 @@ impl Apu {
             addr = self.chan3.pos as u16;
         }
 
-        let base = (addr as usize) * 2;
+        // TODO: this is broken.
+        // let base = (addr as usize) * 2;
+        let base = (addr as usize).saturating_sub(1);
         (self.wave_ram[base] << 4) | self.wave_ram[base + 1]
     }
 
