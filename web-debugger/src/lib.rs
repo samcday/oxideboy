@@ -4,10 +4,12 @@ extern crate wasm_bindgen;
 mod utils;
 
 use cfg_if::cfg_if;
-use js_sys::Uint8ClampedArray;
+use js_sys::{Function, Uint8ClampedArray};
 use oxideboy::*;
+use std::collections::HashSet;
 use std::slice;
 use wasm_bindgen::prelude::*;
+use web_sys::window;
 
 macro_rules! log {
     ( $( $t:tt )* ) => {
@@ -26,7 +28,8 @@ cfg_if! {
 }
 
 struct DebugListener {
-    frame_cb: js_sys::Function,
+    frame_cb: Function,
+    breakpoint_cb: Function,
 }
 
 impl EventListener for DebugListener {
@@ -35,32 +38,55 @@ impl EventListener for DebugListener {
         let buf =
             unsafe { Uint8ClampedArray::view(slice::from_raw_parts((ppu_buf).as_ptr() as *const u8, 160 * 144 * 4)) };
 
-        let _ = self.frame_cb.call1(&JsValue::NULL, &buf);
+        let _ = window()
+            .unwrap()
+            .set_timeout_with_callback_and_timeout_and_arguments_1(&self.frame_cb, 0, &buf);
     }
     fn on_memory_write(&mut self, _addr: u16, _: u8) {}
-    fn on_debug_breakpoint(&mut self) {}
+    fn on_debug_breakpoint(&mut self) {
+        let _ = window().unwrap().set_timeout_with_callback(&self.breakpoint_cb);
+    }
 }
 
 #[wasm_bindgen]
 pub struct WebEmu {
     gb: Gameboy<DebugListener>,
+    pc_breakpoints: HashSet<u16>,
 }
 
 #[wasm_bindgen]
 impl WebEmu {
-    pub fn new(rom: &[u8], frame_cb: js_sys::Function) -> WebEmu {
+    pub fn new(rom: &[u8], frame_cb: Function, breakpoint_cb: Function) -> WebEmu {
         utils::set_panic_hook();
 
-        let listener = DebugListener { frame_cb };
+        let listener = DebugListener {
+            frame_cb,
+            breakpoint_cb,
+        };
 
         let mut gb = Gameboy::new(Model::DMG0, rom.to_vec(), listener);
         gb.skip_bootrom();
         gb.hw.ppu.framebuffer_fmt = ppu::PixelFormat::ABGR;
-        WebEmu { gb }
+        WebEmu {
+            gb,
+            pc_breakpoints: HashSet::new(),
+        }
     }
 
     pub fn run(&mut self, microseconds: f32) {
-        self.gb.run_for_microseconds(microseconds);
+        self.gb.hw.cycle_count = 0;
+        let desired_cycles = (CYCLES_PER_MICRO * microseconds) as u32;
+
+        while self.gb.hw.cycle_count < desired_cycles {
+            // Check breakpoints.
+            if self.pc_breakpoints.contains(&self.gb.cpu.pc) {
+                let _ = window()
+                    .unwrap()
+                    .set_timeout_with_callback(&self.gb.hw.listener.breakpoint_cb);
+                break;
+            }
+            self.gb.cpu.step(&mut self.gb.hw);
+        }
     }
 
     pub fn mem_read(&self, addr: u16) -> u8 {

@@ -170,14 +170,7 @@ class App extends React.Component {
     var reader = new FileReader();
     reader.onload = (e) => {
       const rom = new Uint8Array(e.target.result);
-      this.emulator = wasm.WebEmu.new(rom, (framebuffer) => {
-        try {
-          this.ctx.putImageData(new ImageData(framebuffer, 160, 144), 0, 0);
-          this.ctx.drawImage( this.lcd, 0, 0, 2*this.lcd.width, 2*this.lcd.height );
-        } catch(err) {
-          console.error(err);
-        }
-      });
+      this.emulator = wasm.WebEmu.new(rom, this.newFrame.bind(this), this.breakpointHit.bind(this));
       this.setState({active: true});
       this.start();
     };
@@ -208,6 +201,27 @@ class App extends React.Component {
     if (!this.state.paused) {
       return;
     }
+  }
+
+  newFrame(framebuffer) {
+    try {
+      this.ctx.putImageData(new ImageData(framebuffer, 160, 144), 0, 0);
+      this.ctx.drawImage( this.lcd, 0, 0, 2*this.lcd.width, 2*this.lcd.height );
+    } catch(err) {
+      console.error(err);
+    }
+  }
+
+  breakpointHit() {
+    console.log("woot.");
+    this.setState(({cpuDirty, memDirty}) => {
+      return {
+        memDirty: memDirty + 1,
+        cpuDirty: cpuDirty + 1,
+      };
+    });
+
+    this.pause();
   }
 
   runFrame(timestamp) {

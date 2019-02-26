@@ -12,7 +12,7 @@ pub mod timer;
 use cpu::Cpu;
 use hardware::GameboyHardware;
 
-const CYCLES_PER_MICRO: f32 = 1048576.0 / 1000000.0;
+pub const CYCLES_PER_MICRO: f32 = 1048576.0 / 1000000.0;
 pub const NOOP_LISTENER: NoopListener = NoopListener {};
 
 // The main entrypoint into Oxideboy. Represents an emulation session for a Gameboy.
