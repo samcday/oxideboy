@@ -126,11 +126,11 @@ class App extends React.Component {
                     </button>
                   }
                   { !this.state.paused &&
-                    <button type="button" className="btn btn-outline-secondary" id="pause" onClick={this.pause.bind(this)}  disabled={!this.state.active}>
+                    <button type="button" className="btn btn-outline-secondary" id="pause" onClick={this.pause.bind(this)} disabled={!this.state.active}>
                       <i className="fas fa-pause"></i>
                     </button>
                   }
-                  <button type="button" className="btn btn-outline-secondary" id="next" disabled={!this.active || !this.paused}>
+                  <button type="button" className="btn btn-outline-secondary" id="next" onClick={this.step.bind(this)} disabled={!this.state.active || !this.state.paused}>
                     <i className="fas fa-forward"></i>
                   </button>
 
@@ -231,6 +231,15 @@ class App extends React.Component {
     if (!this.state.paused) {
       return;
     }
+
+    this.emulator.step();
+    this.setState(({cpuDirty, memDirty}) => {
+      return {
+        memDirty: memDirty + 1,
+        cpuDirty: cpuDirty + 1,
+      };
+    });
+    this.updateInstruction();
   }
 
   newFrame(framebuffer) {

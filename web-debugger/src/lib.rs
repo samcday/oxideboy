@@ -88,10 +88,14 @@ impl WebEmu {
                     .set_timeout_with_callback(&self.gb.hw.listener.breakpoint_cb);
                 break;
             }
-            self.gb.cpu.step(&mut self.gb.hw);
+            self.gb.run_instruction();
         }
 
         self.gb.hw.listener.breakpoint_hit = false;
+    }
+
+    pub fn step(&mut self) {
+        self.gb.run_instruction();
     }
 
     pub fn current_instruction(&self) -> String {
