@@ -83,7 +83,7 @@ test_cases! {
 //  ppu_stat_lyc_onoff:                 "ppu/stat_lyc_onoff",               Model::DMG, false,
 //  ppu_vblank_stat_intr:               "ppu/vblank_stat_intr-GS",          Model::DMG, false,
 
-//  serial_boot_sclk_align:             "serial/boot_sclk_align-dmgABCmgb", Model::DMG, false,
+    serial_boot_sclk_align:             "serial/boot_sclk_align-dmgABCmgb", Model::DMG, false,
 
     timer_div_write:                    "timer/div_write",                  Model::DMG, false,
     timer_rapid_toggle:                 "timer/rapid_toggle",               Model::DMG, false,

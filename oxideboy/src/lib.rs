@@ -185,6 +185,12 @@ impl<T: EventListener> Gameboy<T> {
         self.hw.apu.reg_nr50_write(0x77);
         self.hw.apu.reg_nr51_write(0xF3);
 
+        // TODO: not 100% sure on this magic number.
+        // Basically, even when the serial port isn't active, it's clocking in order to shift out a bit.
+        // It's tied to the main clock cycle count, and not dependent on when SC/SB is changed. This magic number
+        // ensures that mooneye serial/boot_sclk_align test passes.
+        self.hw.serial.transfer_clock = 124;
+
         self.hw.bootrom_enabled = false;
     }
 

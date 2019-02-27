@@ -231,7 +231,7 @@ impl<T: EventListener> GameboyHardware<T> {
             let v = self.mem_get(dma_src);
             self.ppu.oam_write(dma_dst, v);
         }
-        self.serial.clock();
+        self.serial.clock(&mut self.interrupts);
         if self.ppu.clock(&mut self.interrupts) {
             self.listener.on_frame(&self.ppu.framebuffer);
         }
