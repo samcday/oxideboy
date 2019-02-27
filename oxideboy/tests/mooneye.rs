@@ -95,7 +95,12 @@ test_cases! {
     timer_tma_write_reloading:          "timer/tma_write_reloading",        Model::DMG, false,
 
     add_sp_e_timing:                    "add_sp_e_timing",                  Model::DMG, false,
-//  boot_div_dmg0:                      "boot_div-dmg0",                    Model::DMG0, false,
+    boot_div_dmg0:                      "boot_div-dmg0",                    Model::DMG0, false,
+// TODO: see comment in skip_bootrom relating to initial DIV value. Once the PPU is more cycle accurate
+// this test (and the abc_mgb variant below) will probably just start passing.
+//  boot_div_dmg0_realbootrom:          "boot_div-dmg0",                    Model::DMG0, true,
+    boot_div_dmg_abc_mgb:               "boot_div-dmgABCmgb",               Model::DMG, false,
+//  boot_div_dmg_abc_mgb_realbootrom:   "boot_div-dmgABCmgb",               Model::DMG, true,
     boot_hwio_dmg0:                     "boot_hwio-dmg0",                   Model::DMG0, false,
     boot_hwio_dmg0_realbootrom:         "boot_hwio-dmg0",                   Model::DMG0, true,
     boot_regs_dmg0:                     "boot_regs-dmg0",                   Model::DMG0, false,
