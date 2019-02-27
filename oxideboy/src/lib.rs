@@ -80,12 +80,25 @@ impl<T: EventListener> Gameboy<T> {
     pub fn skip_bootrom(&mut self) {
         self.cpu.pc = 0x100;
         self.cpu.sp = 0xFFFE;
+
         self.cpu.a = 0x01;
-        self.cpu.b = 0xFF;
+        self.cpu.d = 0x00;
         self.cpu.c = 0x13;
-        self.cpu.e = 0xC1;
-        self.cpu.h = 0x84;
-        self.cpu.l = 0x03;
+        match self.hw.model {
+            Model::DMG0 => {
+                self.cpu.b = 0xFF;
+                self.cpu.e = 0xC1;
+                self.cpu.h = 0x84;
+                self.cpu.l = 0x03;
+            }
+            Model::DMG => {
+                self.cpu.b = 0x00;
+                self.cpu.h = 0x01;
+                self.cpu.f.unpack(0xB0);
+                self.cpu.e = 0xD8;
+                self.cpu.l = 0x4D;
+            }
+        }
 
         // TODO: I'm not really happy with these DIV magic numbers yet.
         // I worked backwards from the mooneye boot_div tests to get these, but when running the real bootroms, I end

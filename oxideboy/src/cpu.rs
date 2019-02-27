@@ -34,10 +34,10 @@ pub struct Cpu {
 /// Z: Zero flag, N: subtract flag, H: half carry flag, C: carry flag
 #[derive(Default)]
 pub struct Flags {
-    pub z: bool,
-    pub n: bool,
-    pub h: bool,
-    pub c: bool,
+    pub z: bool, // Bit 7
+    pub n: bool, // Bit 6
+    pub h: bool, // Bit 5
+    pub c: bool, // Bit 4
 }
 
 /// The 8 available 8-bit CPU registers. The F register is not included here because no instructions reference it
