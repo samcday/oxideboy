@@ -135,8 +135,11 @@ class App extends React.Component {
                       <i className="fas fa-pause"></i>
                     </button>
                   }
-                  <button type="button" className="btn btn-outline-secondary" id="next" onClick={this.step.bind(this)} disabled={!this.state.active || !this.state.paused}>
+                  <button type="button" className="btn btn-outline-secondary" id="step" onClick={this.step.bind(this)} disabled={!this.state.active || !this.state.paused}>
                     <i className="fas fa-forward"></i>
+                  </button>
+                  <button type="button" className="btn btn-outline-secondary" id="step_frame" onClick={this.stepFrame.bind(this)} disabled={!this.state.active || !this.state.paused}>
+                    <i className="fas fa-fast-forward"></i>
                   </button>
                 </div>
                 <InstructionViewer instructions={this.state.instructions} />
@@ -248,6 +251,21 @@ class App extends React.Component {
     }
 
     this.emulator.step();
+    this.setState(({cpuDirty, memDirty}) => {
+      return {
+        memDirty: memDirty + 1,
+        cpuDirty: cpuDirty + 1,
+      };
+    });
+    this.updateInstruction();
+  }
+
+  stepFrame() {
+    if (!this.state.paused) {
+      return;
+    }
+
+    this.emulator.step_frame();
     this.setState(({cpuDirty, memDirty}) => {
       return {
         memDirty: memDirty + 1,

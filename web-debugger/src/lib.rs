@@ -28,6 +28,7 @@ cfg_if! {
 }
 
 struct DebugListener {
+    new_frame: bool,
     frame_cb: Function,
     breakpoint_cb: Function,
     breakpoint_hit: bool,
@@ -35,6 +36,7 @@ struct DebugListener {
 
 impl EventListener for DebugListener {
     fn on_frame(&mut self, ppu_buf: &[u32]) {
+        self.new_frame = true;
         // We pass the PPU buffer to the callback in JS land to update the canvas.
         let buf =
             unsafe { Uint8ClampedArray::view(slice::from_raw_parts((ppu_buf).as_ptr() as *const u8, 160 * 144 * 4)) };
@@ -67,6 +69,7 @@ impl WebEmu {
         utils::set_panic_hook();
 
         let listener = DebugListener {
+            new_frame: false,
             frame_cb,
             breakpoint_cb,
             breakpoint_hit: false,
@@ -99,6 +102,13 @@ impl WebEmu {
 
     pub fn step(&mut self) {
         self.gb.run_instruction();
+    }
+
+    pub fn step_frame(&mut self) {
+        self.gb.hw.listener.new_frame = false;
+        while !self.gb.hw.listener.new_frame {
+            self.gb.run_instruction();
+        }
     }
 
     /// Decodes n number of instructions centered around the given memory location.
