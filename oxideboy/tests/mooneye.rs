@@ -97,7 +97,7 @@ test_cases! {
     add_sp_e_timing:                    "add_sp_e_timing",                  Model::DMG, false,
 //  boot_div_dmg0:                      "boot_div-dmg0",                    Model::DMG0, false,
     boot_hwio_dmg0:                     "boot_hwio-dmg0",                   Model::DMG0, false,
-//  boot_hwio_dmg0_realbootrom:         "boot_hwio-dmg0",                   Model::DMG0, true,
+    boot_hwio_dmg0_realbootrom:         "boot_hwio-dmg0",                   Model::DMG0, true,
     boot_regs_dmg0:                     "boot_regs-dmg0",                   Model::DMG0, false,
     boot_regs_dmg0_realbootrom:         "boot_regs-dmg0",                   Model::DMG0, true,
     call_cc_timing:                     "call_cc_timing",                   Model::DMG, false,
