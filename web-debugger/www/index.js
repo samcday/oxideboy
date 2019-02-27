@@ -107,6 +107,10 @@ class App extends React.Component {
               <label htmlFor={`cpu_register_imd`}>IMD:</label>
               <input type="checkbox" readOnly id={`cpu_register_imd`} checked={this.emulator ? this.emulator.get_ime_defer() : false} dirty={this.state.cpuDirty} />
             </div>
+            <div className="register">
+              <label htmlFor={`cpu_register_halt`}>HALT:</label>
+              <input type="checkbox" readOnly id={`cpu_register_halt`} checked={this.emulator ? this.emulator.get_halted() : false} dirty={this.state.cpuDirty} />
+            </div>
             {
               Object.keys(MEM_REGISTERS).map((reg) =>
                 <Register name={reg} addr={MEM_REGISTERS[reg]} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} key={reg} />

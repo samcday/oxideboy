@@ -9,7 +9,6 @@ use oxideboy::*;
 use std::collections::HashSet;
 use std::slice;
 use wasm_bindgen::prelude::*;
-use web_sys::window;
 
 macro_rules! log {
     ( $( $t:tt )* ) => {
@@ -127,6 +126,10 @@ impl WebEmu {
 
     pub fn get_ime_defer(&self) -> bool {
         self.gb.cpu.ime_defer
+    }
+
+    pub fn get_halted(&self) -> bool {
+        self.gb.cpu.halted
     }
 
     pub fn set_joypad_state(&mut self, key: &str, pressed: bool) {
