@@ -6,6 +6,7 @@ mod utils;
 use cfg_if::cfg_if;
 use js_sys::{Function, Uint8ClampedArray};
 use oxideboy::*;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::slice;
 use wasm_bindgen::prelude::*;
@@ -54,6 +55,12 @@ pub struct WebEmu {
     pc_breakpoints: HashSet<u16>,
 }
 
+#[derive(Serialize)]
+struct Instruction {
+    pub loc: u16,
+    pub txt: String,
+}
+
 #[wasm_bindgen]
 impl WebEmu {
     pub fn new(rom: &[u8], frame_cb: Function, breakpoint_cb: Function) -> WebEmu {
@@ -94,14 +101,31 @@ impl WebEmu {
         self.gb.run_instruction();
     }
 
-    pub fn current_instruction(&self) -> String {
+    /// Decodes the next instructions the CPU will execute. It will decode until a flow control instruciton is found.
+    pub fn current_instructions(&self) -> JsValue {
         let mut pc = self.gb.cpu.pc;
-        cpu::decode_instruction(|| {
-            let loc = pc;
-            pc = pc.wrapping_add(1);
-            self.gb.hw.mem_get(loc)
-        })
-        .to_string()
+
+        let mut instrs = Vec::new();
+
+        while instrs.len() < 5 {
+            let pos = pc;
+            let inst = cpu::decode_instruction(|| {
+                let loc = pc;
+                pc = pc.wrapping_add(1);
+                self.gb.hw.mem_get(loc)
+            });
+
+            instrs.push(Instruction {
+                loc: pos,
+                txt: inst.to_string(),
+            });
+
+            if inst.is_flow_control() {
+                break;
+            }
+        }
+
+        JsValue::from_serde(&instrs).unwrap()
     }
 
     pub fn mem_read(&self, addr: u16) -> u8 {

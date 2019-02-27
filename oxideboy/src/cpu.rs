@@ -983,6 +983,21 @@ impl std::fmt::Display for Instruction {
     }
 }
 
+impl Instruction {
+    /// Indicates if current instruction affects program execution flow (CALL, JP, JR, RET, RETI, RST)
+    pub fn is_flow_control(&self) -> bool {
+        match self {
+            Instruction::CALL(_, _)
+            | Instruction::JP(_, _)
+            | Instruction::JR(_, _)
+            | Instruction::RET(_)
+            | Instruction::RETI
+            | Instruction::RST(_) => true,
+            _ => false,
+        }
+    }
+}
+
 /// The instruction decoder. Fetches the next 8-bit opcode from an arbitrary source, decodes it into an instruction, and
 /// then possibly fetches another 1-2 bytes used by that instruction. The "arbitrary source" in the main case will be
 /// the CPU fetching the next byte from the memory address pointed to by the PC register (and then bumping it), but this

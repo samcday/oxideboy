@@ -9,6 +9,7 @@ import 'bootstrap';
 import '@fortawesome/fontawesome-free/css/all.css';
 
 // TODO: debounce memory view resize handler.
+// TODO: hide unhandled segments of memory (echo RAM, unused high registers).
 
 const CPU_REGISTERS = ['AF', 'BC', 'DE', 'HL', 'SP', 'PC'];
 const MEM_REGISTERS = {
@@ -137,9 +138,8 @@ class App extends React.Component {
                   <button type="button" className="btn btn-outline-secondary" id="next" onClick={this.step.bind(this)} disabled={!this.state.active || !this.state.paused}>
                     <i className="fas fa-forward"></i>
                   </button>
-
-                  <div>{this.state.instruction}</div>
                 </div>
+                <div><InstructionViewer instructions={this.state.instructions} /></div>
               </div>
             </SplitPane>
             <div>
@@ -275,7 +275,7 @@ class App extends React.Component {
   }
 
   updateInstruction() {
-    this.setState({instruction: this.emulator.current_instruction()});
+    this.setState({instructions: this.emulator.current_instructions()});
   }
 
   runFrame(timestamp) {
@@ -291,6 +291,7 @@ class App extends React.Component {
   }
 
   updateDebuggerView() {
+    this.updateInstruction();
     this.setState(({cpuDirty, memDirty}) => {
       return {
         memDirty: memDirty + 1,
@@ -359,6 +360,18 @@ class MemoryViewer extends React.Component {
       <div style={style}>
         <div className="memory-address bg-light pl-1 pr-2 mr-2">0x{toPaddedHexString(address, 4)}</div>
         {values}
+      </div>
+    );
+  }
+}
+
+class InstructionViewer extends React.Component {
+  render() {
+    return (
+      <div className="text-monospace">
+        { (this.props.instructions || []).map((inst) => (
+            <div>{inst.loc}: {inst.txt}</div>
+        ))}
       </div>
     );
   }
