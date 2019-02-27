@@ -215,7 +215,9 @@ class App extends React.Component {
       return;
     }
     this.setState({paused: false});
+
     this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
+    this.viewUpdates = setInterval(this.updateDebuggerView.bind(this), 100);
   }
 
   pause() {
@@ -224,6 +226,7 @@ class App extends React.Component {
     }
 
     cancelAnimationFrame(this.nextFrame);
+    clearTimeout(this.viewUpdates);
     this.lastFrameTimestamp = null;
 
     setTimeout(() => {
@@ -285,6 +288,9 @@ class App extends React.Component {
     this.lastFrameTimestamp = timestamp;
 
     this.emulator.run(delta * 1000);
+  }
+
+  updateDebuggerView() {
     this.setState(({cpuDirty, memDirty}) => {
       return {
         memDirty: memDirty + 1,
