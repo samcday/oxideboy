@@ -39,14 +39,13 @@ impl EventListener for DebugListener {
         let buf =
             unsafe { Uint8ClampedArray::view(slice::from_raw_parts((ppu_buf).as_ptr() as *const u8, 160 * 144 * 4)) };
 
-        let _ = window()
-            .unwrap()
-            .set_timeout_with_callback_and_timeout_and_arguments_1(&self.frame_cb, 0, &buf);
+        let _ = self.frame_cb.call1(&JsValue::NULL, &buf);
     }
     fn on_memory_write(&mut self, _addr: u16, _: u8) {}
     fn on_debug_breakpoint(&mut self) {
+        // Set breakpoint_hit so we know to stop if we're in the mai run() fn pumping instruction cycles.
         self.breakpoint_hit = true;
-        let _ = window().unwrap().set_timeout_with_callback(&self.breakpoint_cb);
+        let _ = self.breakpoint_cb.call0(&JsValue::NULL);
     }
 }
 
@@ -77,21 +76,19 @@ impl WebEmu {
     }
 
     pub fn run(&mut self, microseconds: f32) {
+        self.gb.hw.listener.breakpoint_hit = false;
         self.gb.hw.cycle_count = 0;
+
         let desired_cycles = (CYCLES_PER_MICRO * microseconds) as u32;
 
         while !self.gb.hw.listener.breakpoint_hit && self.gb.hw.cycle_count < desired_cycles {
             // Check breakpoints.
             if self.pc_breakpoints.contains(&self.gb.cpu.pc) {
-                let _ = window()
-                    .unwrap()
-                    .set_timeout_with_callback(&self.gb.hw.listener.breakpoint_cb);
+                let _ = self.gb.hw.listener.breakpoint_cb.call0(&JsValue::NULL);
                 break;
             }
             self.gb.run_instruction();
         }
-
-        self.gb.hw.listener.breakpoint_hit = false;
     }
 
     pub fn step(&mut self) {

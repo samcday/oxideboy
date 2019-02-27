@@ -218,13 +218,21 @@ class App extends React.Component {
     if (this.state.paused) {
       return;
     }
-    this.setState({paused: true});
+
     cancelAnimationFrame(this.nextFrame);
     this.lastFrameTimestamp = null;
 
-    this.updateInstruction();
-    // Scroll to PC.
-
+    setTimeout(() => {
+      this.setState(({cpuDirty, memDirty}) => {
+        return {
+          paused: true,
+          memDirty: memDirty + 1,
+          cpuDirty: cpuDirty + 1,
+        };
+      });
+      this.updateInstruction();
+      // TODO: Scroll to PC.
+    });
   }
 
   step() {
@@ -252,12 +260,9 @@ class App extends React.Component {
   }
 
   breakpointHit() {
-    this.setState(({cpuDirty, memDirty}) => {
-      return {
-        memDirty: memDirty + 1,
-        cpuDirty: cpuDirty + 1,
-      };
-    });
+    if (this.state.paused) {
+      return;
+    }
 
     this.pause();
   }
