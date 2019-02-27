@@ -121,9 +121,9 @@ class App extends React.Component {
         </div>
         <div className="flex-fill position-relative">
           <SplitPane split="vertical" height="100%" defaultSize="80%">
-            <SplitPane ref="split" split="horizontal" defaultSize="80%" onChange={this.resizeMemoryViewer.bind(this)}>
+            <SplitPane ref="split" split="horizontal" defaultSize="70%" onChange={this.resizeMemoryViewer.bind(this)}>
               <MemoryViewer height={this.state.memoryViewerHeight} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} />
-              <div>
+              <div className="h-100">
                 <div className="btn-group" role="group">
                   { this.state.paused &&
                     <button type="button" className="btn btn-outline-secondary" id="start" onClick={this.start.bind(this)} disabled={!this.state.active}>
@@ -139,7 +139,7 @@ class App extends React.Component {
                     <i className="fas fa-forward"></i>
                   </button>
                 </div>
-                <div><InstructionViewer instructions={this.state.instructions} /></div>
+                <InstructionViewer instructions={this.state.instructions} />
               </div>
             </SplitPane>
             <div>
@@ -275,7 +275,7 @@ class App extends React.Component {
   }
 
   updateInstruction() {
-    this.setState({instructions: this.emulator.current_instructions()});
+    this.setState({instructions: this.emulator.current_instructions(this.emulator.reg_read('PC'), 11)});
   }
 
   runFrame(timestamp) {
@@ -370,7 +370,7 @@ class InstructionViewer extends React.Component {
     return (
       <div className="text-monospace">
         { (this.props.instructions || []).map((inst) => (
-            <div>{inst.loc}: {inst.txt}</div>
+            <div>0x{toPaddedHexString(inst.loc, 4)}: {inst.txt}</div>
         ))}
       </div>
     );

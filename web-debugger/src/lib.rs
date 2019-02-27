@@ -101,28 +101,57 @@ impl WebEmu {
         self.gb.run_instruction();
     }
 
-    /// Decodes the next instructions the CPU will execute. It will decode until a flow control instruciton is found.
-    pub fn current_instructions(&self) -> JsValue {
-        let mut pc = self.gb.cpu.pc;
-
+    /// Decodes n number of instructions centered around the given memory location.
+    pub fn current_instructions(&self, addr: u16, n: usize) -> JsValue {
         let mut instrs = Vec::new();
 
-        while instrs.len() < 5 {
-            let pos = pc;
+        // We're decoding n instructions total, we want to keep the initial instruction centered, so we decode n/2
+        // instructions before and after the given address. Let's start by decoding forwards.
+        let mut loc = addr;
+
+        while instrs.len() < n / 2 + 1 {
+            let inst_loc = loc;
             let inst = cpu::decode_instruction(|| {
-                let loc = pc;
-                pc = pc.wrapping_add(1);
-                self.gb.hw.mem_get(loc)
+                let b = self.gb.hw.mem_get(loc);
+                loc = loc.wrapping_add(1);
+                b
             });
 
             instrs.push(Instruction {
-                loc: pos,
+                loc: inst_loc,
                 txt: inst.to_string(),
             });
+        }
 
-            if inst.is_flow_control() {
-                break;
+        // Okay going backwards is kinda weird. We don't know where the instruction boundaries are, since the previous
+        // instruction may be encoded in 1, 2 or 3 bytes. So each time we decode, we check if the instruction size
+        // spills over where it was expected to. If that's the case, we throw that decoded instruction away and try 1
+        // space back.
+        let mut loc = addr.wrapping_sub(1);
+        let mut boundary = addr;
+        while instrs.len() < n {
+            let inst_loc = loc;
+            let inst = cpu::decode_instruction(|| {
+                let b = self.gb.hw.mem_get(loc);
+                loc = loc.wrapping_add(1);
+                b
+            });
+
+            if inst_loc + u16::from(inst.size()) > boundary {
+                // Oops, collision! Try going backwards a bit more.
+                loc = inst_loc.wrapping_sub(1);
+                continue;
             }
+
+            instrs.insert(
+                0,
+                Instruction {
+                    loc: inst_loc,
+                    txt: inst.to_string(),
+                },
+            );
+            boundary = boundary.wrapping_sub(u16::from(inst.size()));
+            loc = inst_loc - 1;
         }
 
         JsValue::from_serde(&instrs).unwrap()

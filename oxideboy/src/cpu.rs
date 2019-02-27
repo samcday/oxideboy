@@ -983,6 +983,33 @@ impl std::fmt::Display for Instruction {
     }
 }
 
+impl Operand {
+    /// Returns how many bytes this operand is encoded in, between 0 and 2.
+    pub fn size(&self) -> u8 {
+        match self {
+            Operand::Register(_) => 0,
+            Operand::Immediate(_) => 1,
+            Operand::Address(_) => 0,
+            Operand::AddressInc(_) => 0,
+            Operand::AddressDec(_) => 0,
+            Operand::ImmediateAddress(_) => 2,
+            Operand::ImmediateAddressHigh(_) => 1,
+            Operand::AddressHigh(_) => 0,
+        }
+    }
+}
+
+impl Operand16 {
+    /// Returns how many bytes this operand is encoded in, between 0 and 2.
+    pub fn size(&self) -> u8 {
+        match self {
+            Operand16::Register(_) => 0,
+            Operand16::Immediate(_) => 2,
+            Operand16::ImmediateAddress(_) => 2,
+        }
+    }
+}
+
 impl Instruction {
     /// Indicates if current instruction affects program execution flow (CALL, JP, JR, RET, RETI, RST)
     pub fn is_flow_control(&self) -> bool {
@@ -994,6 +1021,47 @@ impl Instruction {
             | Instruction::RETI
             | Instruction::RST(_) => true,
             _ => false,
+        }
+    }
+
+    /// Returns how many bytes of memory this instruction is encoded in.
+    pub fn size(&self) -> u8 {
+        1 + // all instructions are at least 1 byte for the opcode.
+            match self {
+                // Beyond that, some instruction sizes depend on the operand.
+                ADC(o) => o.size(),
+                ADD(o) => o.size(),
+                AND(o) => o.size(),
+                CP(o) => o.size(),
+                JP(_, o) => o.size(),
+                LD(lhs, rhs) => lhs.size() + rhs.size(),
+                LD16(lhs, rhs) => lhs.size() + rhs.size(),
+                OR(o) => o.size(),
+                SBC(o) => o.size(),
+                SUB(o) => o.size(),
+                XOR(o) => o.size(),
+
+                // Some instructions are implicitly bigger
+                ADD_SP_r8(_) => 1,
+                CALL(_, _) => 2,
+                JR(_, _) => 1,
+                LD_HL_SP(_) => 1,
+
+                // And all the PREFIX CB commands are one byte larger for the $CB prefix opcode.
+                BIT(_, _)       => 1,
+                RES(_, _)   => 1,
+                RL(_)       => 1,
+                RLC(_) => 1,
+                RR(_) => 1,
+                RRC(_) => 1,
+                SET(_,_) => 1,
+                SLA(_) => 1,
+                SRA(_) => 1,
+                SRL(_) => 1,
+                SWAP(_) => 1,
+
+                // Everything else is just the 1 byte.
+                _ => 0,
         }
     }
 }
