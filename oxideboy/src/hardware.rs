@@ -29,7 +29,6 @@ pub struct GameboyHardware<T: EventListener> {
     pub ram: [u8; 0x2000], // 0xC000 - 0xDFFF (and echoed in 0xE000 - 0xFDFF)
     pub hram: [u8; 0x7F],  // 0xFF80 - 0xFFFE
 
-    pub rom: Vec<u8>,
     pub bootrom_enabled: bool,
 
     pub cycle_count: u32,
@@ -39,12 +38,11 @@ pub struct GameboyHardware<T: EventListener> {
 
 impl<T: EventListener> GameboyHardware<T> {
     pub fn new(model: Model, rom: Vec<u8>, listener: T) -> GameboyHardware<T> {
-        let cart = Cartridge::from_rom(&rom);
+        let cart = Cartridge::from_rom(rom);
 
         GameboyHardware {
             model,
             cart,
-            rom,
             apu: Apu::new(),
             dma: Default::default(),
             interrupts: InterruptController::new(),
@@ -74,10 +72,10 @@ impl<T: EventListener> GameboyHardware<T> {
     pub fn mem_get(&self, addr: u16) -> u8 {
         match addr {
             0x0000...0x0100 if self.bootrom_enabled => self.bootrom_read(addr),
-            0x0000...0x3FFF => self.cart.rom_lo(&self.rom)[addr as usize],
-            0x4000...0x7FFF => self.cart.rom_hi(&self.rom)[(addr - 0x4000) as usize],
+            0x0000...0x3FFF => self.cart.rom_lo(addr as usize),
+            0x4000...0x7FFF => self.cart.rom_hi((addr - 0x4000) as usize),
             0x8000...0x9FFF => self.ppu.vram_read(addr - 0x8000),
-            0xA000...0xBFFF => self.cart.ram()[(addr - 0xA000) as usize],
+            0xA000...0xBFFF => self.cart.ram((addr - 0xA000) as usize),
             0xC000...0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000...0xFDFF => self.ram[(addr - 0xE000) as usize],
             0xFE00...0xFE9F => self.ppu.oam_read((addr - 0xFE00) as usize),

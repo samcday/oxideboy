@@ -15,6 +15,8 @@ pub struct Cartridge {
     ram_enabled: bool,
     ram_bank: u8,
     pub ram: Vec<u8>,
+
+    pub rom: Vec<u8>,
 }
 
 enum CartridgeType {
@@ -30,7 +32,7 @@ impl Default for CartridgeType {
 }
 
 impl Cartridge {
-    pub fn from_rom(rom: &[u8]) -> Self {
+    pub fn from_rom(rom: Vec<u8>) -> Self {
         let cart_type = match rom[0x147] {
             0 => CartridgeType::ROMOnly,
             1 | 2 | 3 => CartridgeType::MBC1,
@@ -64,27 +66,31 @@ impl Cartridge {
             rom_bank_count,
             ram_enabled: false,
             ram,
+            rom,
             ram_bank: 0,
         }
     }
 
-    pub fn rom_lo<'a>(&self, rom: &'a [u8]) -> &'a [u8] {
-        &rom[0..0x4000]
+    pub fn rom_lo(&self, addr: usize) -> u8 {
+        self.rom[addr]
     }
 
-    pub fn rom_hi<'a>(&self, rom: &'a [u8]) -> &'a [u8] {
+    pub fn rom_hi(&self, addr: usize) -> u8 {
         match self.cart_type {
-            CartridgeType::ROMOnly => &rom[0x4000..0x8000],
+            CartridgeType::ROMOnly => self.rom[addr],
             CartridgeType::MBC1 | CartridgeType::MBC3 => {
                 let base = (self.rom_bank as usize) * 0x4000;
-                &rom[base..base + 0x4000]
+                self.rom[base + addr]
             }
         }
     }
 
-    pub fn ram(&self) -> &[u8] {
+    pub fn ram(&self, addr: usize) -> u8 {
         let base = (self.ram_bank as usize) * 0x2000;
-        &self.ram[base..base + 0x2000]
+        if base + addr >= self.ram.len() {
+            return 0xFF;
+        }
+        self.ram[base + addr]
     }
 
     pub fn write(&mut self, addr: u16, v: u8) {

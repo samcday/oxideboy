@@ -85,7 +85,7 @@ impl WebEmu {
     }
 
     pub fn rom_hash(&self) -> String {
-        format!("{:x}", md5::compute(&self.gb.hw.rom))
+        format!("{:x}", md5::compute(&self.gb.hw.cart.rom))
     }
 
     pub fn run(&mut self, microseconds: f32) {
