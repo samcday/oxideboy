@@ -22,7 +22,7 @@ impl DmaController {
         self.request = true;
         self.active = false;
         self.idx = 0;
-        self.from = ((v & 0xFF) as u16) << 8;
+        self.from = u16::from(v) << 8;
     }
 
     /// Runs the DMA procedure when it's active. DMA transfers copy 160 bytes, one per cycle, from a configurable

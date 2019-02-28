@@ -13,7 +13,7 @@ pub mod util;
 use cpu::Cpu;
 use hardware::GameboyHardware;
 
-pub const CYCLES_PER_MICRO: f32 = 1048576.0 / 1000000.0;
+pub const CYCLES_PER_MICRO: f32 = 1_048_576.0 / 1_000_000.0;
 pub const NOOP_LISTENER: NoopListener = NoopListener {};
 
 // The main entrypoint into Oxideboy. Represents an emulation session for a Gameboy.
@@ -146,11 +146,12 @@ impl<T: EventListener> Gameboy<T> {
             src_addr += 1;
             // Double up each bit in the source byte, using sorcery.
             // The best kind of sorcery too: copy/pasted from the interwebz.
-            let z = (((b as u64).wrapping_mul(0x0101010101010101) & 0x8040201008040201)
-                .wrapping_mul(0x0102040810204081)
+            let z = ((u64::from(b).wrapping_mul(0x0101_0101_0101_0101) & 0x8040_2010_0804_0201)
+                .wrapping_mul(0x0102_0408_1020_4081)
                 >> 49)
                 & 0x5555
-                | (((b as u64).wrapping_mul(0x0101010101010101) & 0x8040201008040201).wrapping_mul(0x0102040810204081)
+                | ((u64::from(b).wrapping_mul(0x0101_0101_0101_0101) & 0x8040_2010_0804_0201)
+                    .wrapping_mul(0x0102_0408_1020_4081)
                     >> 48)
                     & 0xAAAAu64;
             self.hw.ppu.vram_write(vram_addr, (z >> 8) as u8);

@@ -3,6 +3,7 @@
 
 use crate::interrupt::{Interrupt, InterruptController};
 
+#[derive(Default)]
 pub struct Serial {
     pub serial_out: Option<u8>, // When serial port is active, SB register will get shifted to here to be read out.
     serial_in: Option<u8>,      // When serial port is active, this incoming value will be read into the SB register.
@@ -17,15 +18,9 @@ pub struct Serial {
 impl Serial {
     pub fn new() -> Serial {
         Serial {
-            serial_out: None,
-            serial_in: None,
-
-            sb: 0,
-            internal_clock: false,
-            transfer_fast: false,
             transfer_speed: 128, // Default transfer speed is 8192Hz, or 1 bit every 128 clock cycles
-            transfer_clock: 0,
-            transfer_countdown: 0,
+
+            ..Default::default()
         }
     }
 
@@ -34,7 +29,7 @@ impl Serial {
         // No matter what, the serial port is running its clock to determine when it's time to shift out another bit.
         // When the clock triggers, we won't actually shift anything out unless the internal clock mode is enabled and
         // there's a transfer requested.
-        self.transfer_clock = self.transfer_clock + 1;
+        self.transfer_clock += 1;
         let clock_edge = self.transfer_clock > self.transfer_speed;
         if clock_edge {
             self.transfer_clock = 0;
@@ -74,7 +69,7 @@ impl Serial {
     }
 
     pub fn reg_sb_read(&self) -> u8 {
-        return self.sb;
+        self.sb
     }
 
     pub fn reg_sb_write(&mut self, v: u8) {

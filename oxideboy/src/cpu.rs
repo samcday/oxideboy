@@ -12,6 +12,7 @@ use crate::GameboyHardware;
 
 /// The main Cpu struct, containing all the CPU registers and core CPU state. Many of the CPU instructions modify the
 /// registers contained here. Anything else is modified by reading/writing from the external memory bus.
+#[derive(Default)]
 pub struct Cpu {
     // CPU registers
     pub a: u8,
@@ -150,21 +151,7 @@ enum BitwiseOp {
 
 impl Cpu {
     pub fn new() -> Cpu {
-        Cpu {
-            a: 0,
-            b: 0,
-            c: 0,
-            d: 0,
-            e: 0,
-            f: Default::default(),
-            h: 0,
-            l: 0,
-            pc: 0,
-            sp: 0,
-            ime: false,
-            ime_defer: false,
-            halted: false,
-        }
+        Cpu { ..Default::default() }
     }
 
     /// Runs the CPU for a single fetch-decode-execute step. The actual number of cycles this will take depends on which
@@ -342,7 +329,7 @@ impl Cpu {
             SP => return self.sp,
         };
 
-        (hi as u16) << 8 | (lo as u16)
+        u16::from(hi) << 8 | u16::from(lo)
     }
 
     /// Sets a new value for a 16-bit CPU register.
@@ -392,9 +379,9 @@ impl Cpu {
                 hw.mem_read(addr)
             }
             Operand::ImmediateAddress(addr) => hw.mem_read(addr),
-            Operand::ImmediateAddressHigh(addr) => hw.mem_read(0xFF00 + (addr as u16)),
+            Operand::ImmediateAddressHigh(addr) => hw.mem_read(0xFF00 + u16::from(addr)),
             Operand::AddressHigh(r) => {
-                let addr = 0xFF00 + (self.register_get(r) as u16);
+                let addr = 0xFF00 + u16::from(self.register_get(r));
                 hw.mem_read(addr)
             }
         }
@@ -420,10 +407,10 @@ impl Cpu {
                 hw.mem_write(addr, v)
             }
             Operand::ImmediateAddress(addr) => hw.mem_write(addr, v),
-            Operand::ImmediateAddressHigh(addr) => hw.mem_write(0xFF00 + (addr as u16), v),
+            Operand::ImmediateAddressHigh(addr) => hw.mem_write(0xFF00 + u16::from(addr), v),
             Operand::AddressHigh(r) => {
                 let addr = self.register_get(r);
-                hw.mem_write(0xFF00 + (addr as u16), v)
+                hw.mem_write(0xFF00 + u16::from(addr), v)
             }
         }
     }
@@ -470,7 +457,7 @@ impl Cpu {
         let v = self.operand_get(hw, o).wrapping_add(1);
         self.f.z = v == 0;
         self.f.n = false;
-        self.f.h = v & 0x0F == 0;
+        self.f.h = v.trailing_zeros() >= 4;
         self.operand_set(hw, o, v);
     }
 
@@ -510,7 +497,7 @@ impl Cpu {
         self.f.z = new == 0;
         self.f.n = false;
         self.f.h = (((old & 0xF) + (v & 0xF)) + carry) & 0x10 == 0x10;
-        self.f.c = (old as u16) + (v as u16) + (carry as u16) > 0xFF;
+        self.f.c = u16::from(old) + u16::from(v) + u16::from(carry) > 0xFF;
     }
 
     fn add16<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, r: Register16) {
@@ -527,7 +514,7 @@ impl Cpu {
     }
 
     fn add_sp_r8<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, d: i8) {
-        let d = d as i16 as u16;
+        let d = i16::from(d) as u16;
         let sp = self.sp;
 
         self.sp = sp.wrapping_add(d as i16 as u16);
@@ -553,8 +540,8 @@ impl Cpu {
 
         self.f.z = new_a == 0;
         self.f.n = true;
-        self.f.h = ((a & 0xF) as u16) < ((v & 0xF) as u16) + (carry as u16);
-        self.f.c = (a as u16) < (v as u16) + (carry as u16);
+        self.f.h = u16::from(a & 0xF) < u16::from(v & 0xF) + u16::from(carry);
+        self.f.c = u16::from(a) < u16::from(v) + u16::from(carry);
     }
 
     fn ld<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, lhs: Operand, rhs: Operand) {
@@ -581,12 +568,12 @@ impl Cpu {
 
     fn ld_hl_sp<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, d: i8) {
         let sp = self.sp;
-        let d = d as i16 as u16;
+        let d = i16::from(d) as u16;
         let v = sp.wrapping_add(d);
         self.register16_set(HL, v);
         self.f.reset();
-        self.f.h = (sp & 0xF) + (d & 0xF) & 0x10 > 0;
-        self.f.c = (sp & 0xFF) + (d & 0xFF) & 0x100 > 0;
+        self.f.h = ((sp & 0xF) + (d & 0xF)) & 0x10 > 0;
+        self.f.c = ((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0;
         hw.clock();
     }
 
@@ -796,7 +783,7 @@ impl Cpu {
             return;
         }
         hw.clock();
-        self.pc = self.pc.wrapping_add(n as i8 as i16 as u16);
+        self.pc = self.pc.wrapping_add(i16::from(n as i8) as u16);
     }
 
     fn ret<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, cc: Option<FlagCondition>, ei: bool) {
@@ -818,14 +805,14 @@ impl Cpu {
 
     fn rst<T: EventListener>(&mut self, hw: &mut GameboyHardware<T>, a: u8) {
         hw.clock();
-        self.push_and_jump(hw, a as u16);
+        self.push_and_jump(hw, u16::from(a));
     }
 }
 
 impl Flags {
     /// Converts the CPU flags into an 8bit value. Used by instructions that operate on F register.
     pub fn pack(&self) -> u8 {
-        0 | if self.z { 0b1000_0000 } else { 0 }
+        (if self.z { 0b1000_0000 } else { 0 })
             | if self.n { 0b0100_0000 } else { 0 }
             | if self.h { 0b0010_0000 } else { 0 }
             | if self.c { 0b0001_0000 } else { 0 }
@@ -985,7 +972,7 @@ impl std::fmt::Display for Instruction {
 
 impl Operand {
     /// Returns how many bytes this operand is encoded in, between 0 and 2.
-    pub fn size(&self) -> u8 {
+    pub fn size(self) -> u8 {
         match self {
             Operand::Register(_) => 0,
             Operand::Immediate(_) => 1,
@@ -1001,7 +988,7 @@ impl Operand {
 
 impl Operand16 {
     /// Returns how many bytes this operand is encoded in, between 0 and 2.
-    pub fn size(&self) -> u8 {
+    pub fn size(self) -> u8 {
         match self {
             Operand16::Register(_) => 0,
             Operand16::Immediate(_) => 2,

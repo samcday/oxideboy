@@ -37,8 +37,8 @@ impl Cartridge {
             0x12 | 0x13 => CartridgeType::MBC3,
             v => panic!("Unsupported cartridge type: {:X}", v),
         };
-        let rom_bank_count = match rom[0x148] as u32 {
-            v @ 0...6 => 2u8.pow(v + 1),
+        let rom_bank_count = match rom[0x148] {
+            v @ 0...6 => 2u8.pow(u32::from(v) + 1),
             0x52 => 72,
             0x53 => 80,
             0x54 => 96,
@@ -53,7 +53,7 @@ impl Cartridge {
                     1 => 2048,
                     2 => 8192,
                     3 => 32768,
-                    4 => 131072,
+                    4 => 131_072,
                     v => panic!("Unexpected RAM size {} encountered", v),
                 }
             ],

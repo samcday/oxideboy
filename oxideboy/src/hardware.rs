@@ -144,8 +144,8 @@ impl<T: EventListener> GameboyHardware<T> {
         }
     }
     pub fn mem_read16(&mut self, addr: u16) -> u16 {
-        let mut v = self.mem_read(addr) as u16;
-        v |= (self.mem_read(addr + 1) as u16) << 8;
+        let mut v = u16::from(self.mem_read(addr));
+        v |= u16::from(self.mem_read(addr + 1)) << 8;
         v
     }
 

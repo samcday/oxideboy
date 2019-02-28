@@ -25,7 +25,7 @@ use Interrupt::*;
 
 impl Interrupt {
     /// Determines the appropriate memory location to jump to when processing an interrupt.
-    pub fn handler_addr(&self) -> u16 {
+    pub fn handler_addr(self) -> u16 {
         match self {
             VBlank => 0x40,
             Stat => 0x48,

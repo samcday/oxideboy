@@ -10,6 +10,7 @@ const DUTY_CYCLES: [[f32; 8]; 4] = [
 ];
 const NOISE_DIVISORS: [u16; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
+#[derive(Default)]
 pub struct Apu {
     sample_cycles: f64,
 
@@ -159,7 +160,7 @@ impl Channel1 {
         if !self.on {
             return (l, r);
         }
-        let val = DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize] * (self.vol_env.val as f32) / 15.0;
+        let val = DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize] * f32::from(self.vol_env.val) / 15.0;
         (
             l + if self.left { val } else { 0.0 },
             r + if self.right { val } else { 0.0 },
@@ -172,7 +173,7 @@ impl Channel2 {
         if !self.on {
             return (l, r);
         }
-        let val = DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize] * (self.vol_env.val as f32) / 15.0;
+        let val = DUTY_CYCLES[self.duty as usize][(self.pos & 7) as usize] * f32::from(self.vol_env.val) / 15.0;
         (
             l + if self.left { val } else { 0.0 },
             r + if self.right { val } else { 0.0 },
@@ -188,9 +189,9 @@ impl Channel3 {
         let wav = (if self.level == 0 {
             0.
         } else if self.level == 1 {
-            (wav as f32) - 7.
+            f32::from(wav) - 7.
         } else {
-            ((wav >> (self.level - 1)) as f32) - 7.
+            f32::from(wav >> (self.level - 1)) - 7.
         }) / 7.;
         (
             l + if self.left { wav } else { 0.0 },
@@ -213,7 +214,7 @@ impl Channel4 {
         if !self.on {
             return (l, r);
         }
-        let val = if (self.lfsr & 1) ^ 1 == 1 { 1.0 } else { -1.0 } * (self.vol_env.val as f32) / 15.0;;
+        let val = if (self.lfsr & 1) ^ 1 == 1 { 1.0 } else { -1.0 } * f32::from(self.vol_env.val) / 15.0;;
         (
             l + if self.left { val } else { 0.0 },
             r + if self.right { val } else { 0.0 },
@@ -233,7 +234,7 @@ impl VolumeEnvelope {
     }
 
     fn pack(&self) -> u8 {
-        0 | self.steps | if self.inc { 0b0000_1000 } else { 0 } | (self.default << 4)
+        self.steps | if self.inc { 0b0000_1000 } else { 0 } | (self.default << 4)
     }
 
     fn is_zero(&self) -> bool {
@@ -263,23 +264,8 @@ impl VolumeEnvelope {
 impl Apu {
     pub fn new() -> Apu {
         Apu {
-            sample_cycles: 0.0,
-            timer: 0,
-            frame_seq_timer: 0,
-
             enabled: true,
-            left_vol: 0,
-            right_vol: 0,
-            left_vin: false,
-            right_vin: false,
-
-            chan1: Default::default(),
-            chan2: Default::default(),
-            chan3: Default::default(),
-            chan4: Default::default(),
-            wave_ram: [0; 32],
-
-            sample_queue: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -356,7 +342,7 @@ impl Apu {
         }
 
         self.sample_cycles += 1.0;
-        let cycles_per_sample = 1048576.0 / SAMPLE_RATE;
+        let cycles_per_sample = 1_048_576.0 / SAMPLE_RATE;
         if self.sample_cycles >= cycles_per_sample {
             self.sample_cycles -= cycles_per_sample;
             self.generate_sample();
@@ -386,8 +372,8 @@ impl Apu {
         let r = r / 4.;
 
         // Master volume control.
-        let l = l * (self.left_vol as f32) / 7.;
-        let r = r * (self.right_vol as f32) / 7.;
+        let l = l * f32::from(self.left_vol) / 7.;
+        let r = r * f32::from(self.right_vol) / 7.;
 
         if cfg!(test) {
             return;
@@ -426,7 +412,7 @@ impl Apu {
     }
 
     pub fn reg_nr11_write(&mut self, v: u8) {
-        self.chan1.length = v as u16 & 0b0011_1111;
+        self.chan1.length = u16::from(v) & 0b0011_1111;
         if self.enabled {
             self.chan1.duty = (v & 0b1100_0000) >> 6;
         }
@@ -451,7 +437,7 @@ impl Apu {
     }
 
     pub fn reg_nr13_write(&mut self, v: u8) {
-        self.chan1.freq = (self.chan1.freq & 0x700) | (v as u16);
+        self.chan1.freq = (self.chan1.freq & 0x700) | u16::from(v);
     }
 
     pub fn reg_nr14_read(&self) -> u8 {
@@ -463,7 +449,7 @@ impl Apu {
         if !self.enabled {
             return;
         }
-        self.chan1.freq = (self.chan1.freq & 0xFF) | (((v & 0b111) as u16) << 8);
+        self.chan1.freq = (self.chan1.freq & 0xFF) | (u16::from(v & 0b111) << 8);
         let prev_counter = self.chan1.counter;
         self.chan1.counter = v & 0b0100_0000 > 0;
 
@@ -504,7 +490,7 @@ impl Apu {
     }
 
     pub fn reg_nr21_write(&mut self, v: u8) {
-        self.chan2.length = v as u16 & 0b0011_1111;
+        self.chan2.length = u16::from(v) & 0b0011_1111;
         if self.enabled {
             self.chan2.duty = (v & 0b1100_0000) >> 6;
         }
@@ -529,7 +515,7 @@ impl Apu {
     }
 
     pub fn reg_nr23_write(&mut self, v: u8) {
-        self.chan2.freq = (self.chan2.freq & 0x700) | (v as u16);
+        self.chan2.freq = (self.chan2.freq & 0x700) | u16::from(v);
     }
 
     pub fn reg_nr24_read(&self) -> u8 {
@@ -541,7 +527,7 @@ impl Apu {
         if !self.enabled {
             return;
         }
-        self.chan2.freq = (self.chan2.freq & 0xFF) | (((v & 0b111) as u16) << 8);
+        self.chan2.freq = (self.chan2.freq & 0xFF) | (u16::from(v & 0b111) << 8);
         let prev_counter = self.chan2.counter;
         self.chan2.counter = v & 0b0100_0000 > 0;
 
@@ -589,7 +575,7 @@ impl Apu {
     }
 
     pub fn reg_nr31_write(&mut self, v: u8) {
-        self.chan3.length = v as u16;
+        self.chan3.length = u16::from(v);
     }
 
     pub fn reg_nr32_read(&self) -> u8 {
@@ -617,7 +603,7 @@ impl Apu {
         if !self.enabled {
             return;
         }
-        self.chan3.freq = (self.chan3.freq & 0x700) | (v as u16);
+        self.chan3.freq = (self.chan3.freq & 0x700) | u16::from(v);
     }
 
     pub fn reg_nr34_read(&self) -> u8 {
@@ -629,7 +615,7 @@ impl Apu {
         if !self.enabled {
             return;
         }
-        self.chan3.freq = (self.chan3.freq & 0xFF) | (((v & 0b111) as u16) << 8);
+        self.chan3.freq = (self.chan3.freq & 0xFF) | (u16::from(v & 0b111) << 8);
         let prev_counter = self.chan3.counter;
         self.chan3.counter = v & 0b0100_0000 > 0;
 
@@ -663,7 +649,7 @@ impl Apu {
     }
 
     pub fn reg_nr41_write(&mut self, v: u8) {
-        self.chan4.length = v as u16 & 0b0011_1111;
+        self.chan4.length = u16::from(v) & 0b0011_1111;
     }
 
     pub fn reg_nr42_read(&self) -> u8 {
@@ -681,7 +667,7 @@ impl Apu {
     }
 
     pub fn reg_nr43_read(&self) -> u8 {
-        0 | self.chan4.div_ratio | if self.chan4.poly_7bit { 0b0000_1000 } else { 0 } | (self.chan4.poly_freq << 4)
+        (self.chan4.div_ratio) | if self.chan4.poly_7bit { 0b0000_1000 } else { 0 } | (self.chan4.poly_freq << 4)
     }
 
     pub fn reg_nr43_write(&mut self, v: u8) {
@@ -734,7 +720,7 @@ impl Apu {
     }
 
     pub fn reg_nr50_read(&self) -> u8 {
-        0 | self.left_vol
+        (self.left_vol)
             | if self.left_vin { 0b0000_1000 } else { 0 }
             | (self.right_vol << 4)
             | if self.right_vin { 0b1000_0000 } else { 0 }
@@ -751,7 +737,7 @@ impl Apu {
     }
 
     pub fn reg_nr51_read(&self) -> u8 {
-        0 | if self.chan1.right { 0b0000_0001 } else { 0 }
+        (if self.chan1.right { 0b0000_0001 } else { 0 })
             | if self.chan2.right { 0b0000_0010 } else { 0 }
             | if self.chan3.right { 0b0000_0100 } else { 0 }
             | if self.chan4.right { 0b0000_1000 } else { 0 }

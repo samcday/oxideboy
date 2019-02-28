@@ -10,7 +10,7 @@ use std::io::prelude::*;
 use std::slice;
 use std::time::{Duration, Instant};
 
-const FRAME_TIME: Duration = Duration::from_nanos((1_000_000_000.0 / (1048576.0 / 17556.0)) as u64);
+const FRAME_TIME: Duration = Duration::from_nanos((1_000_000_000.0 / (1_048_576.0 / 17556.0)) as u64);
 
 type Result<T> = std::result::Result<T, Box<std::error::Error>>;
 
@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     let mut rom = Vec::new();
     f.read_to_end(&mut rom)?;
 
-    let model_str = env::var("MODEL").ok().unwrap_or(String::from("DMG0"));
+    let model_str = env::var("MODEL").ok().unwrap_or_else(|| String::from("DMG0"));
     let model = if model_str == "DMG" { Model::DMG } else { Model::DMG0 };
 
     let mut gb = Gameboy::new(model, rom, NoopListener {});
@@ -52,18 +52,18 @@ fn main() -> Result<()> {
         .unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    if !(env::var("RUN_BOOTROM").ok().unwrap_or(String::from("0")) == "1") {
+    if env::var("RUN_BOOTROM").ok().unwrap_or_else(|| String::from("0")) != "1" {
         gb.skip_bootrom();
     }
 
-    if !(env::var("MUTE").ok().unwrap_or(String::from("0")) == "1") {
+    if env::var("MUTE").ok().unwrap_or_else(|| String::from("0")) != "1" {
         audio_device.resume();
     }
 
     let mut gb_buffer = [0; ppu::SCREEN_SIZE];
     let mut limit = false;
     let mut paused = false;
-    let print_fps = env::var("PRINT_FPS").ok().unwrap_or(String::from("0")) == "1";
+    let print_fps = env::var("PRINT_FPS").ok().unwrap_or_else(|| String::from("0")) == "1";
 
     let start = Instant::now();
     let mut next_frame = FRAME_TIME;
@@ -71,6 +71,9 @@ fn main() -> Result<()> {
     let mut update_fb = |gb_buffer: &[u32]| {
         texture
             .with_lock(None, |buffer: &mut [u8], _: usize| {
+                // TODO: clippy doesn't like this because it can apparently lead to undefined behaviour.
+                // Spent a few mins googling and couldn't figure out the idiomatic way to do this...
+                #[allow(clippy::cast_ptr_alignment)]
                 let buffer = unsafe { slice::from_raw_parts_mut(buffer.as_ptr() as *mut u32, 160 * 144) };
                 buffer.copy_from_slice(&gb_buffer[..]);
             })
@@ -275,11 +278,9 @@ fn main() -> Result<()> {
                 std::thread::sleep(next_frame - elapsed);
             }
             next_frame += FRAME_TIME;
-        } else {
-            if start.elapsed() >= next_frame {
-                update_fb(&gb_buffer);
-                next_frame += FRAME_TIME;
-            }
+        } else if start.elapsed() >= next_frame {
+            update_fb(&gb_buffer);
+            next_frame += FRAME_TIME;
         }
 
         frames += 1;

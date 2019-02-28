@@ -2,6 +2,7 @@
 
 use crate::interrupt::{Interrupt, InterruptController};
 
+#[derive(Default)]
 pub struct Timer {
     enabled: bool,       // Controls whether the timer unit is running.
     freq: u16,           // Expressed as a divisor of the DIV register.
@@ -15,13 +16,9 @@ pub struct Timer {
 impl Timer {
     pub fn new() -> Timer {
         Timer {
-            enabled: false,
             freq: 1024,
-            tima: 0,
-            tma: 0,
-            tima_overflow: false,
-            tima_reloaded: false,
-            div: 0,
+
+            ..Default::default()
         }
     }
 

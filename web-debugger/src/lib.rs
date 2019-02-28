@@ -77,7 +77,7 @@ impl WebEmu {
 
         let mut gb = Gameboy::new(Model::DMG0, rom.to_vec(), listener);
         gb.skip_bootrom();
-        gb.hw.ppu.framebuffer_fmt = ppu::PixelFormat::ABGR;
+        gb.hw.ppu.set_pixel_format(ppu::PixelFormat::ABGR);
         WebEmu {
             gb,
             pc_breakpoints: HashSet::new(),

@@ -18,6 +18,7 @@ const COLOR_MAPPING: [Color; 4] = [
     (0x08, 0x18, 0x20),
 ];
 
+#[derive(Default)]
 pub struct Ppu {
     tiles: Vec<u8>,         // 0x8000 - 0x97FF
     tilemap: Vec<u8>,       // 0x9800 - 0x9FFF
@@ -67,7 +68,7 @@ pub struct OAMEntry {
     pub attrs: u8,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct Palette {
     entries: [u8; 4],
 }
@@ -92,40 +93,15 @@ impl Ppu {
             tilemap: vec![0; 0x800],
             oam: vec![Default::default(); 40],
 
-            enabled: false,
-            win_code_area_hi: false,
-            win_enabled: false,
-            bg_tile_area_lo: false,
-            bg_code_area_hi: false,
-            obj_tall_mode: false,
-            obj_enabled: false,
-            bg_enabled: false,
-
-            interrupt_lyc: false,
-            interrupt_oam: false,
-            interrupt_vblank: false,
-            interrupt_hblank: false,
-
-            scy: 0,
-            scx: 0,
-            ly: 0,
-            lyc: 0,
-
             bgp: DEFAULT_PALETTE,
             obp0: DEFAULT_PALETTE,
             obp1: DEFAULT_PALETTE,
 
-            wy: 0,
-            wx: 0,
-
-            mode: Mode::Mode0(51),
-            prev_mode: Mode::Mode0(51),
-            mode_cycles: 0,
-            // mode3: Mode3State { ..Default::default() },
             scanline_objs: Vec::new(),
             framebuffer: vec![0; SCREEN_SIZE],
             framebuf_colors: [0; 4],
-            // first_frame: false,
+
+            ..Default::default()
         };
 
         ppu.set_pixel_format(PixelFormat::RGBA);
@@ -134,8 +110,8 @@ impl Ppu {
     }
 
     pub fn set_pixel_format(&mut self, fmt: PixelFormat) {
-        for i in 0..4 {
-            self.framebuf_colors[i] = fmt.to_u32(COLOR_MAPPING[i]);
+        for (i, mapping) in COLOR_MAPPING.iter().enumerate() {
+            self.framebuf_colors[i] = fmt.to_u32(*mapping);
         }
     }
 
@@ -297,7 +273,7 @@ impl Ppu {
             map_x = (map_x + 1) % 32;
 
             let tile_addr = if !self.bg_tile_area_lo {
-                let tile_code = tile_code as i8 as i16;
+                let tile_code = i16::from(tile_code as i8);
                 (0x1000 + (tile_code * 0x10)) as usize
             } else {
                 tile_code * 0x10
@@ -373,6 +349,7 @@ impl Ppu {
 
         // Now we rasterize the pixels into actual colors in the framebuffer.
         let framebuffer_base = usize::from(self.ly) * 160;
+        #[allow(clippy::needless_range_loop)]
         for i in 0..160 {
             let pixel = self.framebuf_colors[pixels[i]];
             self.framebuffer[framebuffer_base + i] = pixel;
@@ -419,7 +396,7 @@ impl Ppu {
 
     /// Read from the 0xFF40 LCDC register
     pub fn reg_lcdc_read(&self) -> u8 {
-        0 | if self.enabled { 0b1000_0000 } else { 0 }
+        (if self.enabled { 0b1000_0000 } else { 0 })
             | if self.win_code_area_hi { 0b0100_0000 } else { 0 }
             | if self.win_enabled { 0b0010_0000 } else { 0 }
             | if self.bg_tile_area_lo { 0b0001_0000 } else { 0 }
@@ -477,16 +454,22 @@ impl Ppu {
     }
 }
 
+impl Default for Mode {
+    fn default() -> Mode {
+        Mode::Mode0(51)
+    }
+}
+
 impl Palette {
-    pub fn pack(&self) -> u8 {
+    pub fn pack(self) -> u8 {
         self.entries[0] | (self.entries[1] << 2) | (self.entries[2] << 4) | (self.entries[3] << 6)
     }
 
-    pub fn update(&mut self, v: u8) {
-        self.entries[0] = v & 0b00000011;
-        self.entries[1] = (v & 0b00001100) >> 2;
-        self.entries[2] = (v & 0b00110000) >> 4;
-        self.entries[3] = (v & 0b11000000) >> 6;
+    pub fn update(mut self, v: u8) {
+        self.entries[0] = v & 0b0000_0011;
+        self.entries[1] = (v & 0b0000_1100) >> 2;
+        self.entries[2] = (v & 0b0011_0000) >> 4;
+        self.entries[3] = (v & 0b1100_0000) >> 6;
     }
 
     /// Gets the appropriate entry in the palette, accounting for the current bus conflict if it exists.
@@ -496,27 +479,27 @@ impl Palette {
     /// the new value. Even though these effects are unobservable to CPU instructions, they matter for the PPU because
     /// we're calculating pixels at 4Mhz. See the mattcurrie/mealybug-tearoom-tests/m3_bgp_change for a visual example
     /// of this phenomenon.
-    pub fn entry(&self, idx: usize) -> u8 {
-        return self.entries[idx];
+    pub fn entry(self, idx: usize) -> u8 {
+        self.entries[idx]
     }
 }
 
 impl OAMEntry {
-    fn priority(&self) -> bool {
+    fn priority(self) -> bool {
         self.attrs & 0x80 > 0
     }
-    fn vert_flip(&self) -> bool {
+    fn vert_flip(self) -> bool {
         self.attrs & 0x40 > 0
     }
-    fn horz_flip(&self) -> bool {
+    fn horz_flip(self) -> bool {
         self.attrs & 0x20 > 0
     }
-    fn palette(&self) -> bool {
+    fn palette(self) -> bool {
         self.attrs & 0x10 > 0
     }
 
     // Calculate the y position in the OBJ tile that should be rendered given the current scanline Y position.
-    fn tile_y(&self, ly: u8, obj_tall: bool) -> usize {
+    fn tile_y(self, ly: u8, obj_tall: bool) -> usize {
         let base_y = (ly + 16) - self.y;
         (if self.vert_flip() {
             let h = if obj_tall { 16 } else { 8 };
