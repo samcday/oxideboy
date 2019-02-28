@@ -1,12 +1,15 @@
-import "./style.scss";
+import "@babel/polyfill";
 
+import "./style.scss";
+import "@fortawesome/fontawesome-free/css/all.css";
+
+import "bootstrap";
 import React from "react";
 import ReactDOM from "react-dom";
 import SplitPane from "react-split-pane";
 import {FixedSizeList} from "react-window";
+import { get, set } from "idb-keyval";
 import * as wasm from "web-debugger";
-import 'bootstrap';
-import '@fortawesome/fontawesome-free/css/all.css';
 
 // TODO: debounce memory view resize handler.
 // TODO: hide unhandled segments of memory (echo RAM, unused high registers).
@@ -76,12 +79,18 @@ class App extends React.Component {
       this.emulator.set_joypad_state(ev.key, true);
     });
 
+    window.addEventListener("hashchange", this.hashChange = (ev) => {
+      this.onHashChange();
+    }, false);
+
     document.addEventListener("keyup", this.keyUp = (ev) => {
       if (!this.emulator || ev.target !== document.body) {
         return;
       }
       this.emulator.set_joypad_state(ev.key, false);
     });
+
+    this.onHashChange();
   }
 
   componentWillUnmount() {
@@ -181,6 +190,22 @@ class App extends React.Component {
     );
   }
 
+  async onHashChange() {
+    if (window.location.hash) {
+      const hash = window.location.hash.substring(1);
+      const rom = await get(`${hash}_rom`);
+      if (rom) {
+        this.loadRom(rom);
+      }
+    }
+  }
+
+  loadRom(rom) {
+    this.emulator = wasm.WebEmu.new(rom, this.newFrame.bind(this), this.breakpointHit.bind(this));
+    this.setState({active: true});
+    this.start();
+  }
+
   read_register(reg) {
     if (!this.emulator) { return 0xFFFF };
     return this.emulator.reg_read(reg);
@@ -204,11 +229,13 @@ class App extends React.Component {
 
     var file = ev.dataTransfer.items[0].getAsFile();
     var reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       const rom = new Uint8Array(e.target.result);
-      this.emulator = wasm.WebEmu.new(rom, this.newFrame.bind(this), this.breakpointHit.bind(this));
-      this.setState({active: true});
-      this.start();
+      this.loadRom(rom);
+
+      const hash = this.emulator.rom_hash();
+      await set(`${hash}_rom`, rom);
+      window.location = `#${hash}`;
     };
     reader.readAsArrayBuffer(file);
   }

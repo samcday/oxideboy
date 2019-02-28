@@ -29,6 +29,7 @@
   "devDependencies": {
     "@babel/core": "^7.3.3",
     "@babel/plugin-syntax-dynamic-import": "^7.2.0",
+    "@babel/polyfill": "^7.2.5",
     "@babel/preset-env": "^7.3.1",
     "@babel/preset-react": "^7.0.0",
     "@fortawesome/fontawesome-free": "^5.7.2",
@@ -38,6 +39,8 @@
     "copy-webpack-plugin": "^5.0.0",
     "css-loader": "^2.1.0",
     "file-loader": "^3.0.1",
+    "idb-keyval": "^3.1.0",
+    "install": "^0.12.2",
     "jquery": "^3.3.1",
     "node-sass": "^4.11.0",
     "popper.js": "^1.14.7",

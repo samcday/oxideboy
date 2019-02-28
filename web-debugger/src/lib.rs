@@ -84,6 +84,10 @@ impl WebEmu {
         }
     }
 
+    pub fn rom_hash(&self) -> String {
+        format!("{:x}", md5::compute(&self.gb.hw.rom))
+    }
+
     pub fn run(&mut self, microseconds: f32) {
         self.gb.hw.listener.breakpoint_hit = false;
         self.gb.hw.cycle_count = 0;
