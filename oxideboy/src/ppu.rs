@@ -315,7 +315,7 @@ impl Ppu {
                 if skip > 0 {
                     skip -= 1;
                 } else {
-                    pixels[x_pos] = (tile_lo & 0b01) | (tile_hi & 0b10);
+                    pixels[x_pos] = self.bgp.entry((tile_lo & 0b01) | (tile_hi & 0b10)) as usize;
                     x_pos += 1;
                 }
 
@@ -328,6 +328,7 @@ impl Ppu {
         if self.obj_enabled {
             for (sprite_idx, sprite_x) in &self.scanline_objs {
                 let sprite = &self.oam[*sprite_idx];
+                let pal = if sprite.palette() { &self.obp1 } else { &self.obp0 };
                 let tile_y = sprite.tile_y(self.ly, self.obj_tall_mode);
                 let mut sprite_lo = self.tiles[usize::from(sprite.code) * 0x10 + (tile_y * 2)] as usize;
                 let mut sprite_hi = self.tiles[usize::from(sprite.code) * 0x10 + (tile_y * 2) + 1] as usize;
@@ -365,7 +366,7 @@ impl Ppu {
                         continue;
                     }
 
-                    pixels[sprite_x + i - 8] = sprite_pix;
+                    pixels[sprite_x + i - 8] = pal.entry(sprite_pix) as usize;
                 }
             }
         }
