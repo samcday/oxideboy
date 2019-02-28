@@ -8,6 +8,7 @@ pub mod joypad;
 pub mod ppu;
 pub mod serial;
 pub mod timer;
+pub mod util;
 
 use cpu::Cpu;
 use hardware::GameboyHardware;

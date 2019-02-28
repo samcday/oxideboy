@@ -5,6 +5,7 @@
 //! focus on Mode 3 accuracy.
 
 use crate::interrupt::{Interrupt, InterruptController};
+use crate::util::BIT_REVERSE_TABLE;
 use std::slice;
 
 type Color = (u32, u32, u32);
@@ -18,9 +19,9 @@ const COLOR_MAPPING: [Color; 4] = [
 ];
 
 pub struct Ppu {
-    tiles: Vec<u8>,     // 0x8000 - 0x97FF
-    tilemap: Vec<u8>,   // 0x9800 - 0x9FFF
-    oam: Vec<OAMEntry>, // 0xFE00 - 0xFDFF
+    tiles: Vec<u8>,         // 0x8000 - 0x97FF
+    tilemap: Vec<u8>,       // 0x9800 - 0x9FFF
+    pub oam: Vec<OAMEntry>, // 0xFE00 - 0xFDFF
 
     enabled: bool,          // 0xFF40 LCDC register bit 7
     win_code_area_hi: bool, // 0xFF40 LCDC register bit 6
@@ -28,7 +29,7 @@ pub struct Ppu {
     bg_tile_area_lo: bool,  // 0xFF40 LCDC register bit 4
     bg_code_area_hi: bool,  // 0xFF40 LCDC register bit 3
     obj_tall_mode: bool,    // 0xFF40 LCDC register bit 2
-    obj_enabled: bool,      // 0xFF40 LCDC register bit 1
+    pub obj_enabled: bool,  // 0xFF40 LCDC register bit 1
     bg_enabled: bool,       // 0xFF40 LCDC register bit 0
 
     interrupt_lyc: bool,    // 0xFF41 STAT register bit 6
@@ -49,10 +50,10 @@ pub struct Ppu {
 
     pub mode: Mode,
     prev_mode: Mode, // TODO: document me
-    scanline_objs: Vec<(usize, usize)>,
+    pub scanline_objs: Vec<(usize, usize)>,
     pub mode_cycles: u8,
     pub framebuffer: Vec<u32>,
-    pub framebuffer_fmt: PixelFormat,
+    framebuf_colors: [u32; 4],
 }
 
 /// The OAMEntry struct is packed in C representation (no padding) so that we can efficiently access it as a
@@ -60,10 +61,10 @@ pub struct Ppu {
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct OAMEntry {
-    y: u8,
-    x: u8,
-    code: u8,
-    attrs: u8,
+    pub y: u8,
+    pub x: u8,
+    pub code: u8,
+    pub attrs: u8,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -86,7 +87,7 @@ pub enum PixelFormat {
 
 impl Ppu {
     pub fn new() -> Ppu {
-        Ppu {
+        let mut ppu = Ppu {
             tiles: vec![0; 0x1800],
             tilemap: vec![0; 0x800],
             oam: vec![Default::default(); 40],
@@ -123,8 +124,18 @@ impl Ppu {
             // mode3: Mode3State { ..Default::default() },
             scanline_objs: Vec::new(),
             framebuffer: vec![0; SCREEN_SIZE],
-            framebuffer_fmt: PixelFormat::RGBA,
+            framebuf_colors: [0; 4],
             // first_frame: false,
+        };
+
+        ppu.set_pixel_format(PixelFormat::RGBA);
+
+        ppu
+    }
+
+    pub fn set_pixel_format(&mut self, fmt: PixelFormat) {
+        for i in 0..4 {
+            self.framebuf_colors[i] = fmt.to_u32(COLOR_MAPPING[i]);
         }
     }
 
@@ -253,47 +264,47 @@ impl Ppu {
     /// registers in the middle of a Mode 3, then we don't need to run the complex (and slower) state machine, we can
     /// just rasterize the whole line in one go.
     pub fn draw_line(&mut self) {
+        let mut skip = self.scx % 8; // Throw away the first self.scx % 8 pixels. This is how fine scrolling is done.
         let mut in_win = false;
-        let mut tile_x = usize::from(self.scx / 8);
-        let mut skip = self.scx % 8;
 
+        // Determine the x,y co-ordinates in the tilemap.
+        let mut map_x = usize::from(self.scx / 8);
+        let map_y = ((self.scy as usize) + (self.ly as usize)) / 8 % 32 * 32;
+
+        // Alias self.wx into a usize now since we'll be checking it constantly in the main loop below.
         let wx = usize::from(self.wx);
-        let mut x_pos: usize = 0;
 
+        // We build the whole line of pixels here first.
+        let mut x_pos: usize = 0;
         let mut pixels = [0; 160];
         let mut pixel_prio = [false; 160];
 
-        // First we build the BG/window pixel datal
+        // Calculate memory offsets into map / tile data areas now, we'll be using these frequently in the loop below.
+        let mut map_base = (if self.bg_code_area_hi { 0x400 } else { 0 }) + map_y;
+        let tile_base = (((self.scy as usize) + (self.ly as usize)) % 8) * 2;
+
+        // First we build the BG/window pixel data.
         while x_pos < 160 {
-            if self.win_enabled && !in_win && x_pos > wx {
+            if self.win_enabled && !in_win && self.ly >= self.wy && x_pos >= wx {
+                // We're entering window mode. Change where we're looking in the tile map and update some state.
+                map_base = (if self.win_code_area_hi { 0x400 } else { 0 }) + (map_x) + map_y;
+                map_x = 0;
                 x_pos = wx;
                 in_win = true;
             }
 
-            let tile_code = self.tilemap[if in_win {
-                let map_y = ((self.scy as usize) + (self.ly as usize)) / 8 % 32 * 32;
-                (if self.win_code_area_hi { 0x400 } else { 0 }) + (tile_x) + map_y
-            } else {
-                let map_y = ((self.scy as usize) + (self.ly as usize)) / 8 % 32 * 32;
-                (if self.bg_code_area_hi { 0x400 } else { 0 }) + (tile_x) + map_y
-            }] as usize;
+            let tile_code = self.tilemap[map_base + map_x] as usize;
+            map_x = (map_x + 1) % 32;
 
-            tile_x = (tile_x + 1) % 32;
-
-            let offset = (((self.scy as usize) + (self.ly as usize)) % 8) * 2;
             let tile_addr = if !self.bg_tile_area_lo {
                 let tile_code = tile_code as i8 as i16;
                 (0x1000 + (tile_code * 0x10)) as usize
             } else {
                 tile_code * 0x10
-            } + offset;
+            } + tile_base;
 
-            let tile_lo = self.tiles[tile_addr] as usize;
-            let tile_hi = self.tiles[tile_addr + 1] as usize;
-
-            // http://graphics.stanford.edu/~seander/bithacks.html#ReverseByteWith64BitsDiv
-            let mut tile_hi = (((tile_hi as u64) * 0x0202020202u64 & 0x010884422010u64) % 1023) as usize;
-            let mut tile_lo = (((tile_lo as u64) * 0x0202020202u64 & 0x010884422010u64) % 1023) as usize;
+            let mut tile_lo = BIT_REVERSE_TABLE[self.tiles[tile_addr] as usize] as usize;
+            let mut tile_hi = BIT_REVERSE_TABLE[self.tiles[tile_addr + 1] as usize] as usize;
 
             tile_hi <<= 1;
             for _ in 0..8 {
@@ -314,55 +325,56 @@ impl Ppu {
         }
 
         // Next we overlay any sprites.
-        for (sprite_idx, sprite_x) in &self.scanline_objs {
-            let sprite = &self.oam[*sprite_idx];
-            let tile_y = sprite.tile_y(self.ly, self.obj_tall_mode);
-            let mut sprite_lo = self.tiles[usize::from(sprite.code) * 0x10 + (tile_y * 2)] as usize;
-            let mut sprite_hi = self.tiles[usize::from(sprite.code) * 0x10 + (tile_y * 2) + 1] as usize;
+        if self.obj_enabled {
+            for (sprite_idx, sprite_x) in &self.scanline_objs {
+                let sprite = &self.oam[*sprite_idx];
+                let tile_y = sprite.tile_y(self.ly, self.obj_tall_mode);
+                let mut sprite_lo = self.tiles[usize::from(sprite.code) * 0x10 + (tile_y * 2)] as usize;
+                let mut sprite_hi = self.tiles[usize::from(sprite.code) * 0x10 + (tile_y * 2) + 1] as usize;
 
-            if !sprite.horz_flip() {
-                sprite_hi = (((sprite_hi as u64) * 0x0202020202u64 & 0x010884422010u64) % 1023) as usize;
-                sprite_lo = (((sprite_lo as u64) * 0x0202020202u64 & 0x010884422010u64) % 1023) as usize;
-            }
-
-            sprite_hi <<= 1;
-
-            for i in 0..8 {
-                if (sprite_x + i).saturating_sub(8) >= 160 {
-                    break;
+                if !sprite.horz_flip() {
+                    sprite_hi = BIT_REVERSE_TABLE[sprite_hi] as usize;
+                    sprite_lo = BIT_REVERSE_TABLE[sprite_lo] as usize;
                 }
 
-                let sprite_pix = (sprite_lo & 0b01) | (sprite_hi & 0b10);
-                sprite_lo >>= 1;
-                sprite_hi >>= 1;
+                sprite_hi <<= 1;
 
-                if sprite_x + i < 8 {
-                    continue;
+                for i in 0..8 {
+                    if (sprite_x + i).saturating_sub(8) >= 160 {
+                        break;
+                    }
+
+                    let sprite_pix = (sprite_lo & 0b01) | (sprite_hi & 0b10);
+                    sprite_lo >>= 1;
+                    sprite_hi >>= 1;
+
+                    if sprite_x + i < 8 {
+                        continue;
+                    }
+                    if pixel_prio[sprite_x + i - 8] {
+                        continue;
+                    }
+
+                    if sprite_pix == 0 {
+                        continue;
+                    }
+
+                    pixel_prio[sprite_x + i - 8] = true;
+
+                    if sprite.priority() && pixels[sprite_x + i - 8] > 0 {
+                        continue;
+                    }
+
+                    pixels[sprite_x + i - 8] = sprite_pix;
                 }
-                if pixel_prio[sprite_x + i - 8] {
-                    continue;
-                }
-
-                if sprite_pix == 0 {
-                    continue;
-                }
-
-                pixel_prio[sprite_x + i - 8] = true;
-
-                if sprite.priority() && pixels[sprite_x + i - 8] > 0 {
-                    continue;
-                }
-
-                pixels[sprite_x + i - 8] = sprite_pix;
             }
         }
 
         // Now we rasterize the pixels into actual colors in the framebuffer.
-        let mut framebuffer_pos = usize::from(self.ly) * 160;
-        for pixel in pixels.iter() {
-            let pixel = self.framebuffer_fmt.to_u32(COLOR_MAPPING[*pixel]);
-            self.framebuffer[framebuffer_pos] = pixel;
-            framebuffer_pos += 1;
+        let framebuffer_base = usize::from(self.ly) * 160;
+        for i in 0..160 {
+            let pixel = self.framebuf_colors[pixels[i]];
+            self.framebuffer[framebuffer_base + i] = pixel;
         }
     }
 

@@ -7,4 +7,9 @@ edition = "2018"
 [dependencies]
 
 [dev-dependencies]
+bencher = "0.1"
 paste = "0.1"
+
+[[bench]]
+name = "benches"
+harness = false
