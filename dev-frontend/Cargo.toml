@@ -9,3 +9,6 @@ sdl2 = "0.32"
 
 [dependencies.oxideboy]
 path = "../oxideboy"
+
+[profile.release]
+debug = true
