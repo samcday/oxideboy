@@ -465,7 +465,7 @@ impl Palette {
         self.entries[0] | (self.entries[1] << 2) | (self.entries[2] << 4) | (self.entries[3] << 6)
     }
 
-    pub fn update(mut self, v: u8) {
+    pub fn update(&mut self, v: u8) {
         self.entries[0] = v & 0b0000_0011;
         self.entries[1] = (v & 0b0000_1100) >> 2;
         self.entries[2] = (v & 0b0011_0000) >> 4;
