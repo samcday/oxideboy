@@ -248,7 +248,7 @@ impl Ppu {
         let map_y = ((self.scy as usize) + (self.ly as usize)) / 8 % 32 * 32;
 
         // Alias self.wx into a usize now since we'll be checking it constantly in the main loop below.
-        let wx = usize::from(self.wx);
+        let wx = usize::from(self.wx).saturating_sub(7);
 
         // We build the whole line of pixels here first.
         let mut x_pos: usize = 0;
@@ -257,14 +257,16 @@ impl Ppu {
 
         // Calculate memory offsets into map / tile data areas now, we'll be using these frequently in the loop below.
         let mut map_base = (if self.bg_code_area_hi { 0x400 } else { 0 }) + map_y;
-        let tile_base = (((self.scy as usize) + (self.ly as usize)) % 8) * 2;
+        let mut tile_offset = (((self.scy as usize) + (self.ly as usize)) % 8) * 2;
 
         // First we build the BG/window pixel data.
         while x_pos < 160 {
             if self.win_enabled && !in_win && self.ly >= self.wy && x_pos >= wx {
                 // We're entering window mode. Change where we're looking in the tile map and update some state.
-                map_base = (if self.win_code_area_hi { 0x400 } else { 0 }) + (map_x) + map_y;
                 map_x = 0;
+                tile_offset = (((self.ly - self.wy) % 8) * 2) as usize;
+                let map_y = ((self.ly as usize) - (self.wy as usize)) / 8 % 32 * 32;
+                map_base = if self.win_code_area_hi { 0x400 } else { 0 } + map_y;
                 x_pos = wx;
                 in_win = true;
             }
@@ -277,7 +279,7 @@ impl Ppu {
                 (0x1000 + (tile_code * 0x10)) as usize
             } else {
                 tile_code * 0x10
-            } + tile_base;
+            } + tile_offset;
 
             let mut tile_lo = BIT_REVERSE_TABLE[self.tiles[tile_addr] as usize] as usize;
             let mut tile_hi = BIT_REVERSE_TABLE[self.tiles[tile_addr + 1] as usize] as usize;
