@@ -81,7 +81,7 @@ test_cases! {
 //  ppu_lcdon_write_timing:             "ppu/lcdon_write_timing-GS",        Model::DMG, false,
 //  ppu_stat_irq_blocking:              "ppu/stat_irq_blocking",            Model::DMG, false,
 //  ppu_stat_lyc_onoff:                 "ppu/stat_lyc_onoff",               Model::DMG, false,
-//  ppu_vblank_stat_intr:               "ppu/vblank_stat_intr-GS",          Model::DMG, false,
+    ppu_vblank_stat_intr:               "ppu/vblank_stat_intr-GS",          Model::DMG, false,
 
     serial_boot_sclk_align:             "serial/boot_sclk_align-dmgABCmgb", Model::DMG, false,
 

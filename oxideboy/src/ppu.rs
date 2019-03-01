@@ -145,6 +145,11 @@ impl Ppu {
                         if self.interrupt_vblank {
                             interrupts.request(Interrupt::Stat);
                         }
+                        // Line 144 still triggers a STAT interrupt if OAM interrupts are enabled, even though we're not
+                        // in a Mode2.
+                        if self.interrupt_oam {
+                            interrupts.request(Interrupt::Stat);
+                        }
                         new_frame = true;
                     }
                     if self.interrupt_lyc && self.lyc > 0 && self.lyc == self.ly {
