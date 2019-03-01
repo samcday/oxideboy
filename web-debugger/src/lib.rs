@@ -55,6 +55,7 @@ impl EventListener for DebugListener {
 pub struct WebEmu {
     gb: Gameboy<DebugListener>,
     pc_breakpoints: HashSet<u16>,
+    rom_title: String,
 }
 
 #[derive(Serialize)]
@@ -78,14 +79,20 @@ impl WebEmu {
         let mut gb = Gameboy::new(Model::DMG0, rom.to_vec(), listener);
         gb.skip_bootrom();
         gb.hw.ppu.set_pixel_format(ppu::PixelFormat::ABGR);
+        let rom_title = String::from(gb.hw.cart.rom_title());
         WebEmu {
             gb,
             pc_breakpoints: HashSet::new(),
+            rom_title: rom_title,
         }
     }
 
     pub fn rom_hash(&self) -> String {
         format!("{:x}", md5::compute(&self.gb.hw.cart.rom))
+    }
+
+    pub fn rom_title(&self) -> String {
+        self.rom_title.clone()
     }
 
     pub fn run(&mut self, microseconds: f32) {

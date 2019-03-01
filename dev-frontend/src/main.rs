@@ -25,6 +25,8 @@ fn main() -> Result<()> {
 
     let mut gb = Gameboy::new(model, rom, NoopListener {});
 
+    println!("Loaded ROM {:?}", gb.hw.cart.rom_title());
+
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();

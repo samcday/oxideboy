@@ -71,6 +71,14 @@ impl Cartridge {
         }
     }
 
+    pub fn rom_title<'a>(&'a self) -> &'a str {
+        self.rom[0x134..=0x143]
+            .split(|b| *b == 0)
+            .next()
+            .and_then(|v| std::str::from_utf8(v).ok())
+            .unwrap_or(&"UNKNOWN")
+    }
+
     pub fn rom_lo(&self, addr: usize) -> u8 {
         self.rom[addr]
     }

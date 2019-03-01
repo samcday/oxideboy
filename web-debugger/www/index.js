@@ -94,8 +94,9 @@ class App extends React.Component {
   }
 
   componentWillUnmount() {
-    document.removeEventListener("keyDown", this.keyDown);
-    document.removeEventListener("keyUp", this.keyUp);
+    document.removeEventListener("keydown", this.keyDown);
+    document.removeEventListener("keyup", this.keyUp);
+    document.removeEventListener("hashchange", this.hashChange);
   }
 
   render() {
@@ -203,6 +204,7 @@ class App extends React.Component {
   loadRom(rom) {
     this.emulator = wasm.WebEmu.new(rom, this.newFrame.bind(this), this.breakpointHit.bind(this));
     this.setState({active: true});
+    document.title = `oxideboy-debugger: ${this.emulator.rom_title()}`;
     this.start();
   }
 
