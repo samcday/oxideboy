@@ -18,7 +18,7 @@ const COLOR_MAPPING: [Color; 4] = [
     (0x08, 0x18, 0x20),
 ];
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Ppu {
     tiles: Vec<u8>,         // 0x8000 - 0x97FF
     tilemap: Vec<u8>,       // 0x9800 - 0x9FFF

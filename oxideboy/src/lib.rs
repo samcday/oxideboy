@@ -120,7 +120,7 @@ impl<T: EventListener> Gameboy<T> {
         // PPU should be in the middle of a VBlank.
         self.hw.ppu.mode = ppu::Mode::Mode1;
         self.hw.ppu.ly = 145;
-        self.hw.ppu.mode_cycles = 113;
+        self.hw.ppu.mode_cycles = 30;
 
         // Setup Nintendo logo in tilemap.
         let mut addr = 0x1904;
