@@ -123,6 +123,7 @@ impl Ppu {
         let mut new_frame = false;
 
         self.mode_cycles += 1;
+        self.prev_mode = self.mode;
 
         // PPU interrupts are weird. In most cases they're delivered one cycle too late.
         // For example when we hit VBlank at line 144, we don't set the VBlank interrupt until the next cycle. Same with
