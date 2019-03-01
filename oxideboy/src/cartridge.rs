@@ -77,7 +77,7 @@ impl Cartridge {
 
     pub fn rom_hi(&self, addr: usize) -> u8 {
         match self.cart_type {
-            CartridgeType::ROMOnly => self.rom[addr],
+            CartridgeType::ROMOnly => self.rom[0x4000 + addr],
             CartridgeType::MBC1 | CartridgeType::MBC3 => {
                 let base = (self.rom_bank as usize) * 0x4000;
                 self.rom[base + addr]
