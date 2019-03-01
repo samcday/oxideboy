@@ -9,8 +9,11 @@ struct DebugBreakpointListener {
 impl EventListener for DebugBreakpointListener {
     fn on_frame(&mut self, _: &[u32]) {}
     fn on_memory_write(&mut self, _: u16, _: u8) {}
-    fn on_debug_breakpoint(&mut self) {
-        self.breakpoint_hit = true
+    fn before_instruction(&mut self, _: u16, inst: cpu::Instruction) -> bool {
+        if inst.is_debug_breakpoint() {
+            self.breakpoint_hit = true;
+        }
+        true
     }
 }
 

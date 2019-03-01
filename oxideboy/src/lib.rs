@@ -38,8 +38,9 @@ pub trait EventListener {
     /// Called when a memory address is written to.
     fn on_memory_write(&mut self, addr: u16, v: u8);
 
-    /// The LD B,B instruction is informally considered a debug breakpoint instruction.
-    fn on_debug_breakpoint(&mut self);
+    /// Called before each instruction step is run. If this method returns false the instruction is not run.
+    /// Used to implement debugger breakpoints.
+    fn before_instruction(&mut self, pc: u16, inst: cpu::Instruction) -> bool;
 }
 
 /// An empty EventListener. Use NOOP_LISTENER if you're not interested in anything that occurs inside the emulator.
@@ -48,7 +49,9 @@ pub struct NoopListener {}
 impl EventListener for NoopListener {
     fn on_frame(&mut self, _: &[u32]) {}
     fn on_memory_write(&mut self, _: u16, _: u8) {}
-    fn on_debug_breakpoint(&mut self) {}
+    fn before_instruction(&mut self, _: u16, _: cpu::Instruction) -> bool {
+        true
+    }
 }
 
 impl<T: EventListener> Gameboy<T> {

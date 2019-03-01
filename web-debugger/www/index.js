@@ -12,7 +12,11 @@ import { get, set } from "idb-keyval";
 import * as wasm from "web-debugger";
 
 // TODO: debounce memory view resize handler.
+// TODO: window resize handler for memory view.
+// TODO: persist scrollpane preferences in indexeddb
+// TODO: persist breakpoints in indexeddb.
 // TODO: hide unhandled segments of memory (echo RAM, unused high registers).
+// TODO: visual indicator when we pause execution.
 
 const CPU_REGISTERS = ['AF', 'BC', 'DE', 'HL', 'SP', 'PC'];
 const MEM_REGISTERS = {
@@ -151,6 +155,9 @@ class App extends React.Component {
                   <button type="button" className="btn btn-outline-secondary" id="step_frame" onClick={this.stepFrame.bind(this)} disabled={!this.state.active || !this.state.paused}>
                     <i className="fas fa-fast-forward"></i>
                   </button>
+                  <button type="button" className="btn btn-outline-secondary" id="restart" onClick={this.restart.bind(this)} disabled={!this.state.active}>
+                    <i className="fas fa-redo"></i>
+                  </button>
                 </div>
                 <InstructionViewer instructions={this.state.instructions} />
               </div>
@@ -166,7 +173,7 @@ class App extends React.Component {
 
                   <div id="breakpoints" className="collapse show" aria-labelledby="breakpointsHeading" >
                     <div className="card-body">
-                      TODO.
+                      <Breakpoints list={this.state.breakpoints} onChange={this.updateBreakpoints.bind(this)} />
                     </div>
                   </div>
                 </div>
@@ -201,9 +208,12 @@ class App extends React.Component {
     }
   }
 
-  loadRom(rom) {
+  async loadRom(rom) {
     this.emulator = wasm.WebEmu.new(rom, this.newFrame.bind(this), this.breakpointHit.bind(this));
-    this.setState({active: true});
+
+    const breakpoints = await get(`${this.emulator.rom_hash()}-breakpoints`);
+    this.emulator.set_breakpoints(breakpoints || []);
+    this.setState({active: true, breakpoints});
     document.title = `oxideboy-debugger: ${this.emulator.rom_title()}`;
     this.start();
   }
@@ -216,6 +226,12 @@ class App extends React.Component {
   read_memory(addr) {
     if (!this.emulator) { return 0xFF };
     return this.emulator.mem_read(addr);
+  }
+
+  async updateBreakpoints(breakpoints) {
+    await set(`${this.emulator.rom_hash()}-breakpoints`, breakpoints);
+    this.emulator.set_breakpoints(breakpoints);
+    this.setState({breakpoints});
   }
 
   onDragOver(ev) {
@@ -270,7 +286,6 @@ class App extends React.Component {
         };
       });
       this.updateInstruction();
-      // TODO: Scroll to PC.
     });
   }
 
@@ -302,6 +317,11 @@ class App extends React.Component {
       };
     });
     this.updateInstruction();
+  }
+
+  async restart() {
+    const rom = await get(`${this.emulator.rom_hash()}_rom`);
+    this.loadRom(rom);
   }
 
   newFrame(framebuffer) {
@@ -417,10 +437,58 @@ class InstructionViewer extends React.Component {
     return (
       <div className="text-monospace">
         { (this.props.instructions || []).map((inst) => (
-            <div>0x{toPaddedHexString(inst.loc, 4)}: {inst.txt}</div>
+            <div key={`inst_${inst.loc}`}>0x{toPaddedHexString(inst.loc, 4)}: {inst.txt}</div>
         ))}
       </div>
     );
+  }
+}
+
+class Breakpoints extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {text: ''};
+    this.removeBreakpoint = this.removeBreakpoint.bind(this);
+    this.handleChange = this.handleChange.bind(this);
+    this.handleSubmit = this.handleSubmit.bind(this);
+  }
+
+  render() {
+    return (
+      <React.Fragment>
+      <ul>
+        { (this.props.list || []).map((breakpoint, idx) =>
+          <li key={idx}>0x{toPaddedHexString(breakpoint, 4)} <a onClick={this.removeBreakpoint.bind(this, idx)}>x</a></li>
+        )}
+      </ul>
+
+      <form onSubmit={this.handleSubmit}>
+        <div className="input-group mb-3">
+          <div className="input-group-prepend">
+            <span className="input-group-text">0x</span>
+          </div>
+          <input type="text" className="form-control" value={this.state.text} onChange={this.handleChange} size={4} />
+        </div>
+      </form>
+      </React.Fragment>
+    );
+  }
+
+  removeBreakpoint(idx, ev) {
+    ev.preventDefault();
+    this.props.list.splice(idx, 1);
+    this.props.onChange(this.props.list);
+
+  }
+
+  handleChange(ev) {
+    this.setState({text: ev.target.value.replace(/[^0-9A-Fa-f]+/g, "").replace(/^0+([1-9a-fA-F].*)/, "$1").substring(0, 4) });
+  }
+
+  handleSubmit(ev) {
+    ev.preventDefault();
+    this.props.onChange((this.props.list || []).concat(parseInt(this.state.text, 16)));
+    this.setState({text: ''});
   }
 }
 

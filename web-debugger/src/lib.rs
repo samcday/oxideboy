@@ -30,8 +30,9 @@ cfg_if! {
 struct DebugListener {
     new_frame: bool,
     frame_cb: Function,
+    pc_breakpoints: HashSet<u16>,
     breakpoint_cb: Function,
-    breakpoint_hit: bool,
+    breakpoints_enabled: bool,
 }
 
 impl EventListener for DebugListener {
@@ -44,17 +45,31 @@ impl EventListener for DebugListener {
         let _ = self.frame_cb.call1(&JsValue::NULL, &buf);
     }
     fn on_memory_write(&mut self, _addr: u16, _: u8) {}
-    fn on_debug_breakpoint(&mut self) {
-        // Set breakpoint_hit so we know to stop if we're in the mai run() fn pumping instruction cycles.
-        self.breakpoint_hit = true;
-        let _ = self.breakpoint_cb.call0(&JsValue::NULL);
+    fn before_instruction(&mut self, pc: u16, inst: cpu::Instruction) -> bool {
+        if !self.breakpoints_enabled {
+            return true;
+        }
+
+        let hit_breakpoint = if self.pc_breakpoints.contains(&pc) {
+            true
+        } else if inst.is_debug_breakpoint() {
+            true
+        } else {
+            false
+        };
+
+        if hit_breakpoint {
+            let _ = self.breakpoint_cb.call0(&JsValue::NULL);
+            self.breakpoints_enabled = false;
+            return false;
+        }
+        true
     }
 }
 
 #[wasm_bindgen]
 pub struct WebEmu {
     gb: Gameboy<DebugListener>,
-    pc_breakpoints: HashSet<u16>,
     rom_title: String,
 }
 
@@ -72,8 +87,9 @@ impl WebEmu {
         let listener = DebugListener {
             new_frame: false,
             frame_cb,
+            pc_breakpoints: HashSet::new(),
             breakpoint_cb,
-            breakpoint_hit: false,
+            breakpoints_enabled: true,
         };
 
         let mut gb = Gameboy::new(Model::DMG0, rom.to_vec(), listener);
@@ -82,7 +98,6 @@ impl WebEmu {
         let rom_title = String::from(gb.hw.cart.rom_title());
         WebEmu {
             gb,
-            pc_breakpoints: HashSet::new(),
             rom_title: rom_title,
         }
     }
@@ -95,23 +110,29 @@ impl WebEmu {
         self.rom_title.clone()
     }
 
+    pub fn set_breakpoints(&mut self, val: &JsValue) {
+        self.gb.hw.listener.pc_breakpoints = val.into_serde().unwrap();
+    }
+
     pub fn run(&mut self, microseconds: f32) {
-        self.gb.hw.listener.breakpoint_hit = false;
         self.gb.hw.cycle_count = 0;
 
         let desired_cycles = (CYCLES_PER_MICRO * microseconds) as u32;
 
-        while !self.gb.hw.listener.breakpoint_hit && self.gb.hw.cycle_count < desired_cycles {
-            // Check breakpoints.
-            if self.pc_breakpoints.contains(&self.gb.cpu.pc) {
-                let _ = self.gb.hw.listener.breakpoint_cb.call0(&JsValue::NULL);
-                break;
-            }
+        // If we're resuming from a breakpoint, we want to step over the current instruction before we enable
+        // breakpoints again.
+        if !self.gb.hw.listener.breakpoints_enabled {
+            self.gb.run_instruction();
+        }
+
+        self.gb.hw.listener.breakpoints_enabled = true;
+        while self.gb.hw.listener.breakpoints_enabled && self.gb.hw.cycle_count < desired_cycles {
             self.gb.run_instruction();
         }
     }
 
     pub fn step(&mut self) {
+        self.gb.hw.listener.breakpoints_enabled = false;
         self.gb.run_instruction();
     }
 

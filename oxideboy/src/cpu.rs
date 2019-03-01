@@ -69,7 +69,7 @@ pub enum FlagCondition {
 /// We don't specialize these two different instructions, instead we have a single "LD" enum variant that accepts the
 /// appropriate operand.
 #[allow(non_camel_case_types)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Instruction {
     ADC(Operand),
     ADD(Operand),
@@ -177,11 +177,17 @@ impl Cpu {
         }
 
         // Decode the next instruction from memory location pointed to by PC.
+        let mut inst_pos = self.pc;
         let instruction = decode_instruction(|| {
-            let v = hw.mem_read(self.pc);
-            self.pc = self.pc.wrapping_add(1);
+            let v = hw.mem_read(inst_pos);
+            inst_pos = inst_pos.wrapping_add(1);
             v
         });
+
+        if !hw.listener.before_instruction(self.pc, instruction) {
+            return;
+        }
+        self.pc = inst_pos;
 
         match instruction {
             ADC(o) => self.add(hw, o, true),
@@ -204,10 +210,6 @@ impl Cpu {
             INC16(rr) => self.inc16(hw, rr),
             JP(cc, o) => self.jp(hw, cc, o),
             JR(cc, r8) => self.jr(hw, cc, r8),
-            LD(lhs @ Operand::Register(B), rhs @ Operand::Register(B)) => {
-                hw.listener.on_debug_breakpoint();
-                self.ld(hw, lhs, rhs);
-            }
             LD(lhs, rhs) => self.ld(hw, lhs, rhs),
             LD16(lhs @ Operand16::Register(SP), rhs @ Operand16::Register(HL)) => self.ld16(hw, lhs, rhs, true),
             LD16(lhs, rhs) => self.ld16(hw, lhs, rhs, false),
@@ -998,6 +1000,14 @@ impl Operand16 {
 }
 
 impl Instruction {
+    /// Returns true if this instruction is the LD B,B instruction
+    pub fn is_debug_breakpoint(&self) -> bool {
+        if let Instruction::LD(Operand::Register(B), Operand::Register(B)) = self {
+            true
+        } else {
+            false
+        }
+    }
     /// Indicates if current instruction affects program execution flow (CALL, JP, JR, RET, RETI, RST)
     pub fn is_flow_control(&self) -> bool {
         match self {
