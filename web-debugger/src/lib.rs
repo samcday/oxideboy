@@ -6,7 +6,7 @@ mod utils;
 use cfg_if::cfg_if;
 use js_sys::{Function, Uint8ClampedArray};
 use oxideboy::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::slice;
 use wasm_bindgen::prelude::*;
@@ -41,6 +41,19 @@ pub struct WebEmu {
 struct Instruction {
     pub loc: u16,
     pub txt: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct CpuState {
+    af: u16,
+    bc: u16,
+    de: u16,
+    hl: u16,
+    pc: u16,
+    sp: u16,
+    ime: bool,
+    ime_defer: bool,
+    halted: bool,
 }
 
 #[wasm_bindgen]
@@ -144,28 +157,37 @@ impl WebEmu {
         self.gb.hw.mem_get(addr)
     }
 
-    pub fn reg_read(&self, reg: &str) -> Option<u16> {
-        match reg {
-            "AF" => Some(self.gb.cpu.register16_get(cpu::Register16::AF)),
-            "BC" => Some(self.gb.cpu.register16_get(cpu::Register16::BC)),
-            "DE" => Some(self.gb.cpu.register16_get(cpu::Register16::DE)),
-            "HL" => Some(self.gb.cpu.register16_get(cpu::Register16::HL)),
-            "PC" => Some(self.gb.cpu.pc),
-            "SP" => Some(self.gb.cpu.sp),
-            _ => None,
+    pub fn cpu_state(&self) -> JsValue {
+        JsValue::from_serde(&CpuState {
+            af: self.gb.cpu.register16_get(cpu::Register16::AF),
+            bc: self.gb.cpu.register16_get(cpu::Register16::BC),
+            de: self.gb.cpu.register16_get(cpu::Register16::DE),
+            hl: self.gb.cpu.register16_get(cpu::Register16::HL),
+            pc: self.gb.cpu.pc,
+            sp: self.gb.cpu.sp,
+            ime: self.gb.cpu.ime,
+            ime_defer: self.gb.cpu.ime_defer,
+            halted: self.gb.cpu.halted,
+        })
+        .unwrap()
+    }
+
+    pub fn set_cpu_state(&mut self, val: JsValue) {
+        let new_state: Result<CpuState, _> = val.into_serde();
+        if new_state.is_err() {
+            return;
         }
-    }
 
-    pub fn get_ime(&self) -> bool {
-        self.gb.cpu.ime
-    }
-
-    pub fn get_ime_defer(&self) -> bool {
-        self.gb.cpu.ime_defer
-    }
-
-    pub fn get_halted(&self) -> bool {
-        self.gb.cpu.halted
+        let new_state = new_state.unwrap();
+        self.gb.cpu.register16_set(cpu::Register16::AF, new_state.af);
+        self.gb.cpu.register16_set(cpu::Register16::BC, new_state.bc);
+        self.gb.cpu.register16_set(cpu::Register16::DE, new_state.de);
+        self.gb.cpu.register16_set(cpu::Register16::HL, new_state.hl);
+        self.gb.cpu.pc = new_state.pc;
+        self.gb.cpu.sp = new_state.sp;
+        self.gb.cpu.ime = new_state.ime;
+        self.gb.cpu.ime_defer = new_state.ime_defer;
+        self.gb.cpu.halted = new_state.halted;
     }
 
     pub fn set_joypad_state(&mut self, key: &str, pressed: bool) {

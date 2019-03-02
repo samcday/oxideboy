@@ -14,11 +14,10 @@ import * as wasm from "web-debugger";
 // TODO: debounce memory view resize handler.
 // TODO: window resize handler for memory view.
 // TODO: persist scrollpane preferences in indexeddb
-// TODO: persist breakpoints in indexeddb.
 // TODO: hide unhandled segments of memory (echo RAM, unused high registers).
 // TODO: visual indicator when we pause execution.
 
-const CPU_REGISTERS = ['AF', 'BC', 'DE', 'HL', 'SP', 'PC'];
+const CPU_REGISTERS = ['af', 'bc', 'de', 'hl', 'sp', 'pc'];
 const MEM_REGISTERS = {
     IF: 0xFF0F,
     IE: 0xFFFF,
@@ -68,7 +67,23 @@ class App extends React.Component {
   constructor(props) {
     super(props);
 
-    this.state = {memoryViewerHeight: 200, memDirty: 1, cpuDirty: 1, paused: true, active: false};
+    this.state = {
+      memoryViewerHeight: 200,
+      memDirty: 1,
+      cpuState: {
+        af: 0xFFFF,
+        bc: 0xFFFF,
+        de: 0xFFFF,
+        hl: 0xFFFF,
+        sp: 0xFFFF,
+        pc: 0xFFFF,
+        ime: false,
+        ime_defer: false,
+        halted: false,
+      },
+      paused: false,
+      active: false
+    };
   }
 
   componentDidMount() {
@@ -111,20 +126,20 @@ class App extends React.Component {
           <div className="d-flex px-3 flex-wrap text-monospace registers">
             {
               CPU_REGISTERS.map((reg) =>
-                <CpuRegister name={reg} key={reg} fn={this.read_register.bind(this)} dirty={this.state.cpuDirty} />
+                <CpuRegister name={reg} key={reg} value={this.state.cpuState[reg]} enabled={this.state.paused} onUpdate={this.updateCpuRegister.bind(this, reg)} />
               )
             }
             <div className="register">
               <label htmlFor={`cpu_register_ime`}>IME:</label>
-              <input type="checkbox" readOnly id={`cpu_register_ime`} checked={this.emulator ? this.emulator.get_ime() : false} dirty={this.state.cpuDirty} />
+              <input type="checkbox" readOnly={!this.state.paused} id={`cpu_register_ime`} checked={this.state.cpuState.ime} />
             </div>
             <div className="register">
               <label htmlFor={`cpu_register_imd`}>IMD:</label>
-              <input type="checkbox" readOnly id={`cpu_register_imd`} checked={this.emulator ? this.emulator.get_ime_defer() : false} dirty={this.state.cpuDirty} />
+              <input type="checkbox" readOnly={!this.state.paused} id={`cpu_register_imd`} checked={this.state.cpuState.ime_defer} />
             </div>
             <div className="register">
               <label htmlFor={`cpu_register_halt`}>HALT:</label>
-              <input type="checkbox" readOnly id={`cpu_register_halt`} checked={this.emulator ? this.emulator.get_halted() : false} dirty={this.state.cpuDirty} />
+              <input type="checkbox" readOnly={!this.state.paused} id={`cpu_register_halt`} checked={this.state.cpuState.halted} />
             </div>
             {
               Object.keys(MEM_REGISTERS).map((reg) =>
@@ -213,14 +228,15 @@ class App extends React.Component {
 
     const breakpoints = await get(`${this.emulator.rom_hash()}-breakpoints`);
     this.emulator.set_breakpoints(breakpoints || []);
-    this.setState({active: true, breakpoints});
+    this.setState({active: true, paused: false, breakpoints});
     document.title = `oxideboy-debugger: ${this.emulator.rom_title()}`;
     this.start();
   }
 
-  read_register(reg) {
-    if (!this.emulator) { return 0xFFFF };
-    return this.emulator.reg_read(reg);
+  updateCpuRegister(reg, newVal) {
+    this.state.cpuState[reg] = parseInt(newVal, 16);
+    this.emulator.set_cpu_state(this.state.cpuState);
+    this.update();
   }
 
   read_memory(addr) {
@@ -259,34 +275,27 @@ class App extends React.Component {
   }
 
   start() {
-    if (!this.state.paused) {
-      return;
-    }
     this.setState({paused: false});
 
     this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
-    this.viewUpdates = setInterval(this.updateDebuggerView.bind(this), 100);
+    // this.viewUpdates = setInterval(this.update.bind(this), 100);
   }
 
   pause() {
-    if (this.state.paused) {
-      return;
-    }
-
     cancelAnimationFrame(this.nextFrame);
     clearTimeout(this.viewUpdates);
     this.lastFrameTimestamp = null;
 
     setTimeout(() => {
-      this.setState(({cpuDirty, memDirty}) => {
-        return {
-          paused: true,
-          memDirty: memDirty + 1,
-          cpuDirty: cpuDirty + 1,
-        };
-      });
-      this.updateInstruction();
+      this.setState({paused: true});
+      this.update();
     });
+  }
+
+  update() {
+    this.setState({cpuState: this.emulator.cpu_state()});
+    this.setState({instructions: this.emulator.current_instructions(this.state.cpuState.pc, 11)});
+    this.setState(({memDirty}) => ({memDirty: memDirty + 1}));
   }
 
   step() {
@@ -295,13 +304,7 @@ class App extends React.Component {
     }
 
     this.emulator.step();
-    this.setState(({cpuDirty, memDirty}) => {
-      return {
-        memDirty: memDirty + 1,
-        cpuDirty: cpuDirty + 1,
-      };
-    });
-    this.updateInstruction();
+    this.update();
   }
 
   stepFrame() {
@@ -310,16 +313,11 @@ class App extends React.Component {
     }
 
     this.emulator.step_frame();
-    this.setState(({cpuDirty, memDirty}) => {
-      return {
-        memDirty: memDirty + 1,
-        cpuDirty: cpuDirty + 1,
-      };
-    });
-    this.updateInstruction();
+    this.update();
   }
 
   async restart() {
+    this.pause();
     const rom = await get(`${this.emulator.rom_hash()}_rom`);
     this.loadRom(rom);
   }
@@ -334,15 +332,7 @@ class App extends React.Component {
   }
 
   breakpointHit() {
-    if (this.state.paused) {
-      return;
-    }
-
     this.pause();
-  }
-
-  updateInstruction() {
-    this.setState({instructions: this.emulator.current_instructions(this.emulator.reg_read('PC'), 11)});
   }
 
   runFrame(timestamp) {
@@ -355,16 +345,7 @@ class App extends React.Component {
     this.lastFrameTimestamp = timestamp;
 
     this.emulator.run(delta * 1000);
-  }
-
-  updateDebuggerView() {
-    this.updateInstruction();
-    this.setState(({cpuDirty, memDirty}) => {
-      return {
-        memDirty: memDirty + 1,
-        cpuDirty: cpuDirty + 1,
-      };
-    });
+    this.update();
   }
 
   resizeMemoryViewer(newSize) {
@@ -374,17 +355,48 @@ class App extends React.Component {
 };
 
 class CpuRegister extends React.Component {
-  shouldComponentUpdate(nextProps) {
-    return nextProps.dirty > this.props.dirty;
+  constructor(props) {
+    super(props);
+    this.state = {editing: false};
+    ['onChange', 'onFocus', 'onBlur', 'onKeyPress'].forEach((name) => this[name] = this[name].bind(this));
   }
 
   render() {
     return (
       <div className="register">
-        <label htmlFor={`cpu_register_${this.props.name}`}>{this.props.name}:</label>
-        <input type="text" readOnly id={`cpu_register_${this.props.name}`} size={4} value={toPaddedHexString(this.props.fn(this.props.name) || 65535, 4)} />
+        <label htmlFor={`cpu_register_${this.props.name}`}>{this.props.name.toUpperCase()}:</label>
+        <input  type="text"
+                readOnly={!this.props.enabled}
+                id={`cpu_register_${this.props.name}`}
+                size={4}
+                value={this.state.editing ? this.state.value : toPaddedHexString(this.props.value, 4)}
+                onChange={this.onChange}
+                onBlur={this.onBlur}
+                onKeyPress={this.onKeyPress}
+                onFocus={this.onFocus} />
       </div>
     );
+  }
+
+  onFocus(ev) {
+    this.setState({editing: true, value: this.props.value.toString(16)});
+  }
+
+  onBlur(ev) {
+    this.setState({editing: false});
+  }
+
+  onKeyPress(ev) {
+    if (ev.key !== 'Enter') {
+      return;
+    }
+    this.setState({editing: false});
+    this.props.onUpdate(this.state.value);
+    ev.target.blur();
+  }
+
+  onChange(ev) {
+    this.setState({value: ev.target.value.replace(/[^0-9A-Fa-f]+/g, "").replace(/^0+([1-9a-fA-F].*)/, "$1").substring(0, 4) });
   }
 }
 
