@@ -95,11 +95,24 @@ impl Gameboy {
         self.hw.interrupts.request = 0x1;
 
         // Ensure PPU has correct state (enabled, BG enabled, etc)
-        self.hw.ppu.reg_lcdc_write(0x91);
+        self.hw.ppu.enabled = true;
+        self.hw.ppu.bg_enabled = true;
+        self.hw.ppu.bg_tile_area_lo = true;
+
         // PPU should be in the middle of a VBlank.
+        // Where the PPU is at in terms of mode + cycles depends on which bootrom was run.
         self.hw.ppu.mode = ppu::Mode::Mode1;
-        self.hw.ppu.ly = 145;
-        self.hw.ppu.mode_cycles = 30;
+        self.hw.ppu.prev_mode = ppu::Mode::Mode1;
+        match self.hw.model {
+            Model::DMG => {
+                self.hw.ppu.ly = 153;
+                self.hw.ppu.mode_cycles = 100;
+            }
+            Model::DMG0 => {
+                self.hw.ppu.ly = 145;
+                self.hw.ppu.mode_cycles = 24;
+            }
+        }
 
         // Setup Nintendo logo in tilemap.
         let mut addr = 0x1904;

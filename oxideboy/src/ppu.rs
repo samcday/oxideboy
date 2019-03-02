@@ -24,14 +24,14 @@ pub struct Ppu {
     tilemap: Vec<u8>,       // 0x9800 - 0x9FFF
     pub oam: Vec<OAMEntry>, // 0xFE00 - 0xFDFF
 
-    enabled: bool,          // 0xFF40 LCDC register bit 7
-    win_code_area_hi: bool, // 0xFF40 LCDC register bit 6
-    win_enabled: bool,      // 0xFF40 LCDC register bit 5
-    bg_tile_area_lo: bool,  // 0xFF40 LCDC register bit 4
-    bg_code_area_hi: bool,  // 0xFF40 LCDC register bit 3
-    obj_tall_mode: bool,    // 0xFF40 LCDC register bit 2
-    pub obj_enabled: bool,  // 0xFF40 LCDC register bit 1
-    bg_enabled: bool,       // 0xFF40 LCDC register bit 0
+    pub enabled: bool,         // 0xFF40 LCDC register bit 7
+    win_code_area_hi: bool,    // 0xFF40 LCDC register bit 6
+    win_enabled: bool,         // 0xFF40 LCDC register bit 5
+    pub bg_tile_area_lo: bool, // 0xFF40 LCDC register bit 4
+    bg_code_area_hi: bool,     // 0xFF40 LCDC register bit 3
+    obj_tall_mode: bool,       // 0xFF40 LCDC register bit 2
+    pub obj_enabled: bool,     // 0xFF40 LCDC register bit 1
+    pub bg_enabled: bool,      // 0xFF40 LCDC register bit 0
 
     interrupt_lyc: bool,    // 0xFF41 STAT register bit 6
     interrupt_oam: bool,    // 0xFF41 STAT register bit 5
@@ -50,7 +50,7 @@ pub struct Ppu {
     pub wx: u8,        // 0xFF4B WX register
 
     pub mode: Mode,
-    prev_mode: Mode, // TODO: document me
+    pub prev_mode: Mode, // TODO: document me
     pub scanline_objs: Vec<(usize, usize)>,
     pub mode_cycles: u8,
     pub framebuffer: Vec<u32>,

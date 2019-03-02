@@ -100,9 +100,8 @@ test_cases! {
 //  boot_div_dmg_abc_mgb_realbootrom:   "boot_div-dmgABCmgb",               Model::DMG, true,
     boot_hwio_dmg0:                     "boot_hwio-dmg0",                   Model::DMG0, false,
     boot_hwio_dmg0_realbootrom:         "boot_hwio-dmg0",                   Model::DMG0, true,
-// TODO: failing for same reason mentioned above the boot_div_dmg0 test
-//  boot_hwio_dmg_abc_mgb:              "boot_hwio-dmgABCmgb",              Model::DMG, false,
-//  boot_hwio_dmg_abc_mgb_realbootrom:  "boot_hwio-dmgABCmgb",              Model::DMG, true,
+    boot_hwio_dmg_abc_mgb:              "boot_hwio-dmgABCmgb",              Model::DMG, false,
+    boot_hwio_dmg_abc_mgb_realbootrom:  "boot_hwio-dmgABCmgb",              Model::DMG, true,
     boot_regs_dmg0:                     "boot_regs-dmg0",                   Model::DMG0, false,
     boot_regs_dmg0_realbootrom:         "boot_regs-dmg0",                   Model::DMG0, true,
     boot_regs_dmg_abc:                  "boot_regs-dmgABC",                 Model::DMG, false,
