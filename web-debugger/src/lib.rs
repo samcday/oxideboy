@@ -157,6 +157,10 @@ impl WebEmu {
         self.gb.hw.mem_get(addr)
     }
 
+    pub fn mem_write(&mut self, addr: u16, v: u8) {
+        self.gb.hw.mem_write(addr, v)
+    }
+
     pub fn cpu_state(&self) -> JsValue {
         JsValue::from_serde(&CpuState {
             af: self.gb.cpu.register16_get(cpu::Register16::AF),

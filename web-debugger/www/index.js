@@ -126,7 +126,12 @@ class App extends React.Component {
           <div className="d-flex px-3 flex-wrap text-monospace registers">
             {
               CPU_REGISTERS.map((reg) =>
-                <CpuRegister name={reg} key={reg} value={this.state.cpuState[reg]} enabled={this.state.paused} onUpdate={this.updateCpuRegister.bind(this, reg)} />
+                <CpuRegister
+                  name={reg}
+                  key={reg}
+                  value={this.state.cpuState[reg]}
+                  enabled={this.state.paused}
+                  onUpdate={this.updateCpuRegister.bind(this, reg)} />
               )
             }
             <div className="register">
@@ -143,7 +148,14 @@ class App extends React.Component {
             </div>
             {
               Object.keys(MEM_REGISTERS).map((reg) =>
-                <Register name={reg} addr={MEM_REGISTERS[reg]} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} key={reg} />
+                <Register
+                  name={reg}
+                  addr={MEM_REGISTERS[reg]}
+                  fn={this.read_memory.bind(this)}
+                  enabled={this.state.paused}
+                  dirty={this.state.memDirty}
+                  key={reg}
+                  onUpdate={this.writeMem.bind(this, MEM_REGISTERS[reg])} />
               )
             }
           </div>
@@ -239,6 +251,11 @@ class App extends React.Component {
     this.update();
   }
 
+  writeMem(addr, newVal) {
+    this.emulator.mem_write(addr, parseInt(newVal, 16));
+    this.update();
+  }
+
   read_memory(addr) {
     if (!this.emulator) { return 0xFF };
     return this.emulator.mem_read(addr);
@@ -293,8 +310,9 @@ class App extends React.Component {
   }
 
   update() {
-    this.setState({cpuState: this.emulator.cpu_state()});
-    this.setState({instructions: this.emulator.current_instructions(this.state.cpuState.pc, 11)});
+    const cpu = this.emulator.cpu_state();
+    this.setState({cpuState: cpu});
+    this.setState({instructions: this.emulator.current_instructions(cpu.pc, 11)});
     this.setState(({memDirty}) => ({memDirty: memDirty + 1}));
   }
 
@@ -401,8 +419,10 @@ class CpuRegister extends React.Component {
 }
 
 class Register extends React.Component {
-  shouldComponentUpdate(nextProps) {
-    return nextProps.dirty > this.props.dirty;
+  constructor(props) {
+    super(props);
+    this.state = {editing: false};
+    ['onChange', 'onFocus', 'onBlur', 'onKeyPress'].forEach((name) => this[name] = this[name].bind(this));
   }
 
   render() {
@@ -411,9 +431,39 @@ class Register extends React.Component {
         <label htmlFor={`register_${this.props.name}`}>
           <abbr title={`0x${toPaddedHexString(this.props.addr, 4).toUpperCase()}`}>{this.props.name}</abbr>:
         </label>
-        <input type="text" readOnly id={`register_${this.props.name}`} size={2} value={toPaddedHexString(this.props.fn(this.props.addr), 2)} />
+
+        <input  type="text"
+                readOnly={!this.props.enabled}
+                id={`cpu_register_${this.props.name}`}
+                size={2}
+                value={this.state.editing ? this.state.value : toPaddedHexString(this.props.fn(this.props.addr), 2)}
+                onChange={this.onChange}
+                onBlur={this.onBlur}
+                onKeyPress={this.onKeyPress}
+                onFocus={this.onFocus} />
       </div>
     );
+  }
+
+  onFocus(ev) {
+    this.setState({editing: true, value: this.props.fn(this.props.addr).toString(16)});
+  }
+
+  onBlur(ev) {
+    this.setState({editing: false});
+  }
+
+  onKeyPress(ev) {
+    if (ev.key !== 'Enter') {
+      return;
+    }
+    this.setState({editing: false});
+    this.props.onUpdate(this.state.value);
+    ev.target.blur();
+  }
+
+  onChange(ev) {
+    this.setState({value: ev.target.value.replace(/[^0-9A-Fa-f]+/g, "").replace(/^0+([1-9a-fA-F].*)/, "$1").substring(0, 2) });
   }
 }
 
