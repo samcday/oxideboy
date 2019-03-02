@@ -14,12 +14,11 @@ use cpu::Cpu;
 use hardware::GameboyHardware;
 
 pub const CYCLES_PER_MICRO: f32 = 1_048_576.0 / 1_000_000.0;
-pub const NOOP_LISTENER: NoopListener = NoopListener {};
 
 // The main entrypoint into Oxideboy. Represents an emulation session for a Gameboy.
-pub struct Gameboy<T: EventListener> {
+pub struct Gameboy {
     pub cpu: Cpu,
-    pub hw: GameboyHardware<T>,
+    pub hw: GameboyHardware,
 }
 
 /// There are different models of the Gameboy that each behave slightly differently (different HW quirks, etc).
@@ -30,40 +29,17 @@ pub enum Model {
     DMG,
 }
 
-/// This trait can be implemented to get notified when interesting things occur inside the emulator.
-pub trait EventListener {
-    /// Called when the PPU has completed a frame.
-    fn on_frame(&mut self, frame: &[u32]);
-
-    /// Called when a memory address is written to.
-    fn on_memory_write(&mut self, addr: u16, v: u8);
-
-    /// Called before each instruction step is run. If this method returns false the instruction is not run.
-    /// Used to implement debugger breakpoints.
-    fn before_instruction(&mut self, pc: u16, inst: cpu::Instruction) -> bool;
-}
-
-/// An empty EventListener. Use NOOP_LISTENER if you're not interested in anything that occurs inside the emulator.
-pub struct NoopListener {}
-
-impl EventListener for NoopListener {
-    fn on_frame(&mut self, _: &[u32]) {}
-    fn on_memory_write(&mut self, _: u16, _: u8) {}
-    fn before_instruction(&mut self, _: u16, _: cpu::Instruction) -> bool {
-        true
-    }
-}
-
-impl<T: EventListener> Gameboy<T> {
-    pub fn new(model: Model, rom: Vec<u8>, listener: T) -> Gameboy<T> {
+impl Gameboy {
+    pub fn new(model: Model, rom: Vec<u8>) -> Gameboy {
         Gameboy {
             cpu: Cpu::new(),
-            hw: GameboyHardware::new(model, rom, listener),
+            hw: GameboyHardware::new(model, rom),
         }
     }
 
     /// Run the Gameboy for a single CPU instruction. Useful for debuggers / tests.
     pub fn run_instruction(&mut self) {
+        self.hw.new_frame = false;
         self.cpu.step(&mut self.hw);
     }
 

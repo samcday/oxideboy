@@ -2,29 +2,18 @@ use oxideboy::*;
 use paste;
 use std::time::Instant;
 
-struct DebugBreakpointListener {
-    breakpoint_hit: bool,
-}
-
-impl EventListener for DebugBreakpointListener {
-    fn on_frame(&mut self, _: &[u32]) {}
-    fn on_memory_write(&mut self, _: u16, _: u8) {}
-    fn before_instruction(&mut self, _: u16, inst: cpu::Instruction) -> bool {
-        if inst.is_debug_breakpoint() {
-            self.breakpoint_hit = true;
-        }
-        true
-    }
-}
-
 fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
-    let mut gb = Gameboy::new(model, rom.to_vec(), DebugBreakpointListener { breakpoint_hit: false });
+    let mut gb = Gameboy::new(model, rom.to_vec());
     if !enable_bootrom {
         gb.skip_bootrom();
     }
 
     let start = Instant::now();
-    while !gb.hw.listener.breakpoint_hit {
+    loop {
+        if gb.hw.mem_get(gb.cpu.pc) == 0x40 {
+            break;
+        }
+
         gb.run_instruction();
 
         if start.elapsed().as_secs() > 10 {

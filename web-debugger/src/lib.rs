@@ -27,50 +27,14 @@ cfg_if! {
     }
 }
 
-struct DebugListener {
-    new_frame: bool,
-    frame_cb: Function,
-    pc_breakpoints: HashSet<u16>,
-    breakpoint_cb: Function,
-    breakpoints_enabled: bool,
-}
-
-impl EventListener for DebugListener {
-    fn on_frame(&mut self, ppu_buf: &[u32]) {
-        self.new_frame = true;
-        // We pass the PPU buffer to the callback in JS land to update the canvas.
-        let buf =
-            unsafe { Uint8ClampedArray::view(slice::from_raw_parts((ppu_buf).as_ptr() as *const u8, 160 * 144 * 4)) };
-
-        let _ = self.frame_cb.call1(&JsValue::NULL, &buf);
-    }
-    fn on_memory_write(&mut self, _addr: u16, _: u8) {}
-    fn before_instruction(&mut self, pc: u16, inst: cpu::Instruction) -> bool {
-        if !self.breakpoints_enabled {
-            return true;
-        }
-
-        let hit_breakpoint = if self.pc_breakpoints.contains(&pc) {
-            true
-        } else if inst.is_debug_breakpoint() {
-            true
-        } else {
-            false
-        };
-
-        if hit_breakpoint {
-            let _ = self.breakpoint_cb.call0(&JsValue::NULL);
-            self.breakpoints_enabled = false;
-            return false;
-        }
-        true
-    }
-}
-
 #[wasm_bindgen]
 pub struct WebEmu {
-    gb: Gameboy<DebugListener>,
+    gb: Gameboy,
     rom_title: String,
+    rom_hash: String,
+    breakpoint_cb: Function,
+    frame_cb: Function,
+    pc_breakpoints: HashSet<u16>,
 }
 
 #[derive(Serialize)]
@@ -84,26 +48,26 @@ impl WebEmu {
     pub fn new(rom: &[u8], frame_cb: Function, breakpoint_cb: Function) -> WebEmu {
         utils::set_panic_hook();
 
-        let listener = DebugListener {
-            new_frame: false,
-            frame_cb,
-            pc_breakpoints: HashSet::new(),
-            breakpoint_cb,
-            breakpoints_enabled: true,
-        };
+        let mut gb = Gameboy::new(Model::DMG0, rom.to_vec());
 
-        let mut gb = Gameboy::new(Model::DMG0, rom.to_vec(), listener);
         gb.skip_bootrom();
         gb.hw.ppu.set_pixel_format(ppu::PixelFormat::ABGR);
+
         let rom_title = String::from(gb.hw.cart.rom_title());
+        let rom_hash = format!("{:x}", md5::compute(&gb.hw.cart.rom));
+
         WebEmu {
             gb,
-            rom_title: rom_title,
+            pc_breakpoints: HashSet::new(),
+            breakpoint_cb,
+            frame_cb,
+            rom_hash,
+            rom_title,
         }
     }
 
     pub fn rom_hash(&self) -> String {
-        format!("{:x}", md5::compute(&self.gb.hw.cart.rom))
+        self.rom_hash.clone()
     }
 
     pub fn rom_title(&self) -> String {
@@ -111,7 +75,7 @@ impl WebEmu {
     }
 
     pub fn set_breakpoints(&mut self, val: &JsValue) {
-        self.gb.hw.listener.pc_breakpoints = val.into_serde().unwrap();
+        self.pc_breakpoints = val.into_serde().unwrap();
     }
 
     pub fn run(&mut self, microseconds: f32) {
@@ -119,39 +83,47 @@ impl WebEmu {
 
         let desired_cycles = (CYCLES_PER_MICRO * microseconds) as u32;
 
-        // If we're resuming from a breakpoint, we want to step over the current instruction before we enable
-        // breakpoints again.
-        if !self.gb.hw.listener.breakpoints_enabled {
-            self.gb.run_instruction();
-        }
+        while self.gb.hw.cycle_count < desired_cycles {
+            self.step();
 
-        self.gb.hw.listener.breakpoints_enabled = true;
-        while self.gb.hw.listener.breakpoints_enabled && self.gb.hw.cycle_count < desired_cycles {
-            self.gb.run_instruction();
+            let breakpoint =
+                self.pc_breakpoints.contains(&self.gb.cpu.pc) || self.gb.hw.mem_get(self.gb.cpu.pc) == 0x40;
+
+            if breakpoint {
+                let _ = self.breakpoint_cb.call0(&JsValue::NULL);
+                return;
+            }
         }
     }
 
     pub fn step(&mut self) {
-        self.gb.hw.listener.breakpoints_enabled = false;
         self.gb.run_instruction();
-    }
 
-    pub fn step_frame(&mut self) {
-        self.gb.hw.listener.new_frame = false;
-        while !self.gb.hw.listener.new_frame {
-            self.gb.run_instruction();
+        if self.gb.hw.new_frame {
+            let buf = unsafe {
+                Uint8ClampedArray::view(slice::from_raw_parts(
+                    (self.gb.hw.ppu.framebuffer).as_ptr() as *const u8,
+                    160 * 144 * 4,
+                ))
+            };
+
+            let _ = self.frame_cb.call1(&JsValue::NULL, &buf);
         }
     }
 
-    /// Decodes n number of instructions centered around the given memory location.
+    pub fn step_frame(&mut self) {
+        while !self.gb.hw.new_frame {
+            self.step();
+        }
+    }
+
+    /// Decodes n number of instructions starting from given address.
     pub fn current_instructions(&self, addr: u16, n: usize) -> JsValue {
         let mut instrs = Vec::new();
 
-        // We're decoding n instructions total, we want to keep the initial instruction centered, so we decode n/2
-        // instructions before and after the given address. Let's start by decoding forwards.
         let mut loc = addr;
 
-        while instrs.len() < n / 2 + 1 {
+        while instrs.len() < n {
             let inst_loc = loc;
             let inst = cpu::decode_instruction(|| {
                 let b = self.gb.hw.mem_get(loc);
@@ -163,37 +135,6 @@ impl WebEmu {
                 loc: inst_loc,
                 txt: inst.to_string(),
             });
-        }
-
-        // Okay going backwards is kinda weird. We don't know where the instruction boundaries are, since the previous
-        // instruction may be encoded in 1, 2 or 3 bytes. So each time we decode, we check if the instruction size
-        // spills over where it was expected to. If that's the case, we throw that decoded instruction away and try 1
-        // space back.
-        let mut loc = addr.wrapping_sub(1);
-        let mut boundary = addr;
-        while instrs.len() < n {
-            let inst_loc = loc;
-            let inst = cpu::decode_instruction(|| {
-                let b = self.gb.hw.mem_get(loc);
-                loc = loc.wrapping_add(1);
-                b
-            });
-
-            if inst_loc + u16::from(inst.size()) > boundary {
-                // Oops, collision! Try going backwards a bit more.
-                loc = inst_loc.wrapping_sub(1);
-                continue;
-            }
-
-            instrs.insert(
-                0,
-                Instruction {
-                    loc: inst_loc,
-                    txt: inst.to_string(),
-                },
-            );
-            boundary = boundary.wrapping_sub(u16::from(inst.size()));
-            loc = inst_loc - 1;
         }
 
         JsValue::from_serde(&instrs).unwrap()

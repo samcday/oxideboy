@@ -9,14 +9,13 @@ use crate::joypad::Joypad;
 use crate::ppu::Ppu;
 use crate::serial::Serial;
 use crate::timer::Timer;
-use crate::EventListener;
 use crate::Model;
 
 static DMG0_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg0.rom");
 static DMG_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg.rom");
 
 /// Holds all the various components of the Gameboy, aside from the CPU.
-pub struct GameboyHardware<T: EventListener> {
+pub struct GameboyHardware {
     pub model: Model,
     pub cart: Cartridge,
     pub apu: Apu,
@@ -33,11 +32,11 @@ pub struct GameboyHardware<T: EventListener> {
 
     pub cycle_count: u32,
 
-    pub listener: T,
+    pub new_frame: bool, // Set to true when the PPU has completed rendering of a whole frame.
 }
 
-impl<T: EventListener> GameboyHardware<T> {
-    pub fn new(model: Model, rom: Vec<u8>, listener: T) -> GameboyHardware<T> {
+impl GameboyHardware {
+    pub fn new(model: Model, rom: Vec<u8>) -> GameboyHardware {
         let cart = Cartridge::from_rom(rom);
 
         GameboyHardware {
@@ -55,7 +54,7 @@ impl<T: EventListener> GameboyHardware<T> {
             bootrom_enabled: true,
 
             cycle_count: 0,
-            listener,
+            new_frame: false,
         }
     }
 
@@ -158,8 +157,6 @@ impl<T: EventListener> GameboyHardware<T> {
             return;
         }
 
-        self.listener.on_memory_write(addr, v);
-
         match addr {
             0x0000...0x7FFF => self.cart.write(addr, v),
             0x8000...0x9FFF => self.ppu.vram_write(addr - 0x8000, v),
@@ -231,7 +228,7 @@ impl<T: EventListener> GameboyHardware<T> {
         }
         self.serial.clock(&mut self.interrupts);
         if self.ppu.clock(&mut self.interrupts) {
-            self.listener.on_frame(&self.ppu.framebuffer);
+            self.new_frame = true;
         }
         self.apu.clock();
     }

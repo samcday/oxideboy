@@ -3,7 +3,7 @@ use std::time::Instant;
 
 fn run_blargg_serial_test(rom: &[u8]) {
     let mut serial_output = String::new();
-    let mut gb = Gameboy::new(Model::DMG, rom.to_vec(), NoopListener {});
+    let mut gb = Gameboy::new(Model::DMG, rom.to_vec());
     gb.skip_bootrom();
 
     let start = Instant::now();
@@ -31,7 +31,7 @@ fn run_blargg_serial_test(rom: &[u8]) {
 }
 
 fn run_blargg_harness_test(rom: &[u8]) {
-    let mut gb = Gameboy::new(Model::DMG, rom.to_vec(), NoopListener {});
+    let mut gb = Gameboy::new(Model::DMG, rom.to_vec());
 
     // The test runner writes the magic value to RAM before specifying that tests are in progress.
     // Which is kinda dumb. Anyway, we force that value now so we know when tests are *actually* done.

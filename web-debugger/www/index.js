@@ -173,7 +173,7 @@ class App extends React.Component {
 
                   <div id="breakpoints" className="collapse show" aria-labelledby="breakpointsHeading" >
                     <div className="card-body">
-                      <Breakpoints list={this.state.breakpoints} onChange={this.updateBreakpoints.bind(this)} />
+                      <Breakpoints list={this.state.breakpoints} onChange={this.updateBreakpoints.bind(this)} disabled={!this.state.active} />
                     </div>
                   </div>
                 </div>
@@ -467,7 +467,7 @@ class Breakpoints extends React.Component {
           <div className="input-group-prepend">
             <span className="input-group-text">0x</span>
           </div>
-          <input type="text" className="form-control" value={this.state.text} onChange={this.handleChange} size={4} />
+          <input type="text" className="form-control" value={this.state.text} onChange={this.handleChange} disabled={this.props.disabled} size={4} />
         </div>
       </form>
       </React.Fragment>
@@ -486,6 +486,10 @@ class Breakpoints extends React.Component {
   }
 
   handleSubmit(ev) {
+    if (!this.state.text) {
+      return;
+    }
+
     ev.preventDefault();
     this.props.onChange((this.props.list || []).concat(parseInt(this.state.text, 16)));
     this.setState({text: ''});

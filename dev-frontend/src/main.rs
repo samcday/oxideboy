@@ -23,7 +23,7 @@ fn main() -> Result<()> {
     let model_str = env::var("MODEL").ok().unwrap_or_else(|| String::from("DMG0"));
     let model = if model_str == "DMG" { Model::DMG } else { Model::DMG0 };
 
-    let mut gb = Gameboy::new(model, rom, NoopListener {});
+    let mut gb = Gameboy::new(model, rom);
 
     println!("Loaded ROM {:?}", gb.hw.cart.rom_title());
 
@@ -249,9 +249,11 @@ fn main() -> Result<()> {
             gb.hw.apu.sample_queue.clear();
             for _ in 0..17556 {
                 gb.run_instruction();
-            }
 
-            gb_buffer.copy_from_slice(&gb.hw.ppu.framebuffer);
+                if gb.hw.new_frame {
+                    gb_buffer.copy_from_slice(&gb.hw.ppu.framebuffer);
+                }
+            }
 
             let mut samples = &gb.hw.apu.sample_queue[..];
             if throwaway_samples {
