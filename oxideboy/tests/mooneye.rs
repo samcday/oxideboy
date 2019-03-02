@@ -65,7 +65,7 @@ test_cases! {
 //  ppu_hblank_ly_scx_timing:           "ppu/hblank_ly_scx_timing-GS",      Model::DMG, false,
     ppu_intr_1_2_timing:                "ppu/intr_1_2_timing-GS",           Model::DMG, false,
     ppu_intr_2_0_timing:                "ppu/intr_2_0_timing",              Model::DMG, false,
-//  ppu_intr_2_mode0_timing:            "ppu/intr_2_mode0_timing",          Model::DMG, false,
+    ppu_intr_2_mode0_timing:            "ppu/intr_2_mode0_timing",          Model::DMG, false,
 //  ppu_intr_2_mode0_timing_sprites:    "ppu/intr_2_mode0_timing_sprites",  Model::DMG, false,
 //  ppu_intr_2_mode3_timing:            "ppu/intr_2_mode3_timing",          Model::DMG, false,
 //  ppu_intr_2_oam_ok_timing:           "ppu/intr_2_oam_ok_timing",         Model::DMG, false,

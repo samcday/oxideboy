@@ -55,6 +55,9 @@ pub struct Ppu {
     pub mode_cycles: u8,
     pub framebuffer: Vec<u32>,
     framebuf_colors: [u32; 4],
+
+    mode3_extra_cycles: u8,
+    just_enabled: bool,
 }
 
 /// The OAMEntry struct is packed in C representation (no padding) so that we can efficiently access it as a
@@ -129,10 +132,10 @@ impl Ppu {
         // For example when we hit VBlank at line 144, we don't set the VBlank interrupt until the next cycle. Same with
         // the STAT interrupts. Except on line 153, the last line before we start a new frame. In that line, we deliver
         // the interrupts on time (i.e on the first cycle they happened).
-        if self.mode_cycles == 2 {
+        if self.mode_cycles == 1 {
             match self.mode {
                 Mode::Mode0(_) => {
-                    if self.interrupt_hblank {
+                    if self.interrupt_hblank && !self.just_enabled {
                         interrupts.request(Interrupt::Stat);
                     }
                     if self.interrupt_lyc && self.lyc > 0 && self.lyc == self.ly {
@@ -177,13 +180,18 @@ impl Ppu {
 
     pub fn mode_0_hblank(&mut self, hblank_cycles: u8) {
         if self.mode_cycles == hblank_cycles {
-            self.ly += 1;
             self.mode_cycles = 0;
 
-            if self.ly < 144 {
-                self.mode = Mode::Mode2;
+            if self.just_enabled {
+                self.just_enabled = false;
+                self.mode = Mode::Mode3;
             } else {
-                self.mode = Mode::Mode1;
+                self.ly += 1;
+                if self.ly < 144 {
+                    self.mode = Mode::Mode2;
+                } else {
+                    self.mode = Mode::Mode1;
+                }
             }
         }
     }
@@ -234,10 +242,13 @@ impl Ppu {
     }
 
     pub fn mode_3_pixel_transfer(&mut self) {
-        if self.mode_cycles == 43 {
-            self.mode = Mode::Mode0(51);
-            self.mode_cycles = 0;
+        if self.mode_cycles == 1 {
+            self.mode3_extra_cycles = 0;
             self.draw_line();
+        }
+        if self.mode_cycles == 43 + self.mode3_extra_cycles {
+            self.mode = Mode::Mode0(51 - self.mode3_extra_cycles);
+            self.mode_cycles = 0;
         }
     }
 
@@ -248,6 +259,17 @@ impl Ppu {
     pub fn draw_line(&mut self) {
         let mut skip = self.scx % 8; // Throw away the first self.scx % 8 pixels. This is how fine scrolling is done.
         let mut in_win = false;
+
+        // When the PPU clocks pixels out to the LCD, it actually shifts out the first skip number of pixels without the
+        // display clock. This has the effect of basically throwing away those pixels, which is how scrolling is
+        // achieved. This approach means that the Mode3 takes either 1 or 2 extra cycles, depending on how many pixels
+        // were thrown away.
+        if skip > 0 {
+            self.mode3_extra_cycles += 1;
+        }
+        if skip > 4 {
+            self.mode3_extra_cycles += 1;
+        }
 
         // Determine the x,y co-ordinates in the tilemap.
         let mut map_x = usize::from(self.scx / 8);
@@ -418,15 +440,22 @@ impl Ppu {
     pub fn reg_lcdc_write(&mut self, v: u8) {
         let enabled = v & 0b1000_0000 > 0;
 
-        // Are we enabling LCD from a previously disabled state?
-        if enabled && !self.enabled {
+        if enabled {
             self.enabled = true;
-            self.mode = Mode::Mode2;
+
+            // When the LCD is first enabled, line 0 starts in a HBlank for 19 cycles, then goes straight to Mode 3
+            // (skips mode 2).
+            self.mode = Mode::Mode0(18);
+            self.prev_mode = Mode::Mode0(18);
+            self.just_enabled = true;
             self.ly = 0;
             self.mode_cycles = 0;
-        } else if !enabled && self.enabled {
+        } else {
             // TODO: check if we're inside a VBlank.
             self.enabled = false;
+            self.ly = 0;
+            self.mode = Default::default();
+            self.prev_mode = Default::default();
         }
 
         self.win_code_area_hi = v & 0b0100_0000 > 0;

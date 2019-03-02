@@ -158,7 +158,7 @@ impl WebEmu {
     }
 
     pub fn mem_write(&mut self, addr: u16, v: u8) {
-        self.gb.hw.mem_write(addr, v)
+        self.gb.hw.mem_set(addr, v)
     }
 
     pub fn cpu_state(&self) -> JsValue {

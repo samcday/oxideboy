@@ -131,6 +131,14 @@ impl GameboyHardware {
         // While DMA transfer is in progress, reads to the OAM area will see 0xFF.
         let block_read = self.dma.active && (addr >= 0xFE00 && addr <= 0xFE9F);
 
+        // Here's a batshit hardware quirk, the PPU is out of sync with the CPU by 2 T-cycles. To simulate this effect,
+        // we perform the read *before* running the downstream hardware clocks, if we're reading a PPU register.
+        if addr >= 0xFF40 && addr <= 0xFF4B {
+            let v = self.mem_get(addr);
+            self.clock();
+            return v;
+        }
+
         // Reading from the memory bus takes a full CPU cycle.
         self.clock();
 
@@ -157,6 +165,10 @@ impl GameboyHardware {
             return;
         }
 
+        self.mem_set(addr, v);
+    }
+
+    pub fn mem_set(&mut self, addr: u16, v: u8) {
         match addr {
             0x0000...0x7FFF => self.cart.write(addr, v),
             0x8000...0x9FFF => self.ppu.vram_write(addr - 0x8000, v),

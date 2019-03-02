@@ -246,8 +246,9 @@ class App extends React.Component {
   }
 
   updateCpuRegister(reg, newVal) {
-    this.state.cpuState[reg] = parseInt(newVal, 16);
-    this.emulator.set_cpu_state(this.state.cpuState);
+    let cpuState = this.emulator.cpu_state();
+    cpuState[reg] = parseInt(newVal, 16);
+    this.emulator.set_cpu_state(cpuState);
     this.update();
   }
 
@@ -311,9 +312,11 @@ class App extends React.Component {
 
   update() {
     const cpu = this.emulator.cpu_state();
-    this.setState({cpuState: cpu});
-    this.setState({instructions: this.emulator.current_instructions(cpu.pc, 11)});
-    this.setState(({memDirty}) => ({memDirty: memDirty + 1}));
+    this.setState(({memDirty}) => ({
+      cpuState: cpu,
+      instructions: this.emulator.current_instructions(cpu.pc, 11),
+      memDirty: memDirty + 1,
+    }));
   }
 
   step() {
