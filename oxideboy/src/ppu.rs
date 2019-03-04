@@ -60,7 +60,6 @@ pub struct Ppu {
     framebuf_colors: [u32; 4],
 
     mode3_extra_cycles: u8,
-    just_enabled: bool,
 }
 
 /// The OAMEntry struct is packed in C representation (no padding) so that we can efficiently access it as a
@@ -81,10 +80,11 @@ pub struct Palette {
 
 #[derive(Debug, PartialEq)]
 pub enum Mode {
-    Mode0(u8), // HBlank (51 or fewer cycles, depending on how long previous Mode3 took)
-    Mode1,     // VBlank (1140 cycles)
-    Mode2,     // OAM table scan (20 cycles)
-    Mode3,     // Pixel transfer (43+ cycles, depending on sprites)
+    Mode0(u8),  // HBlank (51 or fewer cycles, depending on how long previous Mode3 took)
+    FirstMode0, // When enabling the LCD, the first line starts in a shortened Mode0 that then goes straight to Mode0.
+    Mode1,      // VBlank (1140 cycles)
+    Mode2,      // OAM table scan (20 cycles)
+    Mode3,      // Pixel transfer (43+ cycles, depending on sprites)
 }
 
 pub enum PixelFormat {
@@ -137,7 +137,7 @@ impl Ppu {
         if self.mode_cycles == 1 {
             match self.mode {
                 Mode::Mode0(_) => {
-                    if self.interrupt_hblank && !self.just_enabled {
+                    if self.interrupt_hblank {
                         interrupts.request(Interrupt::Stat);
                     }
                     if self.interrupt_lyc && self.lyc > 0 && self.lyc == self.ly {
@@ -171,7 +171,8 @@ impl Ppu {
         }
 
         match self.mode {
-            Mode::Mode0(n) => self.mode_0_hblank(n),
+            Mode::Mode0(n) => self.mode_0_hblank(n, false),
+            Mode::FirstMode0 => self.mode_0_hblank(18, true),
             Mode::Mode1 => self.mode_1_vblank(),
             Mode::Mode2 => self.mode_2_oam_search(),
             Mode::Mode3 => self.mode_3_pixel_transfer(),
@@ -180,7 +181,7 @@ impl Ppu {
         new_frame
     }
 
-    pub fn mode_0_hblank(&mut self, hblank_cycles: u8) {
+    pub fn mode_0_hblank(&mut self, hblank_cycles: u8, is_first_mode0: bool) {
         if self.mode_cycles == 1 {
             self.reported_mode = 0;
             self.oam_accessible = true;
@@ -190,16 +191,17 @@ impl Ppu {
         if self.mode_cycles == hblank_cycles {
             self.mode_cycles = 0;
 
-            if self.just_enabled {
-                self.just_enabled = false;
+            if is_first_mode0 {
+                self.mode_cycles = 0;
                 self.mode = Mode::Mode3;
+                return;
+            }
+
+            self.ly += 1;
+            if self.ly < 144 {
+                self.mode = Mode::Mode2;
             } else {
-                self.ly += 1;
-                if self.ly < 144 {
-                    self.mode = Mode::Mode2;
-                } else {
-                    self.mode = Mode::Mode1;
-                }
+                self.mode = Mode::Mode1;
             }
         }
     }
@@ -488,8 +490,8 @@ impl Ppu {
 
             // When the LCD is first enabled, line 0 starts in a HBlank for 19 cycles, then goes straight to Mode 3
             // (skips mode 2).
-            self.mode = Mode::Mode0(18);
-            self.just_enabled = true;
+            self.mode = Mode::FirstMode0;
+            self.reported_mode = 0;
             self.ly = 0;
             self.mode_cycles = 0;
         } else {
@@ -510,7 +512,7 @@ impl Ppu {
         self.bg_enabled = v & 0b0000_0001 > 0;
     }
 
-    // Read from the 0xFF41 STAT register.
+    /// Read from the 0xFF41 STAT register.
     pub fn reg_stat_read(&self) -> u8 {
         0b1000_0000 // Unused bits
             | self.reported_mode
@@ -521,7 +523,7 @@ impl Ppu {
             | if self.interrupt_lyc    { 0b0100_0000 } else { 0 }
     }
 
-    // Write to the 0xFF41 STAT register.
+    /// Write to the 0xFF41 STAT register.
     pub fn reg_stat_write(&mut self, v: u8) {
         self.interrupt_hblank = v & 0b0000_1000 > 0;
         self.interrupt_vblank = v & 0b0001_0000 > 0;
