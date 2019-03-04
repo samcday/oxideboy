@@ -53,6 +53,7 @@ pub struct Ppu {
     oam_accessible: bool,
     vram_accessible: bool,
     stat_lyc_match: bool,
+    lcd_just_enabled: bool,
 
     pub mode: Mode,
     pub scanline_objs: Vec<(usize, usize)>,
@@ -192,6 +193,15 @@ impl Ppu {
             }
 
             self.ly += 1;
+
+            if self.lcd_just_enabled {
+                if self.ly != self.lyc {
+                    self.stat_lyc_match = false;
+                }
+                self.oam_accessible = false;
+                self.lcd_just_enabled = false;
+            }
+
             if self.ly < 144 {
                 self.mode = Mode::Mode2;
             } else {
@@ -495,6 +505,7 @@ impl Ppu {
             // (skips mode 2).
             self.mode = Mode::FirstMode0;
             self.reported_mode = 0;
+            self.lcd_just_enabled = true;
             self.ly = 0;
             self.mode_cycles = 0;
             self.stat_lyc_match = self.ly == self.lyc;
