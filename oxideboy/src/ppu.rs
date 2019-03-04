@@ -271,6 +271,30 @@ impl Ppu {
             self.mode3_extra_cycles += 1;
         }
 
+        if self.obj_enabled {
+            // The PPU stalls sending out pixels while it fetches sprites. Each sprite takes an extra 6 PPU clocks to
+            // fetch and draw. Depending on the X position of the sprite, it may also stall the PPU for longer, up to
+            // another 5 PPU clocks. This is because while the PPU is fetching background tiles it cannot fetch sprite
+            // tiles. So for example if there's a sprite at position 0, the PPU has only just started fetching the next
+            // background tile and will need another 5 clocks before it gets around to starting on the 6 clock sprite
+            // fetch process. This extra overhead of up to 5 clocks is only paid once per sprite X location.
+            let mut sprite_overhead = 0;
+            let mut penalty = (0, false);
+            for (_, sprite_x) in &self.scanline_objs {
+                // Have we paid the sprite penalty for this position yet?
+                if penalty.0 != *sprite_x || !penalty.1 {
+                    // Nope, calculate it now.
+                    penalty.0 = *sprite_x;
+                    penalty.1 = true;
+                    sprite_overhead += 5 - std::cmp::min(5, (sprite_x + usize::from(self.scx)) % 8);
+                }
+                sprite_overhead += 6;
+            }
+            // We calculated the sprite overhead in 4Mhz PPU clock terms, now we divide it back down to the CPU M-cycle
+            // speed that we're dealing with in the rest of the emulator.
+            self.mode3_extra_cycles += (sprite_overhead / 4) as u8;
+        }
+
         // Determine the x,y co-ordinates in the tilemap.
         let mut map_x = usize::from(self.scx / 8);
         let map_y = ((self.scy as usize) + (self.ly as usize)) / 8 % 32 * 32;
