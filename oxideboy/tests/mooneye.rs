@@ -68,7 +68,7 @@ test_cases! {
     ppu_intr_2_mode0_timing:            "ppu/intr_2_mode0_timing",          Model::DMG, false,
     ppu_intr_2_mode0_timing_sprites:    "ppu/intr_2_mode0_timing_sprites",  Model::DMG, false,
     ppu_intr_2_mode3_timing:            "ppu/intr_2_mode3_timing",          Model::DMG, false,
-//  ppu_intr_2_oam_ok_timing:           "ppu/intr_2_oam_ok_timing",         Model::DMG, false,
+    ppu_intr_2_oam_ok_timing:           "ppu/intr_2_oam_ok_timing",         Model::DMG, false,
 //  ppu_lcdon_timing:                   "ppu/lcdon_timing-dmgABCmgbS",      Model::DMG, false,
 //  ppu_lcdon_write_timing:             "ppu/lcdon_write_timing-GS",        Model::DMG, false,
 //  ppu_stat_irq_blocking:              "ppu/stat_irq_blocking",            Model::DMG, false,

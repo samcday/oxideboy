@@ -132,8 +132,8 @@ impl GameboyHardware {
         let block_read = self.dma.active && (addr >= 0xFE00 && addr <= 0xFE9F);
 
         // Here's a batshit hardware quirk, the PPU is out of sync with the CPU by 2 T-cycles. To simulate this effect,
-        // we perform the read *before* running the downstream hardware clocks, if we're reading a PPU register.
-        if addr >= 0xFF40 && addr <= 0xFF4B {
+        // we perform the read *before* running the downstream hardware clocks, if we're reading a PPU register or OAM.
+        if !block_read && ((addr >= 0xFF40 && addr <= 0xFF4B) || (addr >= 0xFE00 && addr <= 0xFE9F)) {
             let v = self.mem_get(addr);
             self.clock();
             return v;
