@@ -49,8 +49,11 @@ pub struct Ppu {
     pub wy: u8,        // 0xFF4A WY register
     pub wx: u8,        // 0xFF4B WX register
 
+    reported_mode: u8,
+    oam_accessible: bool,
+    vram_accessible: bool,
+
     pub mode: Mode,
-    pub prev_mode: Mode, // TODO: document me
     pub scanline_objs: Vec<(usize, usize)>,
     pub mode_cycles: u8,
     pub framebuffer: Vec<u32>,
@@ -76,7 +79,7 @@ pub struct Palette {
     entries: [u8; 4],
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum Mode {
     Mode0(u8), // HBlank (51 or fewer cycles, depending on how long previous Mode3 took)
     Mode1,     // VBlank (1140 cycles)
@@ -126,7 +129,6 @@ impl Ppu {
         let mut new_frame = false;
 
         self.mode_cycles += 1;
-        self.prev_mode = self.mode;
 
         // PPU interrupts are weird. In most cases they're delivered one cycle too late.
         // For example when we hit VBlank at line 144, we don't set the VBlank interrupt until the next cycle. Same with
@@ -179,6 +181,12 @@ impl Ppu {
     }
 
     pub fn mode_0_hblank(&mut self, hblank_cycles: u8) {
+        if self.mode_cycles == 1 {
+            self.reported_mode = 0;
+            self.oam_accessible = true;
+            self.vram_accessible = true;
+        }
+
         if self.mode_cycles == hblank_cycles {
             self.mode_cycles = 0;
 
@@ -197,6 +205,10 @@ impl Ppu {
     }
 
     pub fn mode_1_vblank(&mut self) {
+        if self.mode_cycles == 1 {
+            self.reported_mode = 1;
+        }
+
         if self.mode_cycles == 114 {
             self.ly += 1;
             self.mode_cycles = 0;
@@ -209,6 +221,11 @@ impl Ppu {
     }
 
     pub fn mode_2_oam_search(&mut self) {
+        if self.mode_cycles == 1 {
+            self.reported_mode = 2;
+            self.oam_accessible = false;
+        }
+
         // The real hardware needs the 20 cycles to sift through all 40 entries in the OAM table.
         // Since OAM memory is inaccessible to the CPU during this time, there's no need to emulate this
         // incremental process. We just do it all in one go.
@@ -243,6 +260,8 @@ impl Ppu {
 
     pub fn mode_3_pixel_transfer(&mut self) {
         if self.mode_cycles == 1 {
+            self.reported_mode = 3;
+            self.vram_accessible = false;
             self.mode3_extra_cycles = 0;
             self.draw_line();
         }
@@ -411,21 +430,21 @@ impl Ppu {
     }
 
     pub fn oam_read(&self, addr: usize) -> u8 {
-        if self.enabled && self.prev_mode == Mode::Mode2 || self.prev_mode == Mode::Mode3 {
+        if !self.oam_accessible {
             return 0xFF; // Reading OAM memory during Mode2 & Mode3 is not permitted.
         }
         (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr]
     }
 
     pub fn oam_write(&mut self, addr: usize, v: u8) {
-        if self.enabled && self.prev_mode == Mode::Mode2 || self.prev_mode == Mode::Mode3 {
+        if !self.oam_accessible {
             return; // Writing OAM memory during Mode2 & Mode3 is not permitted.
         }
         (unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) })[addr] = v
     }
 
     pub fn vram_read(&self, addr: u16) -> u8 {
-        if self.enabled && self.prev_mode == Mode::Mode3 {
+        if !self.vram_accessible {
             return 0xFF; // Reading VRAM during Mode3 is not permitted.
         }
 
@@ -437,7 +456,7 @@ impl Ppu {
     }
 
     pub fn vram_write(&mut self, addr: u16, v: u8) {
-        if self.enabled && self.prev_mode == Mode::Mode3 {
+        if !self.vram_accessible {
             return; // Writing VRAM during Mode3 is not permitted.
         }
 
@@ -470,7 +489,6 @@ impl Ppu {
             // When the LCD is first enabled, line 0 starts in a HBlank for 19 cycles, then goes straight to Mode 3
             // (skips mode 2).
             self.mode = Mode::Mode0(18);
-            self.prev_mode = Mode::Mode0(18);
             self.just_enabled = true;
             self.ly = 0;
             self.mode_cycles = 0;
@@ -479,7 +497,8 @@ impl Ppu {
             self.enabled = false;
             self.ly = 0;
             self.mode = Default::default();
-            self.prev_mode = Default::default();
+            self.oam_accessible = true;
+            self.vram_accessible = true;
         }
 
         self.win_code_area_hi = v & 0b0100_0000 > 0;
@@ -494,11 +513,7 @@ impl Ppu {
     // Read from the 0xFF41 STAT register.
     pub fn reg_stat_read(&self) -> u8 {
         0b1000_0000 // Unused bits
-            | match self.prev_mode {
-                Mode::Mode0(_) => 0b0000_0000,
-                Mode::Mode1    => 0b0000_0001,
-                Mode::Mode2    => 0b0000_0010,
-                Mode::Mode3    => 0b0000_0011 }
+            | self.reported_mode
             | if self.ly == self.lyc   { 0b0000_0100 } else { 0 }
             | if self.interrupt_hblank { 0b0000_1000 } else { 0 }
             | if self.interrupt_vblank { 0b0001_0000 } else { 0 }

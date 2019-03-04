@@ -102,7 +102,6 @@ impl Gameboy {
         // PPU should be in the middle of a VBlank.
         // Where the PPU is at in terms of mode + cycles depends on which bootrom was run.
         self.hw.ppu.mode = ppu::Mode::Mode1;
-        self.hw.ppu.prev_mode = ppu::Mode::Mode1;
         match self.hw.model {
             Model::DMG => {
                 self.hw.ppu.ly = 153;
