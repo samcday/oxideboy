@@ -52,6 +52,7 @@ pub struct Ppu {
     reported_mode: u8,
     oam_accessible: bool,
     vram_accessible: bool,
+    stat_lyc_match: bool,
 
     pub mode: Mode,
     pub scanline_objs: Vec<(usize, usize)>,
@@ -140,9 +141,6 @@ impl Ppu {
                     if self.interrupt_hblank {
                         interrupts.request(Interrupt::Stat);
                     }
-                    if self.interrupt_lyc && self.lyc > 0 && self.lyc == self.ly {
-                        interrupts.request(Interrupt::Stat);
-                    }
                 }
                 Mode::Mode1 => {
                     if self.ly == 144 {
@@ -161,11 +159,7 @@ impl Ppu {
                         interrupts.request(Interrupt::Stat);
                     }
                 }
-                Mode::Mode2 => {
-                    if self.interrupt_oam {
-                        interrupts.request(Interrupt::Stat);
-                    }
-                }
+                Mode::Mode2 => {}
                 _ => {}
             }
         }
@@ -174,7 +168,7 @@ impl Ppu {
             Mode::Mode0(n) => self.mode_0_hblank(n, false),
             Mode::FirstMode0 => self.mode_0_hblank(18, true),
             Mode::Mode1 => self.mode_1_vblank(),
-            Mode::Mode2 => self.mode_2_oam_search(),
+            Mode::Mode2 => self.mode_2_oam_search(interrupts),
             Mode::Mode3 => self.mode_3_pixel_transfer(),
         }
 
@@ -222,10 +216,19 @@ impl Ppu {
         }
     }
 
-    pub fn mode_2_oam_search(&mut self) {
+    pub fn mode_2_oam_search(&mut self, interrupts: &mut InterruptController) {
         if self.mode_cycles == 1 {
             self.reported_mode = 2;
             self.oam_accessible = false;
+            self.stat_lyc_match = self.ly == self.lyc;
+
+            if self.interrupt_lyc && self.stat_lyc_match {
+                interrupts.request(Interrupt::Stat);
+            }
+
+            if self.interrupt_oam {
+                interrupts.request(Interrupt::Stat);
+            }
         }
 
         // The real hardware needs the 20 cycles to sift through all 40 entries in the OAM table.
@@ -494,6 +497,7 @@ impl Ppu {
             self.reported_mode = 0;
             self.ly = 0;
             self.mode_cycles = 0;
+            self.stat_lyc_match = self.ly == self.lyc;
         } else {
             // TODO: check if we're inside a VBlank.
             self.enabled = false;
@@ -501,6 +505,7 @@ impl Ppu {
             self.mode = Default::default();
             self.oam_accessible = true;
             self.vram_accessible = true;
+            self.stat_lyc_match = false;
         }
 
         self.win_code_area_hi = v & 0b0100_0000 > 0;
@@ -516,7 +521,7 @@ impl Ppu {
     pub fn reg_stat_read(&self) -> u8 {
         0b1000_0000 // Unused bits
             | self.reported_mode
-            | if self.ly == self.lyc   { 0b0000_0100 } else { 0 }
+            | if self.stat_lyc_match   { 0b0000_0100 } else { 0 }
             | if self.interrupt_hblank { 0b0000_1000 } else { 0 }
             | if self.interrupt_vblank { 0b0001_0000 } else { 0 }
             | if self.interrupt_oam    { 0b0010_0000 } else { 0 }
