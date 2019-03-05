@@ -62,6 +62,11 @@ pub struct Ppu {
     framebuf_colors: [u32; 4],
 
     mode3_extra_cycles: u8,
+
+    // We're rendering frames at 59.7fps, but very often there's absolutely no need to re-render, if nothing in the PPU
+    // registers, OAM, or VRAM changed since the last frame.
+    dirty: bool,
+    next_dirty: bool,
 }
 
 #[derive(Debug, Default)]
@@ -249,6 +254,8 @@ impl Ppu {
             self.mode_cycles = 0;
 
             if self.ly == 154 {
+                self.dirty = self.next_dirty;
+                self.next_dirty = false;
                 self.ly = 0;
                 self.mode = Mode::Mode2;
             }
@@ -391,6 +398,11 @@ impl Ppu {
             self.mode3_extra_cycles += (sprite_overhead / 4) as u8;
         }
 
+        if !self.dirty {
+            // If nothing has changed since we last drew this line, then we can skip the rest of the work.
+            return;
+        }
+
         // Determine the x,y co-ordinates in the tilemap.
         let mut map_x = usize::from(self.scx / 8);
         let map_y = ((self.scy as usize) + (self.ly as usize)) / 8 % 32 * 32;
@@ -517,7 +529,12 @@ impl Ppu {
         if !self.oam_allow_write {
             return; // Writing OAM memory during Mode2 & Mode3 is not permitted.
         }
-        (unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) })[addr] = v
+        let oam = unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) };
+        if oam[addr] != v {
+            self.next_dirty = true;
+            self.dirty = true;
+        }
+        oam[addr] = v;
     }
 
     pub fn vram_read(&self, addr: u16) -> u8 {
@@ -537,10 +554,21 @@ impl Ppu {
             return; // Writing VRAM during Mode3 is not permitted.
         }
 
+        let addr = addr as usize;
+
         if addr < 0x1800 {
-            self.tiles[addr as usize] = v;
+            if self.tiles[addr] != v {
+                self.next_dirty = true;
+                self.dirty = true;
+            }
+            self.tiles[addr] = v;
         } else {
-            self.tilemap[(addr - 0x1800) as usize] = v;
+            let addr = addr - 0x1800;
+            if self.tilemap[addr] != v {
+                self.next_dirty = true;
+                self.dirty = true;
+            }
+            self.tilemap[addr] = v;
         }
     }
 
@@ -559,6 +587,10 @@ impl Ppu {
     /// Write to the 0xFF40 LCDC register
     pub fn reg_lcdc_write(&mut self, v: u8, interrupts: &mut InterruptController) {
         let enabled = v & 0b1000_0000 > 0;
+
+        // TODO: can do a better dirty check here. No need to set dirty flags if we didn't change anything important.
+        self.dirty = true;
+        self.next_dirty = true;
 
         if enabled {
             self.enabled = true;
@@ -626,6 +658,69 @@ impl Ppu {
             state.oam_enabled = v & 0b0010_0000 > 0;
             state.lyc_enabled = v & 0b0100_0000 > 0;
         });
+    }
+
+    /// Write to the 0xFF42 SCY register.
+    pub fn reg_scy_write(&mut self, v: u8) {
+        if self.scy != v {
+            self.dirty = true;
+            self.next_dirty = true;
+        }
+        self.scy = v;
+    }
+
+    /// Write to the 0xFF43 SCX register.
+    pub fn reg_scx_write(&mut self, v: u8) {
+        if self.scx != v {
+            self.dirty = true;
+            self.next_dirty = true;
+        }
+        self.scx = v;
+    }
+
+    /// Write to the 0xFF47 BGP register.
+    pub fn reg_bgp_write(&mut self, v: u8) {
+        if self.bgp.pack() != v {
+            self.dirty = true;
+            self.next_dirty = true;
+        }
+        self.bgp.update(v);
+    }
+
+    /// Write to the 0xFF48 OBP0 register.
+    pub fn reg_obp0_write(&mut self, v: u8) {
+        if self.obp0.pack() != v {
+            self.dirty = true;
+            self.next_dirty = true;
+        }
+        self.obp0.update(v);
+    }
+
+    /// Write to the 0xFF49 OBP1 register.
+    pub fn reg_obp1_write(&mut self, v: u8) {
+        if self.obp1.pack() != v {
+            self.dirty = true;
+            self.next_dirty = true;
+        }
+        self.obp1.update(v);
+    }
+
+    /// Write to the 0xFF4A WY register.
+    pub fn reg_wy_write(&mut self, v: u8) {
+        if self.wy != v {
+            self.dirty = true;
+            self.next_dirty = true;
+        }
+        self.wy = v;
+    }
+
+    /// Write to the 0xFF4B WX register.
+    pub fn reg_wx_write(&mut self, v: u8) {
+        if self.wx != v {
+            self.dirty = true;
+            self.next_dirty = true;
+        }
+        self.wx = v;
     }
 
     /// Write to the 0xFF45 LYC register.
