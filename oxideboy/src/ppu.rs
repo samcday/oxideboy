@@ -194,10 +194,11 @@ impl Ppu {
 
             self.ly += 1;
 
+            if self.ly != self.lyc {
+                self.stat_lyc_match = false;
+            }
+
             if self.lcd_just_enabled {
-                if self.ly != self.lyc {
-                    self.stat_lyc_match = false;
-                }
                 self.oam_accessible = false;
                 self.lcd_just_enabled = false;
             }
