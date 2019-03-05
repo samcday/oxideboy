@@ -50,8 +50,10 @@ pub struct Ppu {
     pub wx: u8,        // 0xFF4B WX register
 
     reported_mode: u8,
-    oam_accessible: bool,
-    vram_accessible: bool,
+    oam_allow_read: bool,
+    oam_allow_write: bool,
+    vram_allow_read: bool,
+    vram_allow_write: bool,
     stat_lyc_match: bool,
     first_frame: bool,
 
@@ -105,8 +107,10 @@ impl Ppu {
             obp0: DEFAULT_PALETTE,
             obp1: DEFAULT_PALETTE,
 
-            oam_accessible: true,
-            vram_accessible: true,
+            oam_allow_read: true,
+            oam_allow_write: true,
+            vram_allow_read: true,
+            vram_allow_write: true,
 
             scanline_objs: Vec::new(),
             framebuffer: vec![0; SCREEN_SIZE],
@@ -156,10 +160,10 @@ impl Ppu {
     pub fn mode_0_hblank(&mut self, hblank_cycles: u8, interrupts: &mut InterruptController) {
         if self.mode_cycles == 1 {
             self.reported_mode = 0;
-            self.oam_accessible = true;
+            self.oam_allow_read = true;
 
             if self.ly > 1 {
-                self.vram_accessible = true;
+                self.vram_allow_read = true;
             }
 
             if self.interrupt_hblank {
@@ -167,8 +171,13 @@ impl Ppu {
             }
         }
 
-        if self.ly <= 1 && self.mode_cycles == 2 {
-            self.vram_accessible = true;
+        if self.mode_cycles == 2 {
+            self.oam_allow_write = true;
+            self.vram_allow_write = true;
+
+            if self.ly <= 1 {
+                self.vram_allow_read = true;
+            }
         }
 
         if self.mode_cycles == hblank_cycles {
@@ -182,7 +191,7 @@ impl Ppu {
 
             // When the PPU is first enabled, OAM is locked out one cycle earlier for lines 0-2.
             if self.first_frame && self.ly <= 2 {
-                self.oam_accessible = false;
+                self.oam_allow_read = false;
             }
 
             if self.ly < 144 {
@@ -230,7 +239,7 @@ impl Ppu {
     pub fn mode_2_oam_search(&mut self, interrupts: &mut InterruptController) {
         if self.mode_cycles == 1 {
             self.reported_mode = 2;
-            self.oam_accessible = false;
+            self.oam_allow_read = false;
             self.stat_lyc_match = self.ly == self.lyc;
 
             if self.interrupt_lyc && self.stat_lyc_match {
@@ -240,6 +249,10 @@ impl Ppu {
             if self.interrupt_oam {
                 interrupts.request(Interrupt::Stat);
             }
+        }
+
+        if self.mode_cycles == 2 {
+            self.oam_allow_write = false;
         }
 
         // The real hardware needs the 20 cycles to sift through all 40 entries in the OAM table.
@@ -277,20 +290,34 @@ impl Ppu {
     pub fn mode_3_pixel_transfer(&mut self) {
         if self.mode_cycles == 1 {
             self.reported_mode = 3;
-            self.oam_accessible = false;
-            self.vram_accessible = false;
+            self.oam_allow_read = false;
+            self.oam_allow_write = false;
+            self.vram_allow_read = false;
             self.mode3_extra_cycles = 0;
             self.draw_line();
+        }
+
+        if self.mode_cycles == 2 {
+            self.oam_allow_write = false;
+            self.vram_allow_write = false;
+        }
+
+        if self.first_frame {
+            if self.mode_cycles == 1 {
+                self.oam_allow_write = true;
+            } else if self.mode_cycles == 2 {
+                self.oam_allow_write = false;
+            }
         }
 
         // VRAM gets locked while we're in Mode 3. Except, of course, for the batshit timings of line 0 right after the
         // LCD is enabled.
         if self.ly == 0 && self.first_frame {
             if self.mode_cycles == 1 {
-                self.vram_accessible = true;
+                self.vram_allow_read = true;
             }
             if self.mode_cycles == 2 {
-                self.vram_accessible = false;
+                self.vram_allow_read = false;
             }
         }
 
@@ -459,21 +486,21 @@ impl Ppu {
     }
 
     pub fn oam_read(&self, addr: usize) -> u8 {
-        if !self.oam_accessible {
+        if !self.oam_allow_read {
             return 0xFF; // Reading OAM memory during Mode2 & Mode3 is not permitted.
         }
         (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr]
     }
 
     pub fn oam_write(&mut self, addr: usize, v: u8) {
-        if !self.oam_accessible {
+        if !self.oam_allow_write {
             return; // Writing OAM memory during Mode2 & Mode3 is not permitted.
         }
         (unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) })[addr] = v
     }
 
     pub fn vram_read(&self, addr: u16) -> u8 {
-        if !self.vram_accessible {
+        if !self.vram_allow_read {
             return 0xFF; // Reading VRAM during Mode3 is not permitted.
         }
 
@@ -528,8 +555,10 @@ impl Ppu {
             self.enabled = false;
             self.ly = 0;
             self.mode = Default::default();
-            self.oam_accessible = true;
-            self.vram_accessible = true;
+            self.oam_allow_read = true;
+            self.oam_allow_write = true;
+            self.vram_allow_read = true;
+            self.vram_allow_write = true;
             self.stat_lyc_match = false;
         }
 
