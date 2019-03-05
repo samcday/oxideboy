@@ -512,7 +512,7 @@ impl Ppu {
     }
 
     pub fn vram_write(&mut self, addr: u16, v: u8) {
-        if !self.vram_accessible {
+        if !self.vram_allow_write {
             return; // Writing VRAM during Mode3 is not permitted.
         }
 
