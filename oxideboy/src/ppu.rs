@@ -169,8 +169,8 @@ impl Ppu {
         }
 
         match self.mode {
-            Mode::Mode0(n) => self.mode_0_hblank(n, false),
-            Mode::FirstMode0 => self.mode_0_hblank(18, true),
+            Mode::Mode0(n) => self.mode_0_hblank(n),
+            Mode::FirstMode0 => self.first_mode_0_hblank(),
             Mode::Mode1 => self.mode_1_vblank(),
             Mode::Mode2 => self.mode_2_oam_search(interrupts),
             Mode::Mode3 => self.mode_3_pixel_transfer(),
@@ -179,21 +179,33 @@ impl Ppu {
         new_frame
     }
 
-    pub fn mode_0_hblank(&mut self, hblank_cycles: u8, is_first_mode0: bool) {
+    pub fn first_mode_0_hblank(&mut self) {
+        if self.mode_cycles == 1 {
+            self.reported_mode = 0;
+        }
+        if self.mode_cycles == 18 {
+            self.mode_cycles = 0;
+            self.mode_cycles = 0;
+            self.mode = Mode::Mode3;
+        }
+    }
+
+    pub fn mode_0_hblank(&mut self, hblank_cycles: u8) {
         if self.mode_cycles == 1 {
             self.reported_mode = 0;
             self.oam_accessible = true;
+
+            if self.ly > 1 {
+                self.vram_accessible = true;
+            }
+        }
+
+        if self.ly <= 1 && self.mode_cycles == 2 {
             self.vram_accessible = true;
         }
 
         if self.mode_cycles == hblank_cycles {
             self.mode_cycles = 0;
-
-            if is_first_mode0 {
-                self.mode_cycles = 0;
-                self.mode = Mode::Mode3;
-                return;
-            }
 
             self.ly += 1;
 
@@ -216,11 +228,11 @@ impl Ppu {
 
     pub fn mode_1_vblank(&mut self) {
         if self.mode_cycles == 1 {
-            self.first_frame = false;
             self.reported_mode = 1;
         }
 
         if self.mode_cycles == 114 {
+            self.first_frame = false;
             self.ly += 1;
             self.mode_cycles = 0;
 
@@ -286,6 +298,18 @@ impl Ppu {
             self.mode3_extra_cycles = 0;
             self.draw_line();
         }
+
+        // VRAM gets locked while we're in Mode 3. Except, of course, for the batshit timings of line 0 right after the
+        // LCD is enabled.
+        if self.ly == 0 && self.first_frame {
+            if self.mode_cycles == 1 {
+                self.vram_accessible = true;
+            }
+            if self.mode_cycles == 2 {
+                self.vram_accessible = false;
+            }
+        }
+
         if self.mode_cycles == 43 + self.mode3_extra_cycles {
             self.mode = Mode::Mode0(51 - self.mode3_extra_cycles);
             self.mode_cycles = 0;
