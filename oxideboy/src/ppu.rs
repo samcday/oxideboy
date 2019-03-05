@@ -53,7 +53,7 @@ pub struct Ppu {
     oam_accessible: bool,
     vram_accessible: bool,
     stat_lyc_match: bool,
-    lcd_just_enabled: bool,
+    first_frame: bool,
 
     pub mode: Mode,
     pub scanline_objs: Vec<(usize, usize)>,
@@ -201,9 +201,9 @@ impl Ppu {
                 self.stat_lyc_match = false;
             }
 
-            if self.lcd_just_enabled {
+            // When the PPU is first enabled, OAM is locked out one cycle earlier for lines 0-2.
+            if self.first_frame && self.ly <= 2 {
                 self.oam_accessible = false;
-                self.lcd_just_enabled = false;
             }
 
             if self.ly < 144 {
@@ -216,6 +216,7 @@ impl Ppu {
 
     pub fn mode_1_vblank(&mut self) {
         if self.mode_cycles == 1 {
+            self.first_frame = false;
             self.reported_mode = 1;
         }
 
@@ -280,6 +281,7 @@ impl Ppu {
     pub fn mode_3_pixel_transfer(&mut self) {
         if self.mode_cycles == 1 {
             self.reported_mode = 3;
+            self.oam_accessible = false;
             self.vram_accessible = false;
             self.mode3_extra_cycles = 0;
             self.draw_line();
@@ -509,7 +511,7 @@ impl Ppu {
             // (skips mode 2).
             self.mode = Mode::FirstMode0;
             self.reported_mode = 0;
-            self.lcd_just_enabled = true;
+            self.first_frame = true;
             self.ly = 0;
             self.mode_cycles = 0;
             self.stat_lyc_match = self.ly == self.lyc;
