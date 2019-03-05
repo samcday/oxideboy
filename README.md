@@ -24,4 +24,4 @@ Well let's be real, I'm writing this because I want to. But here's some post-rat
  [ ] Passing all blargg dmg_sound tests.
  [ ] Passing all blargg oam_bug tests.
  [ ] Passing all mealybug-tearoom tests.
- [ ] Passing all mooneye-gb tests.
+ [x] Passing all mooneye-gb tests.
