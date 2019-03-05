@@ -239,9 +239,7 @@ impl GameboyHardware {
             self.ppu.oam_write(dma_dst, v);
         }
         self.serial.clock(&mut self.interrupts);
-        if self.ppu.clock(&mut self.interrupts) {
-            self.new_frame = true;
-        }
+        self.ppu.clock(&mut self.interrupts, &mut self.new_frame);
         self.apu.clock();
     }
 }

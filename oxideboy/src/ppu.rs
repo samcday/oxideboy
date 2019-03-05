@@ -126,57 +126,20 @@ impl Ppu {
         }
     }
 
-    pub fn clock(&mut self, interrupts: &mut InterruptController) -> bool {
+    pub fn clock(&mut self, interrupts: &mut InterruptController, new_frame: &mut bool) {
         if !self.enabled {
-            return false;
+            return;
         }
-
-        let mut new_frame = false;
 
         self.mode_cycles += 1;
 
-        // PPU interrupts are weird. In most cases they're delivered one cycle too late.
-        // For example when we hit VBlank at line 144, we don't set the VBlank interrupt until the next cycle. Same with
-        // the STAT interrupts. Except on line 153, the last line before we start a new frame. In that line, we deliver
-        // the interrupts on time (i.e on the first cycle they happened).
-        if self.mode_cycles == 1 {
-            match self.mode {
-                Mode::Mode0(_) => {
-                    if self.interrupt_hblank {
-                        interrupts.request(Interrupt::Stat);
-                    }
-                }
-                Mode::Mode1 => {
-                    if self.ly == 144 {
-                        interrupts.request(Interrupt::VBlank);
-                        if self.interrupt_vblank {
-                            interrupts.request(Interrupt::Stat);
-                        }
-                        // Line 144 still triggers a STAT interrupt if OAM interrupts are enabled, even though we're not
-                        // in a Mode2.
-                        if self.interrupt_oam {
-                            interrupts.request(Interrupt::Stat);
-                        }
-                        new_frame = true;
-                    }
-                    if self.interrupt_lyc && self.lyc > 0 && self.lyc == self.ly {
-                        interrupts.request(Interrupt::Stat);
-                    }
-                }
-                Mode::Mode2 => {}
-                _ => {}
-            }
-        }
-
         match self.mode {
-            Mode::Mode0(n) => self.mode_0_hblank(n),
+            Mode::Mode0(n) => self.mode_0_hblank(n, interrupts),
             Mode::FirstMode0 => self.first_mode_0_hblank(),
-            Mode::Mode1 => self.mode_1_vblank(),
+            Mode::Mode1 => self.mode_1_vblank(interrupts, new_frame),
             Mode::Mode2 => self.mode_2_oam_search(interrupts),
             Mode::Mode3 => self.mode_3_pixel_transfer(),
         }
-
-        new_frame
     }
 
     pub fn first_mode_0_hblank(&mut self) {
@@ -190,13 +153,17 @@ impl Ppu {
         }
     }
 
-    pub fn mode_0_hblank(&mut self, hblank_cycles: u8) {
+    pub fn mode_0_hblank(&mut self, hblank_cycles: u8, interrupts: &mut InterruptController) {
         if self.mode_cycles == 1 {
             self.reported_mode = 0;
             self.oam_accessible = true;
 
             if self.ly > 1 {
                 self.vram_accessible = true;
+            }
+
+            if self.interrupt_hblank {
+                interrupts.request(Interrupt::Stat);
             }
         }
 
@@ -226,9 +193,26 @@ impl Ppu {
         }
     }
 
-    pub fn mode_1_vblank(&mut self) {
+    pub fn mode_1_vblank(&mut self, interrupts: &mut InterruptController, new_frame: &mut bool) {
         if self.mode_cycles == 1 {
             self.reported_mode = 1;
+
+            if self.interrupt_lyc && self.lyc > 0 && self.lyc == self.ly {
+                interrupts.request(Interrupt::Stat);
+            }
+
+            if self.ly == 144 {
+                *new_frame = true;
+                interrupts.request(Interrupt::VBlank);
+                if self.interrupt_vblank {
+                    interrupts.request(Interrupt::Stat);
+                }
+                // Line 144 still triggers a STAT interrupt if OAM interrupts are enabled, even though we're not
+                // in a Mode2.
+                if self.interrupt_oam {
+                    interrupts.request(Interrupt::Stat);
+                }
+            }
         }
 
         if self.mode_cycles == 114 {
