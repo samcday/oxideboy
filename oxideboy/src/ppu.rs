@@ -33,10 +33,9 @@ pub struct Ppu {
     pub obj_enabled: bool,     // 0xFF40 LCDC register bit 1
     pub bg_enabled: bool,      // 0xFF40 LCDC register bit 0
 
-    interrupt_lyc: bool,    // 0xFF41 STAT register bit 6
-    interrupt_oam: bool,    // 0xFF41 STAT register bit 5
-    interrupt_vblank: bool, // 0xFF41 STAT register bit 4
-    interrupt_hblank: bool, // 0xFF41 STAT register bit 3
+    stat_interrupts: StatInterrupts,
+    // This is the 4 states ANDed together. Only if it goes from false to true will we request a STAT interrupt.
+    stat_interrupt_active: bool,
 
     pub scy: u8, // 0xFF42 SCY register
     pub scx: u8, // 0xFF43 SCX register
@@ -54,7 +53,6 @@ pub struct Ppu {
     oam_allow_write: bool,
     vram_allow_read: bool,
     vram_allow_write: bool,
-    stat_lyc_match: bool,
     first_frame: bool,
 
     pub mode: Mode,
@@ -64,6 +62,18 @@ pub struct Ppu {
     framebuf_colors: [u32; 4],
 
     mode3_extra_cycles: u8,
+}
+
+#[derive(Debug, Default)]
+pub struct StatInterrupts {
+    lyc_enabled: bool,    // 0xFF41 STAT register bit 6
+    oam_enabled: bool,    // 0xFF41 STAT register bit 5
+    vblank_enabled: bool, // 0xFF41 STAT register bit 4
+    hblank_enabled: bool, // 0xFF41 STAT register bit 3
+    lyc_active: bool,
+    oam_active: bool,
+    vblank_active: bool,
+    hblank_active: bool,
 }
 
 /// The OAMEntry struct is packed in C representation (no padding) so that we can efficiently access it as a
@@ -166,9 +176,9 @@ impl Ppu {
                 self.vram_allow_read = true;
             }
 
-            if self.interrupt_hblank {
-                interrupts.request(Interrupt::Stat);
-            }
+            self.update_stat_interrupt(Some(interrupts), |state| {
+                state.hblank_active = true;
+            });
         }
 
         if self.mode_cycles == 2 {
@@ -186,7 +196,9 @@ impl Ppu {
             self.ly += 1;
 
             if self.ly != self.lyc {
-                self.stat_lyc_match = false;
+                self.update_stat_interrupt(Some(interrupts), |state| {
+                    state.lyc_active = false;
+                });
             }
 
             // When the PPU is first enabled, OAM is locked out one cycle earlier for lines 0-2.
@@ -206,23 +218,29 @@ impl Ppu {
         if self.mode_cycles == 1 {
             self.reported_mode = 1;
 
-            self.stat_lyc_match = self.ly == self.lyc;
-            if self.interrupt_lyc && self.stat_lyc_match {
-                interrupts.request(Interrupt::Stat);
-            }
+            let lyc_match = self.ly == self.lyc;
+            let vblank_start = self.ly == 144;
+            self.update_stat_interrupt(Some(interrupts), |state| {
+                state.lyc_active = lyc_match;
+                if vblank_start {
+                    state.vblank_active = true;
+
+                    // Line 144 still triggers a STAT interrupt if OAM interrupts are enabled, even though we're not
+                    // in a Mode2.
+                    state.oam_active = true;
+                }
+            });
 
             if self.ly == 144 {
                 *new_frame = true;
                 interrupts.request(Interrupt::VBlank);
-                if self.interrupt_vblank {
-                    interrupts.request(Interrupt::Stat);
-                }
-                // Line 144 still triggers a STAT interrupt if OAM interrupts are enabled, even though we're not
-                // in a Mode2.
-                if self.interrupt_oam {
-                    interrupts.request(Interrupt::Stat);
-                }
             }
+        }
+
+        if self.mode_cycles == 20 {
+            self.update_stat_interrupt(Some(interrupts), |state| {
+                state.oam_active = false;
+            });
         }
 
         if self.mode_cycles == 114 {
@@ -241,15 +259,14 @@ impl Ppu {
         if self.mode_cycles == 1 {
             self.reported_mode = 2;
             self.oam_allow_read = false;
-            self.stat_lyc_match = self.ly == self.lyc;
 
-            if self.interrupt_lyc && self.stat_lyc_match {
-                interrupts.request(Interrupt::Stat);
-            }
-
-            if self.interrupt_oam {
-                interrupts.request(Interrupt::Stat);
-            }
+            let lyc_match = self.ly == self.lyc;
+            self.update_stat_interrupt(Some(interrupts), |state| {
+                state.oam_active = true;
+                state.hblank_active = false;
+                state.vblank_active = false;
+                state.lyc_active = lyc_match;
+            });
         }
 
         if self.mode_cycles == 2 {
@@ -295,6 +312,9 @@ impl Ppu {
             self.oam_allow_write = false;
             self.vram_allow_read = false;
             self.mode3_extra_cycles = 0;
+
+            self.update_stat_interrupt(None, |state| state.oam_active = false);
+
             self.draw_line();
         }
 
@@ -556,11 +576,13 @@ impl Ppu {
             // When enabling the PPU, we immediately run the LY==LYC comparison. If the lyc comparison check was
             // previously unset and just became set, and LYC interrupts were already enabled in STAT prior to enabling
             // the PPU, then we immediately request the interrupt.
-            let new_stat_lyc_match = self.ly == self.lyc;
-            if self.interrupt_lyc && new_stat_lyc_match && !self.stat_lyc_match {
-                interrupts.request(Interrupt::Stat);
-            }
-            self.stat_lyc_match = new_stat_lyc_match;
+            let lyc_match = self.ly == self.lyc;
+            self.update_stat_interrupt(Some(interrupts), |state| {
+                state.lyc_active = lyc_match;
+                state.oam_active = false;
+                state.hblank_active = false;
+                state.vblank_active = false;
+            });
         } else {
             // TODO: check if we're inside a VBlank.
 
@@ -589,29 +611,56 @@ impl Ppu {
     pub fn reg_stat_read(&self) -> u8 {
         0b1000_0000 // Unused bits
             | self.reported_mode
-            | if self.stat_lyc_match   { 0b0000_0100 } else { 0 }
-            | if self.interrupt_hblank { 0b0000_1000 } else { 0 }
-            | if self.interrupt_vblank { 0b0001_0000 } else { 0 }
-            | if self.interrupt_oam    { 0b0010_0000 } else { 0 }
-            | if self.interrupt_lyc    { 0b0100_0000 } else { 0 }
+            | if self.stat_interrupts.lyc_active   { 0b0000_0100 } else { 0 }
+            | if self.stat_interrupts.hblank_enabled { 0b0000_1000 } else { 0 }
+            | if self.stat_interrupts.vblank_enabled { 0b0001_0000 } else { 0 }
+            | if self.stat_interrupts.oam_enabled    { 0b0010_0000 } else { 0 }
+            | if self.stat_interrupts.lyc_enabled    { 0b0100_0000 } else { 0 }
     }
 
     /// Write to the 0xFF41 STAT register.
-    pub fn reg_stat_write(&mut self, v: u8) {
-        self.interrupt_hblank = v & 0b0000_1000 > 0;
-        self.interrupt_vblank = v & 0b0001_0000 > 0;
-        self.interrupt_oam = v & 0b0010_0000 > 0;
-        self.interrupt_lyc = v & 0b0100_0000 > 0;
+    pub fn reg_stat_write(&mut self, v: u8, interrupts: &mut InterruptController) {
+        self.update_stat_interrupt(Some(interrupts), |state| {
+            state.hblank_enabled = v & 0b0000_1000 > 0;
+            state.vblank_enabled = v & 0b0001_0000 > 0;
+            state.oam_enabled = v & 0b0010_0000 > 0;
+            state.lyc_enabled = v & 0b0100_0000 > 0;
+        });
     }
 
     /// Write to the 0xFF45 LYC register.
-    pub fn reg_lyc_write(&mut self, v: u8) {
+    pub fn reg_lyc_write(&mut self, v: u8, interrupts: &mut InterruptController) {
         // LYC can be set any time ...
         self.lyc = v;
 
         // But if the PPU isn't enabled then the STAT LYC comparison bit is not changed, even if LY and LYC match.
         if self.enabled {
-            self.stat_lyc_match = self.lyc == self.ly;
+            let lyc_match = self.lyc == self.ly;
+            self.update_stat_interrupt(Some(interrupts), |state| state.lyc_active = lyc_match);
+        }
+    }
+
+    /// STAT interrupts can behave kinda strangely. The way they work internally is the 4 comparators are running
+    /// constantly. Whenever a condition is met (i.e PPU going into Mode2 with the mode2 interrupt enabled in STAT), a
+    /// signal goes from 0 to 1. Only when the signal goes from inactive to active will a STAT interrupt get triggered.
+    /// So what can happen is, the signal is *already* in the active state because some existing condition is already
+    /// met. Then even if a new condition is met, no interrupt will be fired. So for example let's say you have OAM +
+    /// hblank interrupts enabled. The first HBlank that is hit *will* trigger the interrupt, but then the transition
+    /// to OAM will not trigger the interrupt, because the signal is still in the active state during the transition.
+    fn update_stat_interrupt<T: FnMut(&mut StatInterrupts)>(
+        &mut self,
+        interrupts: Option<&mut InterruptController>,
+        mut f: T,
+    ) {
+        let prev_state = self.stat_interrupt_active;
+        f(&mut self.stat_interrupts);
+        self.stat_interrupt_active = (self.stat_interrupts.lyc_enabled && self.stat_interrupts.lyc_active)
+            || (self.stat_interrupts.oam_enabled && self.stat_interrupts.oam_active)
+            || (self.stat_interrupts.vblank_enabled && self.stat_interrupts.vblank_active)
+            || (self.stat_interrupts.hblank_enabled && self.stat_interrupts.hblank_active);
+
+        if interrupts.is_some() && self.stat_interrupt_active && !prev_state {
+            interrupts.unwrap().request(Interrupt::Stat);
         }
     }
 }
