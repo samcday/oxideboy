@@ -8,6 +8,7 @@ edition = "2018"
 
 [dev-dependencies]
 bencher = "0.1"
+image = "0.21"
 paste = "0.1"
 
 [[bench]]

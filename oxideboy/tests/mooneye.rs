@@ -1,3 +1,5 @@
+mod common;
+
 use oxideboy::*;
 use paste;
 use std::time::Instant;
@@ -134,34 +136,37 @@ test_cases! {
     rst_timing:                         "rst_timing",                       Model::DMG, false,
 }
 
-// #[test]
-// fn mooneye_sprite_priority() {
-//     let rom = include_bytes!("mooneye/manual-only/sprite_priority.gb");
-//     let mut gameboy = GameboyContext::new(Model::DMG, rom.to_vec());
-//     gameboy.skip_bootrom();
+#[test]
+fn mooneye_sprite_priority() {
+    let rom = include_bytes!("mooneye/manual-only/sprite_priority.gb");
+    let mut gb = Gameboy::new(Model::DMG, rom.to_vec());
+    gb.skip_bootrom();
 
-//     let start = Instant::now();
-//     while !gameboy.mooneye_breakpoint {
-//         gameboy::cpu::run(&mut gameboy);
+    let start = Instant::now();
+    loop {
+        if gb.hw.mem_get(gb.cpu.pc) == 0x40 {
+            break;
+        }
+        gb.run_instruction();
 
-//         if start.elapsed().as_secs() > 10 {
-//             panic!("Test ran for more than 10 seconds");
-//         }
-//     }
-//     // The magic breakpoint for this test is fired immediately after LCD is enabled, so let a full frame get rendered
-//     // before we run the comparison.
-//     for _ in 0..17556 {
-//         gameboy::cpu::run(&mut gameboy);
-//     }
+        if start.elapsed().as_secs() > 10 {
+            panic!("Test ran for more than 10 seconds");
+        }
+    }
+    // The magic breakpoint for this test is fired immediately after LCD is enabled, so let a full frame get rendered
+    // before we run the comparison.
+    for _ in 0..17556 {
+        gb.run_instruction();
+    }
 
-//     common::compare_framebuffer(gameboy.state.ppu.framebuffer(),
-//                                 include_bytes!("mooneye/manual-only/sprite_priority-expected.png"),
-//                                 |col| {
-//                                     match col {
-//                                         0xFFFFFFFF => 0xFFE0F8D0,
-//                                         0xFF6F6F6F => 0xFF88C070,
-//                                         0xFF000000 => 0xFF081820,
-//                                         _ => panic!("Unexpected reference pixel color: {:X}", col)
-//                                     }
-//                                 });
-// }
+    common::compare_framebuffer(
+        &gb.hw.ppu.framebuffer,
+        include_bytes!("mooneye/manual-only/sprite_priority-expected.png"),
+        |col| match col {
+            0xFFFFFFFF => 0xE0F8D0FF,
+            0xFF6F6F6F => 0x88C070FF,
+            0xFF000000 => 0x081820FF,
+            _ => panic!("Unexpected reference pixel color: {:X}", col),
+        },
+    );
+}
