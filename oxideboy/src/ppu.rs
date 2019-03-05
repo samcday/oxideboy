@@ -105,6 +105,9 @@ impl Ppu {
             obp0: DEFAULT_PALETTE,
             obp1: DEFAULT_PALETTE,
 
+            oam_accessible: true,
+            vram_accessible: true,
+
             scanline_objs: Vec::new(),
             framebuffer: vec![0; SCREEN_SIZE],
             framebuf_colors: [0; 4],
