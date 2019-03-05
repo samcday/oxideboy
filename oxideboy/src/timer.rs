@@ -18,6 +18,14 @@ impl Timer {
         Timer {
             freq: 1024,
 
+            // So this is kinda weird. If we start DIV from 0 then the boot_div tests fail, but the values are clearly
+            // very close. I'm reasonably certain at this point that the PPU is cycle accurate (including the weird shit
+            // that happens when LCD is first enabled). If we instead start DIV from 4, then everything passes, in both
+            // the dmg0 and dmgABCmgb test variants. My guess is the CPU doesn't actually start executing instructions
+            // right away, but does some kind of startup or idle for the first 4 clock pulses, meanwhile the DIV timer
+            // DID increment during that time.
+            div: 4,
+
             ..Default::default()
         }
     }
