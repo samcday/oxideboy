@@ -62,7 +62,7 @@ test_cases! {
 
     oam_dma_basic:                      "oam_dma/basic",                    Model::DMG, false,
     oam_dma_reg_read:                   "oam_dma/reg_read",                 Model::DMG, false,
-//  oam_dma_sources:                    "oam_dma/sources-dmgABCmgbS",       Model::DMG, false,
+    oam_dma_sources:                    "oam_dma/sources-dmgABCmgbS",       Model::DMG, false,
 
     ppu_hblank_ly_scx_timing:           "ppu/hblank_ly_scx_timing-GS",      Model::DMG, false,
     ppu_intr_1_2_timing:                "ppu/intr_1_2_timing-GS",           Model::DMG, false,

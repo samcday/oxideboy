@@ -11,7 +11,7 @@ pub struct DmaController {
 }
 
 impl DmaController {
-    pub fn start(&mut self, v: u8) {
+    pub fn start(&mut self, mut v: u8) {
         self.reg = v;
 
         // TODO:
@@ -22,6 +22,12 @@ impl DmaController {
         self.request = true;
         self.active = false;
         self.idx = 0;
+
+        // Source addresses higher or equal to 0xFE have 0x20 subtracted from them, because reasons.
+        if v >= 0xFE {
+            v -= 0x20;
+        }
+
         self.from = u16::from(v) << 8;
     }
 
