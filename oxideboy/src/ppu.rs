@@ -206,7 +206,8 @@ impl Ppu {
         if self.mode_cycles == 1 {
             self.reported_mode = 1;
 
-            if self.interrupt_lyc && self.lyc > 0 && self.lyc == self.ly {
+            self.stat_lyc_match = self.ly == self.lyc;
+            if self.interrupt_lyc && self.stat_lyc_match {
                 interrupts.request(Interrupt::Stat);
             }
 
@@ -536,30 +537,43 @@ impl Ppu {
     }
 
     /// Write to the 0xFF40 LCDC register
-    pub fn reg_lcdc_write(&mut self, v: u8) {
+    pub fn reg_lcdc_write(&mut self, v: u8, interrupts: &mut InterruptController) {
         let enabled = v & 0b1000_0000 > 0;
 
         if enabled {
             self.enabled = true;
+            self.ly = 0;
+            self.reported_mode = 0;
 
             // When the LCD is first enabled, line 0 starts in a HBlank for 19 cycles, then goes straight to Mode 3
             // (skips mode 2).
             self.mode = Mode::FirstMode0;
-            self.reported_mode = 0;
-            self.first_frame = true;
-            self.ly = 0;
             self.mode_cycles = 0;
-            self.stat_lyc_match = self.ly == self.lyc;
+            // We need to track that we're currently drawing the first frame since enabling the PPU, since a bunch of
+            // wacky timings happen during that first frame.
+            self.first_frame = true;
+
+            // When enabling the PPU, we immediately run the LY==LYC comparison. If the lyc comparison check was
+            // previously unset and just became set, and LYC interrupts were already enabled in STAT prior to enabling
+            // the PPU, then we immediately request the interrupt.
+            let new_stat_lyc_match = self.ly == self.lyc;
+            if self.interrupt_lyc && new_stat_lyc_match && !self.stat_lyc_match {
+                interrupts.request(Interrupt::Stat);
+            }
+            self.stat_lyc_match = new_stat_lyc_match;
         } else {
             // TODO: check if we're inside a VBlank.
+
+            // Disabling the PPU immediately clears the STAT mode bits, and sets LY to 0.
             self.enabled = false;
             self.ly = 0;
-            self.mode = Default::default();
+            self.reported_mode = 0;
+
+            // While PPU is disabled, OAM and VRAM read/writes are wide open.
             self.oam_allow_read = true;
             self.oam_allow_write = true;
             self.vram_allow_read = true;
             self.vram_allow_write = true;
-            self.stat_lyc_match = false;
         }
 
         self.win_code_area_hi = v & 0b0100_0000 > 0;
@@ -588,6 +602,17 @@ impl Ppu {
         self.interrupt_vblank = v & 0b0001_0000 > 0;
         self.interrupt_oam = v & 0b0010_0000 > 0;
         self.interrupt_lyc = v & 0b0100_0000 > 0;
+    }
+
+    /// Write to the 0xFF45 LYC register.
+    pub fn reg_lyc_write(&mut self, v: u8) {
+        // LYC can be set any time ...
+        self.lyc = v;
+
+        // But if the PPU isn't enabled then the STAT LYC comparison bit is not changed, even if LY and LYC match.
+        if self.enabled {
+            self.stat_lyc_match = self.lyc == self.ly;
+        }
     }
 }
 

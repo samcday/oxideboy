@@ -157,7 +157,6 @@ impl GameboyHardware {
     pub fn mem_write(&mut self, addr: u16, v: u8) {
         // While DMA transfer is in progress, write to the OAM area will be ignored.
         let block_write = self.dma.active && (addr >= 0xFE00 && addr <= 0xFE9F);
-
         // Writing to the memory bus takes a full CPU cycle.
         self.clock();
 
@@ -206,11 +205,11 @@ impl GameboyHardware {
             0xFF25 => self.apu.reg_nr51_write(v),
             0xFF26 => self.apu.reg_nr52_write(v),
             0xFF30...0xFF3F => self.apu.wave_write(addr - 0xFF30, v),
-            0xFF40 => self.ppu.reg_lcdc_write(v),
+            0xFF40 => self.ppu.reg_lcdc_write(v, &mut self.interrupts),
             0xFF41 => self.ppu.reg_stat_write(v),
             0xFF42 => self.ppu.scy = v,
             0xFF43 => self.ppu.scx = v,
-            0xFF45 => self.ppu.lyc = v,
+            0xFF45 => self.ppu.reg_lyc_write(v),
             0xFF46 => self.dma.start(v),
             0xFF47 => self.ppu.bgp.update(v),
             0xFF48 => self.ppu.obp0.update(v),
