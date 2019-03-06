@@ -8,15 +8,17 @@
 #[derive(Default)]
 pub struct Cartridge {
     cart_type: CartridgeType,
+    pub rom: Vec<u8>,
 
     // Used by MBC1 + MBC3
-    rom_bank: u8,
+    rom_bank_mode: bool,
+    lo_rom_bank: u8,
+    hi_rom_bank: u8,
     rom_bank_count: u8,
     ram_enabled: bool,
     ram_bank: u8,
+    ram_bank_count: u8,
     pub ram: Vec<u8>,
-
-    pub rom: Vec<u8>,
 }
 
 enum CartridgeType {
@@ -45,29 +47,29 @@ impl Cartridge {
             0x53 => 80,
             0x54 => 96,
             v => panic!("Unexpected ROM size {}", v),
-        };
-        let ram = match cart_type {
-            CartridgeType::ROMOnly => Vec::new(),
-            _ => vec![
-                0;
-                match rom[0x149] {
-                    0 => 0,
-                    1 => 2048,
-                    2 => 8192,
-                    3 => 32768,
-                    4 => 131_072,
-                    v => panic!("Unexpected RAM size {} encountered", v),
-                }
-            ],
+        } - 1;
+        let (ram, ram_bank_count) = match cart_type {
+            CartridgeType::ROMOnly => (Vec::new(), 0),
+            _ => match rom[0x149] {
+                0 => (Vec::new(), 0),
+                1 => (vec![0; 2048], 1),
+                2 => (vec![0; 8192], 1),
+                3 => (vec![0; 32768], 4),
+                4 => (vec![0; 131_072], 16),
+                5 => (vec![0; 65_536], 8),
+                v => panic!("Unexpected RAM size {} encountered", v),
+            },
         };
         Self {
             cart_type,
-            rom_bank: 1,
-            rom_bank_count,
-            ram_enabled: false,
             ram,
             rom,
-            ram_bank: 0,
+            hi_rom_bank: 1,
+            rom_bank_count,
+            rom_bank_mode: true,
+            ram_bank_count,
+
+            ..Default::default()
         }
     }
 
@@ -80,14 +82,21 @@ impl Cartridge {
     }
 
     pub fn rom_lo(&self, addr: usize) -> u8 {
-        self.rom[addr]
+        match self.cart_type {
+            CartridgeType::ROMOnly => self.rom[addr],
+            CartridgeType::MBC1 | CartridgeType::MBC3 => {
+                let base = (self.lo_rom_bank as usize) * 0x4000;
+                self.rom[base + addr]
+            }
+        }
     }
 
     pub fn rom_hi(&self, addr: usize) -> u8 {
+        // println!("Reading from ${:04X}. hi_rom_bank: {:X}", addr, self.hi_rom_bank);
         match self.cart_type {
             CartridgeType::ROMOnly => self.rom[0x4000 + addr],
             CartridgeType::MBC1 | CartridgeType::MBC3 => {
-                let base = (self.rom_bank as usize) * 0x4000;
+                let base = (self.hi_rom_bank as usize) * 0x4000;
                 self.rom[base + addr]
             }
         }
@@ -112,13 +121,39 @@ impl Cartridge {
     fn mbc1_write(&mut self, addr: usize, v: u8) {
         match addr {
             0x0000...0x1FFF => {
-                self.ram_enabled = v == 0xA;
+                self.ram_enabled = v & 0xA == 0xA;
             }
             0x2000...0x3FFF => {
-                if v > 0x1F {
-                    return;
+                // Only 5 bits are used for this register.
+                let mut bank = v & 0b11111;
+                // Bank 0 is not valid, lowest bank number is 1.
+                // The weird thing about this is if we're in ROM banking mode, then you can't actually
+                // use bank $20/$30/$40 either.
+                if bank == 0 {
+                    bank = 1;
                 }
-                self.rom_bank = v.max(1).min(self.rom_bank_count);
+                self.hi_rom_bank = ((self.hi_rom_bank & 0b110_0000) | bank) & self.rom_bank_count;
+            }
+            0x4000...0x5FFF => {
+                // Only the low 2 bits are used for this register.
+                let v = v & 0b11;
+
+                if self.rom_bank_mode {
+                    self.hi_rom_bank = (self.hi_rom_bank & 0b11111) | (v << 5) & self.rom_bank_count;
+                } else {
+                    self.ram_bank = v & self.ram_bank_count;
+                    self.lo_rom_bank = (v << 5) & self.rom_bank_count;
+                }
+            }
+            0x6000...0x7FFF => {
+                self.rom_bank_mode = v & 1 == 0;
+                if self.rom_bank_mode {
+                    self.lo_rom_bank = 0;
+                    self.ram_bank = 0;
+                } else {
+                    self.lo_rom_bank = 0;
+                    self.hi_rom_bank &= 0b11111;
+                }
             }
             0xA000...0xBFFF => {
                 if !self.ram_enabled {
@@ -139,13 +174,10 @@ impl Cartridge {
                 self.ram_enabled = v == 0xA;
             }
             0x2000...0x3FFF => {
-                self.rom_bank = v.max(1);
+                self.hi_rom_bank = v.max(1);
             }
             0x4000...0x5FFF => {
                 self.ram_bank = v & 0b11;
-            }
-            0x6000...0x7FFF => {
-                // TODO:
             }
             0xA000...0xBFFF => {
                 if !self.ram_enabled {

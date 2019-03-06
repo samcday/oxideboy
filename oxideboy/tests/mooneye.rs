@@ -38,7 +38,7 @@ fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
     }
 }
 
-macro_rules! test_cases {
+macro_rules! acceptance_test_cases {
     ( $( $name:ident: $path:tt,$model:expr,$bootrom:expr, )* ) => {
         $(
         paste::item! {
@@ -51,7 +51,20 @@ macro_rules! test_cases {
     }
 }
 
-test_cases! {
+macro_rules! mbc1_test_cases {
+    ( $( $name:ident: $path:tt,$model:expr,$bootrom:expr, )* ) => {
+        $(
+        paste::item! {
+            #[test]
+            fn [<mooneye_mbc1_ $name>] () {
+                run_mooneye_test(include_bytes!(concat!("mooneye/emulator-only/mbc1/", $path, ".gb")), $model, $bootrom);
+            }
+        }
+        )*
+    }
+}
+
+acceptance_test_cases! {
     bits_mem_oam:                       "bits/mem_oam",                     Model::DMG, false,
     bits_reg_f:                         "bits/reg_f",                       Model::DMG, false,
     bits_unused_hwio:                   "bits/unused_hwio-GS",              Model::DMG, false,
@@ -134,6 +147,15 @@ test_cases! {
     reti_intr_timing:                   "reti_intr_timing",                 Model::DMG, false,
     reti_timing:                        "reti_timing",                      Model::DMG, false,
     rst_timing:                         "rst_timing",                       Model::DMG, false,
+}
+
+mbc1_test_cases! {
+    rom_512_kb:                         "rom_512Kb",                        Model::DMG, false,
+    rom_1_mb:                           "rom_1Mb",                          Model::DMG, false,
+    rom_2_mb:                           "rom_2Mb",                          Model::DMG, false,
+    rom_4_mb:                           "rom_4Mb",                          Model::DMG, false,
+//  rom_8_mb:                           "rom_8Mb",                          Model::DMG, false,
+//  rom_16_mb:                          "rom_16Mb",                         Model::DMG, false,
 }
 
 #[test]
