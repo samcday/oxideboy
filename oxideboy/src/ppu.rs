@@ -521,13 +521,13 @@ impl Ppu {
     }
 
     pub fn maybe_trash_oam(&mut self) {
-        if self.mode == Mode::Mode2 && self.mode_cycles < 19 {
+        if self.mode == Mode::Mode2 && self.mode_cycles > 0 && self.mode_cycles < 20 {
             self.dirty = true;
             self.next_dirty = true;
 
             let pos = (self.mode_cycles as usize) * 2;
-            self.oam[pos + 2] = self.oam[pos];
-            self.oam[pos + 3] = self.oam[pos + 1];
+            self.oam[pos] = self.oam[pos - 2];
+            self.oam[pos + 1] = self.oam[pos - 1];
         }
     }
 

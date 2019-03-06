@@ -117,9 +117,9 @@ harness_test_cases! {
     oam_bug_01:    "oam_bug/1-lcd_sync",
     oam_bug_02:    "oam_bug/2-causes",
     oam_bug_03:    "oam_bug/3-non_causes",
-//  oam_bug_04:    "oam_bug/4-scanline_timing",
-//  oam_bug_05:    "oam_bug/5-timing_bug",
-//  oam_bug_06:    "oam_bug/6-timing_no_bug",
+    oam_bug_04:    "oam_bug/4-scanline_timing",
+    oam_bug_05:    "oam_bug/5-timing_bug",
+    oam_bug_06:    "oam_bug/6-timing_no_bug",
 //  oam_bug_07:    "oam_bug/7-timing_effect",
 //  oam_bug_08:    "oam_bug/8-instr_effect",
 }
