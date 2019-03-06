@@ -520,6 +520,17 @@ impl Ppu {
         }
     }
 
+    pub fn maybe_trash_oam(&mut self) {
+        if self.mode == Mode::Mode2 && self.mode_cycles < 19 {
+            self.dirty = true;
+            self.next_dirty = true;
+
+            let pos = (self.mode_cycles as usize) * 2;
+            self.oam[pos + 2] = self.oam[pos];
+            self.oam[pos + 3] = self.oam[pos + 1];
+        }
+    }
+
     pub fn oam_read(&self, addr: usize) -> u8 {
         if !self.oam_allow_read {
             return 0xFF; // Reading OAM memory during Mode2 & Mode3 is not permitted.
