@@ -14,10 +14,10 @@ pub struct Cartridge {
     ram_bank_mode: bool,
     lo_rom_bank: u8,
     hi_rom_bank: u8,
-    rom_bank_count: u8,
+    rom_bank_mask: u8,
     ram_enabled: bool,
     ram_bank: u8,
-    ram_bank_count: u8,
+    ram_bank_mask: u8,
     pub ram: Vec<u8>,
 }
 
@@ -41,22 +41,22 @@ impl Cartridge {
             0x12 | 0x13 => CartridgeType::MBC3,
             v => panic!("Unsupported cartridge type: {:X}", v),
         };
-        let rom_bank_count = match rom[0x148] {
+        let rom_bank_mask = match rom[0x148] {
             v @ 0...6 => 2u8.pow(u32::from(v) + 1),
             0x52 => 72,
             0x53 => 80,
             0x54 => 96,
             v => panic!("Unexpected ROM size {}", v),
         } - 1;
-        let (ram, ram_bank_count) = match cart_type {
+        let (ram, ram_bank_mask) = match cart_type {
             CartridgeType::ROMOnly => (Vec::new(), 0),
             _ => match rom[0x149] {
                 0 => (Vec::new(), 0),
-                1 => (vec![0; 2048], 1),
-                2 => (vec![0; 8192], 1),
-                3 => (vec![0; 32768], 4),
-                4 => (vec![0; 131_072], 16),
-                5 => (vec![0; 65_536], 8),
+                1 => (vec![0; 2048], 0),
+                2 => (vec![0; 8192], 0),
+                3 => (vec![0; 32768], 0b11),
+                4 => (vec![0; 131_072], 0b1111),
+                5 => (vec![0; 65_536], 0b111),
                 v => panic!("Unexpected RAM size {} encountered", v),
             },
         };
@@ -65,8 +65,8 @@ impl Cartridge {
             ram,
             rom,
             hi_rom_bank: 1,
-            rom_bank_count,
-            ram_bank_count,
+            rom_bank_mask,
+            ram_bank_mask,
 
             ..Default::default()
         }
@@ -101,6 +101,10 @@ impl Cartridge {
     }
 
     pub fn ram(&self, addr: usize) -> u8 {
+        if !self.ram_enabled {
+            return 0xFF;
+        }
+
         let base = (self.ram_bank as usize) * 0x2000;
         if base + addr >= self.ram.len() {
             return 0xFF;
@@ -119,7 +123,7 @@ impl Cartridge {
     fn mbc1_write(&mut self, addr: usize, v: u8) {
         match addr {
             0x0000...0x1FFF => {
-                self.ram_enabled = v & 0xA == 0xA;
+                self.ram_enabled = v & 0b1111 == 0xA;
             }
             0x2000...0x3FFF => {
                 // Only 5 bits are used for this register.
@@ -129,17 +133,17 @@ impl Cartridge {
                 if bank == 0 {
                     bank = 1;
                 }
-                self.hi_rom_bank = ((self.hi_rom_bank & 0b110_0000) | bank) & self.rom_bank_count;
+                self.hi_rom_bank = ((self.hi_rom_bank & 0b110_0000) | bank) & self.rom_bank_mask;
             }
             0x4000...0x5FFF => {
                 // Only the low 2 bits are used for this register.
                 let v = v & 0b11;
 
-                self.hi_rom_bank = ((self.hi_rom_bank & 0b11111) | (v << 5)) & self.rom_bank_count;
+                self.hi_rom_bank = ((self.hi_rom_bank & 0b11111) | (v << 5)) & self.rom_bank_mask;
 
                 if self.ram_bank_mode {
-                    self.ram_bank = v & self.ram_bank_count;
-                    self.lo_rom_bank = (v << 5) & self.rom_bank_count;
+                    self.ram_bank = v & self.ram_bank_mask;
+                    self.lo_rom_bank = (v << 5) & self.rom_bank_mask;
                 }
             }
             0x6000...0x7FFF => {

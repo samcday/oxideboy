@@ -150,6 +150,10 @@ acceptance_test_cases! {
 }
 
 mbc1_test_cases! {
+    bits_ram_en:                        "bits_ram_en",                      Model::DMG, false,
+    ram_64_kb:                          "ram_64Kb",                         Model::DMG, false,
+    ram_256_kb:                         "ram_256Kb",                        Model::DMG, false,
+
     rom_512_kb:                         "rom_512Kb",                        Model::DMG, false,
     rom_1_mb:                           "rom_1Mb",                          Model::DMG, false,
     rom_2_mb:                           "rom_2Mb",                          Model::DMG, false,
