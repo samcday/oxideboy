@@ -322,6 +322,7 @@ impl Ppu {
 
             self.update_stat_interrupt(None, |state| state.oam_active = false);
 
+            self.calculate_line_overhead();
             self.draw_line();
         }
 
@@ -355,24 +356,16 @@ impl Ppu {
         }
     }
 
-    /// Draws an entire line of graphical data as efficiently as possible.
-    /// This method is used when we can "get away with it". That is, if the CPU isn't trying to modify any PPU-related
-    /// registers in the middle of a Mode 3, then we don't need to run the complex (and slower) state machine, we can
-    /// just rasterize the whole line in one go.
-    pub fn draw_line(&mut self) {
-        let mut skip = self.scx % 8; // Throw away the first self.scx % 8 pixels. This is how fine scrolling is done.
-        let mut in_win = false;
-
+    fn calculate_line_overhead(&mut self) {
         // When the PPU clocks pixels out to the LCD, it actually shifts out the first skip number of pixels without the
         // display clock. This has the effect of basically throwing away those pixels, which is how scrolling is
         // achieved. This approach means that the Mode3 takes either 1 or 2 extra cycles, depending on how many pixels
         // were thrown away.
-        if skip > 0 {
-            self.mode3_extra_cycles += 1;
-        }
-        if skip > 4 {
-            self.mode3_extra_cycles += 1;
-        }
+        self.mode3_extra_cycles += match self.scx % 8 {
+            1...4 => 1,
+            5...7 => 2,
+            _ => 0,
+        };
 
         if self.obj_enabled {
             // The PPU stalls sending out pixels while it fetches sprites. Each sprite takes an extra 6 PPU clocks to
@@ -397,6 +390,15 @@ impl Ppu {
             // speed that we're dealing with in the rest of the emulator.
             self.mode3_extra_cycles += (sprite_overhead / 4) as u8;
         }
+    }
+
+    /// Draws an entire line of graphical data as efficiently as possible.
+    /// This method is used when we can "get away with it". That is, if the CPU isn't trying to modify any PPU-related
+    /// registers in the middle of a Mode 3, then we don't need to run the complex (and slower) state machine, we can
+    /// just rasterize the whole line in one go.
+    pub fn draw_line(&mut self) {
+        let mut skip = self.scx % 8; // Throw away the first self.scx % 8 pixels. This is how fine scrolling is done.
+        let mut in_win = false;
 
         if !self.dirty {
             // If nothing has changed since we last drew this line, then we can skip the rest of the work.

@@ -4,9 +4,6 @@
 //! can be viewed and manipulated.
 //! This module contains everything needed to decode and execute instructions for this CPU.
 
-// TODO: remove me when refactor is complete.
-#![allow(dead_code)]
-
 use crate::GameboyHardware;
 
 /// The main Cpu struct, containing all the CPU registers and core CPU state. Many of the CPU instructions modify the

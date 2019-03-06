@@ -71,7 +71,7 @@ impl Cartridge {
         }
     }
 
-    pub fn rom_title<'a>(&'a self) -> &'a str {
+    pub fn rom_title(&self) -> &str {
         self.rom[0x134..=0x143]
             .split(|b| *b == 0)
             .next()
