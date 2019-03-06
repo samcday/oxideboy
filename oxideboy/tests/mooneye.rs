@@ -154,8 +154,8 @@ mbc1_test_cases! {
     rom_1_mb:                           "rom_1Mb",                          Model::DMG, false,
     rom_2_mb:                           "rom_2Mb",                          Model::DMG, false,
     rom_4_mb:                           "rom_4Mb",                          Model::DMG, false,
-//  rom_8_mb:                           "rom_8Mb",                          Model::DMG, false,
-//  rom_16_mb:                          "rom_16Mb",                         Model::DMG, false,
+    rom_8_mb:                           "rom_8Mb",                          Model::DMG, false,
+    rom_16_mb:                          "rom_16Mb",                         Model::DMG, false,
 }
 
 #[test]

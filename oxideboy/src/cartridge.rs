@@ -11,7 +11,7 @@ pub struct Cartridge {
     pub rom: Vec<u8>,
 
     // Used by MBC1 + MBC3
-    rom_bank_mode: bool,
+    ram_bank_mode: bool,
     lo_rom_bank: u8,
     hi_rom_bank: u8,
     rom_bank_count: u8,
@@ -66,7 +66,6 @@ impl Cartridge {
             rom,
             hi_rom_bank: 1,
             rom_bank_count,
-            rom_bank_mode: true,
             ram_bank_count,
 
             ..Default::default()
@@ -92,7 +91,6 @@ impl Cartridge {
     }
 
     pub fn rom_hi(&self, addr: usize) -> u8 {
-        // println!("Reading from ${:04X}. hi_rom_bank: {:X}", addr, self.hi_rom_bank);
         match self.cart_type {
             CartridgeType::ROMOnly => self.rom[0x4000 + addr],
             CartridgeType::MBC1 | CartridgeType::MBC3 => {
@@ -126,9 +124,8 @@ impl Cartridge {
             0x2000...0x3FFF => {
                 // Only 5 bits are used for this register.
                 let mut bank = v & 0b11111;
+
                 // Bank 0 is not valid, lowest bank number is 1.
-                // The weird thing about this is if we're in ROM banking mode, then you can't actually
-                // use bank $20/$30/$40 either.
                 if bank == 0 {
                     bank = 1;
                 }
@@ -138,21 +135,21 @@ impl Cartridge {
                 // Only the low 2 bits are used for this register.
                 let v = v & 0b11;
 
-                if self.rom_bank_mode {
-                    self.hi_rom_bank = (self.hi_rom_bank & 0b11111) | (v << 5) & self.rom_bank_count;
-                } else {
+                self.hi_rom_bank = ((self.hi_rom_bank & 0b11111) | (v << 5)) & self.rom_bank_count;
+
+                if self.ram_bank_mode {
                     self.ram_bank = v & self.ram_bank_count;
                     self.lo_rom_bank = (v << 5) & self.rom_bank_count;
                 }
             }
             0x6000...0x7FFF => {
-                self.rom_bank_mode = v & 1 == 0;
-                if self.rom_bank_mode {
-                    self.lo_rom_bank = 0;
-                    self.ram_bank = 0;
-                } else {
+                self.ram_bank_mode = v & 1 == 1;
+                if self.ram_bank_mode {
                     self.lo_rom_bank = 0;
                     self.hi_rom_bank &= 0b11111;
+                } else {
+                    self.lo_rom_bank = 0;
+                    self.ram_bank = 0;
                 }
             }
             0xA000...0xBFFF => {
