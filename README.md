@@ -17,11 +17,12 @@ Well let's be real, I'm writing this because I want to. But here's some post-rat
 
 ## Roadmap
 
- [x] Initial implementation of CPU, PPU, APU, serial, interrupts, etc.
- [ ] Save states
- [ ] Web-based debugger
- [x] Passing all blargg cpu/memory/timing tests.
- [ ] Passing all blargg dmg_sound tests.
- [ ] Passing all blargg oam_bug tests.
- [ ] Passing all mealybug-tearoom tests.
- [x] Passing all mooneye-gb tests.
+- [x] Initial implementation of CPU, PPU, APU, serial, interrupts, etc.
+- [ ] Save states
+- [ ] Web-based debugger
+- [x] Passing all blargg cpu/memory/timing tests.
+- [ ] Passing all blargg dmg_sound tests.
+- [ ] Passing all blargg oam_bug tests.
+- [ ] Passing all mealybug-tearoom tests.
+- [x] Passing all mooneye-gb acceptance tests.
+- [ ] Passing all mooneye-gb mbc1 tests.
