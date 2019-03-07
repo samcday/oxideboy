@@ -18,11 +18,10 @@ const COLOR_MAPPING: [Color; 4] = [
     (0x08, 0x18, 0x20),
 ];
 
-#[derive(Debug, Default)]
 pub struct Ppu {
-    tiles: Vec<u8>,         // 0x8000 - 0x97FF
-    tilemap: Vec<u8>,       // 0x9800 - 0x9FFF
-    pub oam: Vec<OAMEntry>, // 0xFE00 - 0xFDFF
+    tiles: [u8; 0x1800],     // 0x8000 - 0x97FF
+    tilemap: [u8; 0x800],    // 0x9800 - 0x9FFF
+    pub oam: [OAMEntry; 40], // 0xFE00 - 0xFDFF
 
     pub enabled: bool,         // 0xFF40 LCDC register bit 7
     win_code_area_hi: bool,    // 0xFF40 LCDC register bit 6
@@ -32,11 +31,9 @@ pub struct Ppu {
     obj_tall_mode: bool,       // 0xFF40 LCDC register bit 2
     pub obj_enabled: bool,     // 0xFF40 LCDC register bit 1
     pub bg_enabled: bool,      // 0xFF40 LCDC register bit 0
-
     stat_interrupts: StatInterrupts,
     // This is the 4 states ANDed together. Only if it goes from false to true will we request a STAT interrupt.
     stat_interrupt_active: bool,
-
     pub scy: u8, // 0xFF42 SCY register
     pub scx: u8, // 0xFF43 SCX register
     pub ly: u8,  // 0xFF44 LY register
@@ -56,9 +53,10 @@ pub struct Ppu {
     first_frame: bool,
 
     pub mode: Mode,
-    pub scanline_objs: Vec<(usize, usize)>,
+    pub scanline_objs: [(usize, usize); 10],
+    pub scanline_obj_count: usize,
     pub mode_cycles: u8,
-    pub framebuffer: Vec<u32>,
+    pub framebuffer: [u32; SCREEN_SIZE],
     framebuf_colors: [u32; 4],
 
     mode3_extra_cycles: u8,
@@ -122,24 +120,49 @@ pub enum PixelFormat {
 impl Ppu {
     pub fn new() -> Ppu {
         let mut ppu = Ppu {
-            tiles: vec![0; 0x1800],
-            tilemap: vec![0; 0x800],
-            oam: vec![Default::default(); 40],
+            tiles: [0; 0x1800],
+            tilemap: [0; 0x800],
+            oam: [Default::default(); 40],
 
+            enabled: false,
+            win_code_area_hi: false,
+            win_enabled: false,
+            bg_tile_area_lo: false,
+            bg_code_area_hi: false,
+            obj_tall_mode: false,
+            obj_enabled: false,
+            bg_enabled: false,
+
+            stat_interrupts: Default::default(),
+            stat_interrupt_active: false,
+
+            scy: 0,
+            scx: 0,
+            ly: 0,
+            lyc: 0,
             bgp: DEFAULT_PALETTE,
             obp0: DEFAULT_PALETTE,
             obp1: DEFAULT_PALETTE,
+            wy: 0,
+            wx: 0,
 
+            reported_mode: 0,
             oam_allow_read: true,
             oam_allow_write: true,
             vram_allow_read: true,
             vram_allow_write: true,
+            first_frame: false,
 
-            scanline_objs: Vec::new(),
-            framebuffer: vec![0; SCREEN_SIZE],
+            mode: Default::default(),
+            scanline_objs: [(0, 0); 10],
+            scanline_obj_count: 0,
+            mode_cycles: 0,
+            framebuffer: [0; SCREEN_SIZE],
             framebuf_colors: [0; 4],
 
-            ..Default::default()
+            mode3_extra_cycles: 0,
+            dirty: false,
+            next_dirty: false,
         };
 
         ppu.set_pixel_format(PixelFormat::RGBA);
@@ -295,18 +318,19 @@ impl Ppu {
             self.mode_cycles = 0;
             self.mode = Mode::Mode3;
 
-            self.scanline_objs.clear();
+            self.scanline_obj_count = 0;
 
             let h = if self.obj_tall_mode { 16 } else { 8 };
             let ly_bound = self.ly + (h + 8);
 
             for (idx, obj) in self.oam.iter().enumerate() {
                 if ly_bound >= obj.y && ly_bound < obj.y + h && obj.x < 168 {
-                    self.scanline_objs.push((idx, obj.x as usize));
+                    self.scanline_objs[self.scanline_obj_count] = (idx, obj.x as usize);
+                    self.scanline_obj_count += 1;
                 }
 
                 // Each scanline can display a maximum of 10 OBJs.
-                if self.scanline_objs.len() == 10 {
+                if self.scanline_obj_count == 10 {
                     break;
                 }
             }
@@ -315,7 +339,7 @@ impl Ppu {
             // If two OBJs have the same x coord, then we prioritise the OBJ by its position in OAM table.
             // This ordering is important, we build the list here once, but then access it many times during
             // pixel transfer, so this makes things more efficient.
-            self.scanline_objs
+            (&mut self.scanline_objs[0..self.scanline_obj_count])
                 .sort_unstable_by(|(a_idx, a_x), (b_idx, b_x)| a_x.cmp(b_x).then(a_idx.cmp(b_idx)));
         }
     }
@@ -384,11 +408,13 @@ impl Ppu {
             // fetch process. This extra overhead of up to 5 clocks is only paid once per sprite X location.
             let mut sprite_overhead = 0;
             let mut penalty = (0, false);
-            for (_, sprite_x) in &self.scanline_objs {
+            // for (_, sprite_x) in &self.scanline_objs {
+            for i in 0..self.scanline_obj_count {
+                let sprite_x = self.scanline_objs[i].1;
                 // Have we paid the sprite penalty for this position yet?
-                if penalty.0 != *sprite_x || !penalty.1 {
+                if penalty.0 != sprite_x || !penalty.1 {
                     // Nope, calculate it now.
-                    penalty.0 = *sprite_x;
+                    penalty.0 = sprite_x;
                     penalty.1 = true;
                     sprite_overhead += 5 - std::cmp::min(5, (sprite_x + usize::from(self.scx)) % 8);
                 }
@@ -474,8 +500,10 @@ impl Ppu {
 
         // Next we overlay any sprites.
         if self.obj_enabled {
-            for (sprite_idx, sprite_x) in &self.scanline_objs {
-                let sprite = &self.oam[*sprite_idx];
+            // for (sprite_idx, sprite_x) in &self.scanline_objs {
+            for i in 0..self.scanline_obj_count {
+                let (sprite_idx, sprite_x) = self.scanline_objs[i];
+                let sprite = &self.oam[sprite_idx];
                 let pal = if sprite.palette() { &self.obp1 } else { &self.obp0 };
                 let tile_y = sprite.tile_y(self.ly, self.obj_tall_mode);
                 let mut sprite_lo = self.tiles[usize::from(sprite.code) * 0x10 + (tile_y * 2)] as usize;
