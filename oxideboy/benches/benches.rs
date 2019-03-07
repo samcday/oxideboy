@@ -2,10 +2,12 @@
 extern crate bencher;
 
 use bencher::Bencher;
-use oxideboy::ppu;
+use oxideboy::{interrupt, ppu};
 
 fn ppu_drawline(bench: &mut Bencher) {
     let mut ppu = ppu::Ppu::new();
+
+    ppu.dirty = true;
 
     bench.iter(|| {
         ppu.draw_line();
@@ -14,6 +16,9 @@ fn ppu_drawline(bench: &mut Bencher) {
 
 fn ppu_drawline_sprites(bench: &mut Bencher) {
     let mut ppu = ppu::Ppu::new();
+    let mut interrupts = interrupt::InterruptController::new();
+
+    ppu.dirty = true;
 
     ppu.obj_enabled = true;
 
@@ -21,7 +26,7 @@ fn ppu_drawline_sprites(bench: &mut Bencher) {
     ppu.oam[0].y = 10;
 
     ppu.mode_cycles = 20;
-    ppu.mode_2_oam_search();
+    ppu.mode_2_oam_search(&mut interrupts);
 
     bench.iter(|| {
         ppu.draw_line();

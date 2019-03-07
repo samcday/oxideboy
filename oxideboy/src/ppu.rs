@@ -65,8 +65,8 @@ pub struct Ppu {
 
     // We're rendering frames at 59.7fps, but very often there's absolutely no need to re-render, if nothing in the PPU
     // registers, OAM, or VRAM changed since the last frame.
-    dirty: bool,
-    next_dirty: bool,
+    pub dirty: bool,
+    pub next_dirty: bool,
 }
 
 pub enum OamCorruptionType {
