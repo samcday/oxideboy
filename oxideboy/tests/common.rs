@@ -1,9 +1,9 @@
 use image;
 use std::env;
 
-pub fn compare_framebuffer<F>(framebuf: &[u32], expected: &[u8], color_conv: F)
+pub fn compare_framebuffer<F>(framebuf: &[u16], expected: &[u8], color_conv: F)
 where
-    F: Fn(u32) -> u32,
+    F: Fn(u32) -> u16,
 {
     let expected_img = image::load_from_memory(expected).unwrap();
     let expected_img = expected_img.to_rgb();
@@ -30,9 +30,9 @@ where
                 // Mark this pixel red to show up the differences.
                 output_image[((y * 160) + x) * 3] = 0xFF;
             } else {
-                output_image[((y * 160) + x) * 3] = ((framebuffer_pix & 0xFF0000) >> 16) as u8;
-                output_image[((y * 160) + x) * 3 + 1] = ((framebuffer_pix & 0xFF00) >> 8) as u8;
-                output_image[((y * 160) + x) * 3 + 2] = (framebuffer_pix & 0xFF) as u8;
+                output_image[((y * 160) + x) * 3] = ((framebuffer_pix & 0xF800) >> 8) as u8;
+                output_image[((y * 160) + x) * 3 + 1] = ((framebuffer_pix & 0x7E00) >> 3) as u8;
+                output_image[((y * 160) + x) * 3 + 2] = ((framebuffer_pix & 0x1F) << 3) as u8;
             }
         }
     }

@@ -4,7 +4,7 @@ extern crate wasm_bindgen;
 mod utils;
 
 use cfg_if::cfg_if;
-use js_sys::{Function, Uint8ClampedArray};
+use js_sys::{Function, Uint16Array};
 use oxideboy::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -62,9 +62,7 @@ impl WebEmu {
         utils::set_panic_hook();
 
         let mut gb = Gameboy::new(Model::DMG0, rom.to_vec());
-
         gb.skip_bootrom();
-        gb.hw.ppu.set_pixel_format(ppu::PixelFormat::ABGR);
 
         let rom_title = String::from(gb.hw.cart.rom_title());
         let rom_hash = format!("{:x}", md5::compute(&gb.hw.cart.rom));
@@ -114,9 +112,9 @@ impl WebEmu {
 
         if self.gb.hw.new_frame {
             let buf = unsafe {
-                Uint8ClampedArray::view(slice::from_raw_parts(
-                    (self.gb.hw.ppu.framebuffer).as_ptr() as *const u8,
-                    160 * 144 * 4,
+                Uint16Array::view(slice::from_raw_parts(
+                    (self.gb.hw.ppu.framebuffer).as_ptr() as *const u16,
+                    160 * 144,
                 ))
             };
 

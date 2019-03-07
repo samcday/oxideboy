@@ -89,6 +89,7 @@ class App extends React.Component {
   componentDidMount() {
     this.lcd = this.refs.lcd;
     this.ctx = this.lcd.getContext('2d');
+    this.screenBuffer = this.ctx.getImageData(0, 0, this.lcd.width, this.lcd.height);
     this.setState({memoryViewerHeight: this.refs.split.pane1.getBoundingClientRect().height});
 
     document.addEventListener("keydown", this.keyDown = (ev) => {
@@ -279,8 +280,8 @@ class App extends React.Component {
       return;
     }
 
-    var file = ev.dataTransfer.items[0].getAsFile();
-    var reader = new FileReader();
+    let file = ev.dataTransfer.items[0].getAsFile();
+    let reader = new FileReader();
     reader.onload = async (e) => {
       const rom = new Uint8Array(e.target.result);
       this.loadRom(rom);
@@ -345,8 +346,32 @@ class App extends React.Component {
 
   newFrame(framebuffer) {
     try {
-      this.ctx.putImageData(new ImageData(framebuffer, 160, 144), 0, 0);
-      this.ctx.drawImage( this.lcd, 0, 0, 2*this.lcd.width, 2*this.lcd.height );
+      // Pixel data is in RGB565 format, which is not directly usable in a canvas.
+      // So we convert it now, and also double the pixels while we're at it.
+      const line_size = 160 * 4 * 2;
+      let fb_pos = 0;
+      let screenbuf_pos = 0;
+      for (let y = 0; y < 144; y++) {
+        for (let x = 0; x < 160; x++) {
+          let col = framebuffer[fb_pos++];
+          let r = ((col&0xf800) >> 8);
+          let g = ((col&0x7e0) >> 3);
+          let b = ((col&0x1f) << 3);
+
+          for (let i = 0; i < 2; i++) {
+            this.screenBuffer.data[screenbuf_pos++] = r;
+            this.screenBuffer.data[screenbuf_pos++] = g;
+            this.screenBuffer.data[screenbuf_pos++] = b;
+            this.screenBuffer.data[screenbuf_pos++] = 255;
+          }
+        }
+        // Copy the whole line we just drew, this doubles the pixels vertically.
+        this.screenBuffer.data.set(
+          this.screenBuffer.data.subarray(screenbuf_pos - line_size, screenbuf_pos),
+          screenbuf_pos);
+        screenbuf_pos += line_size;
+      }
+      this.ctx.putImageData(this.screenBuffer, 0, 0);
     } catch(err) {
       console.error(err);
     }

@@ -189,9 +189,9 @@ fn mooneye_sprite_priority() {
         &gb.hw.ppu.framebuffer,
         include_bytes!("mooneye/manual-only/sprite_priority-expected.png"),
         |col| match col {
-            0xFFFFFFFF => 0xE0F8D0FF,
-            0xFF6F6F6F => 0x88C070FF,
-            0xFF000000 => 0x081820FF,
+            0xFFFFFFFF => 0xE7DA,
+            0xFF6F6F6F => 0x8E0E,
+            0xFF000000 => 0x08C4,
             _ => panic!("Unexpected reference pixel color: {:X}", col),
         },
     );

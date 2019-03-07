@@ -50,7 +50,7 @@ fn main() -> Result<()> {
     let mut canvas = window.into_canvas().build().unwrap();
     let texture_creator = canvas.texture_creator();
     let mut texture = texture_creator
-        .create_texture_streaming(PixelFormatEnum::RGBA8888, 160, 144)
+        .create_texture_streaming(PixelFormatEnum::RGB565, 160, 144)
         .unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
@@ -70,13 +70,13 @@ fn main() -> Result<()> {
     let start = Instant::now();
     let mut next_frame = FRAME_TIME;
 
-    let mut update_fb = |gb_buffer: &[u32]| {
+    let mut update_fb = |gb_buffer: &[u16]| {
         texture
             .with_lock(None, |buffer: &mut [u8], _: usize| {
                 // TODO: clippy doesn't like this because it can apparently lead to undefined behaviour.
                 // Spent a few mins googling and couldn't figure out the idiomatic way to do this...
                 #[allow(clippy::cast_ptr_alignment)]
-                let buffer = unsafe { slice::from_raw_parts_mut(buffer.as_ptr() as *mut u32, 160 * 144) };
+                let buffer = unsafe { slice::from_raw_parts_mut(buffer.as_ptr() as *mut u16, 160 * 144) };
                 buffer.copy_from_slice(&gb_buffer[..]);
             })
             .unwrap();

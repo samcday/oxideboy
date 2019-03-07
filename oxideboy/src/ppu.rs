@@ -8,15 +8,11 @@ use crate::interrupt::{Interrupt, InterruptController};
 use crate::util::BIT_REVERSE_TABLE;
 use std::slice;
 
-type Color = (u32, u32, u32);
 pub const SCREEN_SIZE: usize = 160 * 144;
 const DEFAULT_PALETTE: Palette = Palette { entries: [0, 3, 3, 3] };
-const COLOR_MAPPING: [Color; 4] = [
-    (0xE0, 0xF8, 0xD0),
-    (0x88, 0xC0, 0x70),
-    (0x34, 0x68, 0x56),
-    (0x08, 0x18, 0x20),
-];
+
+// These are the default mapping we use to convert DMG monochrome palette to the framebuffer RGB565 format.
+const COLOR_MAPPING: [u16; 4] = [0xE7DA, 0x8E0E, 0x334A, 0x08c4];
 
 pub struct Ppu {
     tiles: [u8; 0x1800],     // 0x8000 - 0x97FF
@@ -56,8 +52,7 @@ pub struct Ppu {
     pub scanline_objs: [(usize, usize); 10],
     pub scanline_obj_count: usize,
     pub mode_cycles: u8,
-    pub framebuffer: [u32; SCREEN_SIZE],
-    framebuf_colors: [u32; 4],
+    pub framebuffer: [u16; SCREEN_SIZE],
 
     mode3_extra_cycles: u8,
 
@@ -112,14 +107,9 @@ pub enum Mode {
     Mode3,      // Pixel transfer (43+ cycles, depending on sprites)
 }
 
-pub enum PixelFormat {
-    RGBA,
-    ABGR,
-}
-
 impl Ppu {
     pub fn new() -> Ppu {
-        let mut ppu = Ppu {
+        Ppu {
             tiles: [0; 0x1800],
             tilemap: [0; 0x800],
             oam: [Default::default(); 40],
@@ -158,21 +148,10 @@ impl Ppu {
             scanline_obj_count: 0,
             mode_cycles: 0,
             framebuffer: [0; SCREEN_SIZE],
-            framebuf_colors: [0; 4],
 
             mode3_extra_cycles: 0,
             dirty: false,
             next_dirty: false,
-        };
-
-        ppu.set_pixel_format(PixelFormat::RGBA);
-
-        ppu
-    }
-
-    pub fn set_pixel_format(&mut self, fmt: PixelFormat) {
-        for (i, mapping) in COLOR_MAPPING.iter().enumerate() {
-            self.framebuf_colors[i] = fmt.to_u32(*mapping);
         }
     }
 
@@ -551,7 +530,7 @@ impl Ppu {
         let framebuffer_base = usize::from(self.ly) * 160;
         #[allow(clippy::needless_range_loop)]
         for i in 0..160 {
-            let pixel = self.framebuf_colors[pixels[i]];
+            let pixel = COLOR_MAPPING[pixels[i]];
             self.framebuffer[framebuffer_base + i] = pixel;
         }
     }
@@ -928,14 +907,5 @@ impl OAMEntry {
         } else {
             base_y
         }) as usize
-    }
-}
-
-impl PixelFormat {
-    fn to_u32(&self, c: Color) -> u32 {
-        match self {
-            PixelFormat::RGBA => ((c.0 << 24) | (c.1 << 16) | (c.2 << 8) | 0xFF),
-            PixelFormat::ABGR => ((0xFF << 24) | (c.2 << 16) | (c.1 << 8) | c.0),
-        }
     }
 }
