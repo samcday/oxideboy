@@ -69,6 +69,14 @@ pub struct Ppu {
     next_dirty: bool,
 }
 
+pub enum OamCorruptionType {
+    READ,
+    POP,
+    PUSH,
+    LDI,
+    LDD,
+}
+
 #[derive(Debug, Default)]
 pub struct StatInterrupts {
     lyc_enabled: bool,    // 0xFF41 STAT register bit 6
@@ -520,14 +528,80 @@ impl Ppu {
         }
     }
 
-    pub fn maybe_trash_oam(&mut self) {
+    /// Replicate the (bizarre) hardware bugs relating to OAM during PPU Mode2.
+    /// In a nutshell, if the CPU even breaths in the general direction of OAM memory locations while the PPU has the
+    /// OAM locked for Mode 2 (OAM Search), then weird memory corruption happens. There's different patterns of memory
+    /// corruption depending on which instruction the CPU was executing. Here's the weird thing though, in all cases
+    /// the CPU wasn't actually even trying to access the OAM memory. It was just doing stuff to CPU 16-bit registers
+    /// with values that fall inside of the OAM memory range (0xFE00 - 0xFE9F). Crazy.
+    pub fn maybe_trash_oam(&mut self, corruption_type: OamCorruptionType) {
         if self.mode == Mode::Mode2 && self.mode_cycles > 0 && self.mode_cycles < 20 {
             self.dirty = true;
             self.next_dirty = true;
 
-            let pos = (self.mode_cycles as usize) * 2;
-            self.oam[pos] = self.oam[pos - 2];
-            self.oam[pos + 1] = self.oam[pos - 1];
+            let oam_mem = unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) };
+            let mut pos = (self.mode_cycles as usize) * 2 * 4;
+
+            // TODO: there's a bit of duplication here for a bunch of the corruption patterns, can probably clean up
+            // and simplify this code.
+
+            match corruption_type {
+                OamCorruptionType::READ => {
+                    pos += 2;
+                    for _ in 0..6 {
+                        oam_mem[pos] = oam_mem[pos - 8];
+                        pos += 1;
+                    }
+                }
+                OamCorruptionType::POP => {
+                    pos += 2;
+                    for _ in 0..6 {
+                        oam_mem[pos] = oam_mem[pos - 8];
+                        pos += 1;
+                    }
+                    for _ in 0..8 {
+                        oam_mem[pos] = oam_mem[pos - 8];
+                        pos += 1;
+                    }
+                    pos -= 32;
+                    for _ in 0..16 {
+                        oam_mem[pos] = oam_mem[pos + 16];
+                        pos += 1;
+                    }
+                }
+                OamCorruptionType::PUSH => {
+                    pos -= 6;
+                    for _ in 0..22 {
+                        oam_mem[pos] = oam_mem[pos - 8];
+                        pos += 1;
+                    }
+                }
+                OamCorruptionType::LDI => {
+                    pos += 2;
+                    for _ in 0..6 {
+                        oam_mem[pos] = oam_mem[pos - 8];
+                        pos += 1;
+                    }
+
+                    pos -= 14;
+                    for _ in 0..11 {
+                        oam_mem[pos] = oam_mem[pos + 8];
+                        pos -= 1;
+                    }
+                }
+                OamCorruptionType::LDD => {
+                    pos += 2;
+                    for _ in 0..6 {
+                        oam_mem[pos] = oam_mem[pos - 8];
+                        pos += 1;
+                    }
+                    pos -= 9;
+                    for _ in 0..16 {
+                        oam_mem[pos] = oam_mem[pos + 8];
+                        pos -= 1;
+                    }
+                }
+            }
         }
     }
 

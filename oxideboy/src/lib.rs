@@ -80,14 +80,6 @@ impl Gameboy {
             }
         }
 
-        // TODO: I'm not really happy with these DIV magic numbers yet.
-        // I worked backwards from the mooneye boot_div tests to get these, but when running the real bootroms, I end
-        // up with different DIV numbers. When we run real bootroms, the DIV values are as follows: DMG0=1848, DMG=CF44.
-        // This means either the DIV register starts at some specific value on boot up, or the emulation of the bootrom
-        // isn't cycle accurate with the hardware. I think the latter is more likely given that the PPU emulation isn't
-        // accurate yet. In fact, when I think about it, the first Mode0 is supposed to be shorter after the LCD is
-        // enabled, which we haven't implemented yet. So that's probably why the DIV is a few cycles further along with
-        // the real bootrom.
         self.hw.timer.div = match self.hw.model {
             Model::DMG0 => 0x182C,
             Model::DMG => 0xABC8,

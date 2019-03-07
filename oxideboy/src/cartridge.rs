@@ -21,6 +21,7 @@ pub struct Cartridge {
     pub ram: Vec<u8>,
 }
 
+#[derive(Debug)]
 enum CartridgeType {
     ROMOnly,
     MBC1,

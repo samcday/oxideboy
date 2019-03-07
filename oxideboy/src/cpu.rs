@@ -4,6 +4,7 @@
 //! can be viewed and manipulated.
 //! This module contains everything needed to decode and execute instructions for this CPU.
 
+use crate::ppu::OamCorruptionType;
 use crate::GameboyHardware;
 
 /// The main Cpu struct, containing all the CPU registers and core CPU state. Many of the CPU instructions modify the
@@ -364,7 +365,7 @@ impl Cpu {
             Operand::AddressInc(rr) => {
                 let addr = self.register16_get(rr);
                 if addr >= 0xFE00 && addr <= 0xFEFF {
-                    hw.ppu.maybe_trash_oam();
+                    hw.ppu.maybe_trash_oam(OamCorruptionType::LDI);
                 }
                 self.register16_set(rr, addr.wrapping_add(1));
                 hw.mem_read(addr)
@@ -372,7 +373,7 @@ impl Cpu {
             Operand::AddressDec(rr) => {
                 let addr = self.register16_get(rr);
                 if addr >= 0xFE00 && addr <= 0xFEFF {
-                    hw.ppu.maybe_trash_oam();
+                    hw.ppu.maybe_trash_oam(OamCorruptionType::LDD);
                 }
                 self.register16_set(rr, addr.wrapping_sub(1));
                 hw.mem_read(addr)
@@ -463,7 +464,7 @@ impl Cpu {
     fn inc16(&mut self, hw: &mut GameboyHardware, reg: Register16) {
         let v = self.register16_get(reg);
         if v >= 0xFE00 && v <= 0xFEFF {
-            hw.ppu.maybe_trash_oam();
+            hw.ppu.maybe_trash_oam(OamCorruptionType::READ);
         }
         self.register16_set(reg, v.wrapping_add(1));
         hw.clock();
@@ -480,7 +481,7 @@ impl Cpu {
     fn dec16(&mut self, hw: &mut GameboyHardware, r: Register16) {
         let v = self.register16_get(r);
         if v >= 0xFE00 && v <= 0xFEFF {
-            hw.ppu.maybe_trash_oam();
+            hw.ppu.maybe_trash_oam(OamCorruptionType::READ);
         }
         self.register16_set(r, v.wrapping_sub(1));
         hw.clock();
@@ -707,7 +708,7 @@ impl Cpu {
 
     fn stack_push(&mut self, hw: &mut GameboyHardware, v: u16) {
         if self.sp >= 0xFE00 && self.sp <= 0xFEFF {
-            hw.ppu.maybe_trash_oam();
+            hw.ppu.maybe_trash_oam(OamCorruptionType::PUSH);
         }
 
         self.sp = self.sp.wrapping_sub(2);
@@ -717,7 +718,7 @@ impl Cpu {
 
     fn stack_pop(&mut self, hw: &mut GameboyHardware) -> u16 {
         if self.sp >= 0xFDFF && self.sp <= 0xFEFE {
-            hw.ppu.maybe_trash_oam();
+            hw.ppu.maybe_trash_oam(OamCorruptionType::POP);
         }
 
         let addr = self.sp;

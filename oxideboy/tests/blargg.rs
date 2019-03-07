@@ -121,5 +121,5 @@ harness_test_cases! {
     oam_bug_05:    "oam_bug/5-timing_bug",
     oam_bug_06:    "oam_bug/6-timing_no_bug",
 //  oam_bug_07:    "oam_bug/7-timing_effect",
-//  oam_bug_08:    "oam_bug/8-instr_effect",
+    oam_bug_08:    "oam_bug/8-instr_effect",
 }
