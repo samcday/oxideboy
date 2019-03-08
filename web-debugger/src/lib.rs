@@ -107,6 +107,8 @@ impl WebEmu {
     }
 
     pub fn step(&mut self) {
+        self.gb.apu.sample_queue.clear();
+
         self.gb.run_instruction();
 
         if self.gb.new_frame {
