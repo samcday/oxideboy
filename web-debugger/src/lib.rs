@@ -7,6 +7,7 @@ use cfg_if::cfg_if;
 use js_sys::{Function, Uint16Array};
 use oxideboy::*;
 use serde::{Deserialize, Serialize};
+use snap;
 use std::collections::HashSet;
 use std::slice;
 use wasm_bindgen::prelude::*;
@@ -87,6 +88,16 @@ impl WebEmu {
 
     pub fn set_breakpoints(&mut self, val: &JsValue) {
         self.pc_breakpoints = val.into_serde().unwrap();
+    }
+
+    pub fn snapshot(&self) {
+        let mut state = Vec::new();
+        self.gb.save_state(&mut state);
+        let mut encoder = snap::Encoder::new();
+
+        let mut output = vec![0; snap::max_compress_len(state.len())];
+        let size = encoder.compress(&state, &mut output).unwrap();
+        log!("Save state size={} compressed={}", state.len(), size);
     }
 
     pub fn run(&mut self, microseconds: f32) {

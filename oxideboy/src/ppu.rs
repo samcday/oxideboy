@@ -60,6 +60,7 @@ pub struct Ppu {
     pub scanline_objs: [(usize, usize); 10],
     pub scanline_obj_count: usize,
     pub mode_cycles: u8,
+
     pub framebuffer: Framebuffer,
 
     mode3_extra_cycles: u8,

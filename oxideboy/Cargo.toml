@@ -13,6 +13,11 @@ serde_bytes = "0.10"
 bencher = "0.1"
 image = "0.21"
 paste = "0.1"
+bsdiff = "0.1"
+flate2 = "1.0"
+lz4 = "1.0"
+libc = "*"
+snap = "0.2"
 
 [[bench]]
 name = "benches"
