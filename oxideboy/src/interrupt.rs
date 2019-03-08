@@ -5,7 +5,9 @@
 //! are enabled, then the CPU stops executing where it was up to, pushes the current PC register value onto the stack,
 //! and jumps to a fixed location in memory, depending on which interrupt was processed.
 
-#[derive(Default)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Default, Deserialize, Serialize)]
 pub struct InterruptController {
     pub request: u8, // 0xFF0F IF register
     pub enable: u8,  // 0xFFFF IE register

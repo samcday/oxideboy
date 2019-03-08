@@ -6,10 +6,11 @@
 
 use crate::ppu::OamCorruptionType;
 use crate::Gameboy;
+use serde::{Deserialize, Serialize};
 
 /// The main Cpu struct, containing all the CPU registers and core CPU state. Many of the CPU instructions modify the
 /// registers contained here. Anything else is modified by reading/writing from the external memory bus.
-#[derive(Default)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct Cpu {
     // CPU registers
     pub a: u8,
@@ -30,7 +31,7 @@ pub struct Cpu {
 
 /// CPU flags contained in the "F" register:
 /// Z: Zero flag, N: subtract flag, H: half carry flag, C: carry flag
-#[derive(Default)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct Flags {
     pub z: bool, // Bit 7
     pub n: bool, // Bit 6

@@ -5,6 +5,9 @@ authors = ["Sam Day <me@samcday.com>"]
 edition = "2018"
 
 [dependencies]
+bincode = "1.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.10"
 
 [dev-dependencies]
 bencher = "0.1"

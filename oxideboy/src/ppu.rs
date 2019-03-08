@@ -5,7 +5,9 @@
 //! focus on Mode 3 accuracy.
 
 use crate::interrupt::{Interrupt, InterruptController};
+use crate::memory_segment;
 use crate::util::BIT_REVERSE_TABLE;
+use serde::{Deserialize, Serialize};
 use std::slice;
 
 pub const SCREEN_SIZE: usize = 160 * 144;
@@ -14,10 +16,16 @@ const DEFAULT_PALETTE: Palette = Palette { entries: [0, 3, 3, 3] };
 // These are the default mapping we use to convert DMG monochrome palette to the framebuffer RGB565 format.
 const COLOR_MAPPING: [u16; 4] = [0xE7DA, 0x8E0E, 0x334A, 0x08c4];
 
+memory_segment! { Tiles; u8; 0x1800 }
+memory_segment! { Tilemap; u8; 0x800 }
+memory_segment! { Framebuffer; u16; SCREEN_SIZE }
+memory_segment! { OamTable; OAMEntry; 40 }
+
+#[derive(Deserialize, Serialize)]
 pub struct Ppu {
-    tiles: [u8; 0x1800],     // 0x8000 - 0x97FF
-    tilemap: [u8; 0x800],    // 0x9800 - 0x9FFF
-    pub oam: [OAMEntry; 40], // 0xFE00 - 0xFDFF
+    pub tiles: Tiles,  // 0x8000 - 0x97FF
+    tilemap: Tilemap,  // 0x9800 - 0x9FFF
+    pub oam: OamTable, // 0xFE00 - 0xFDFF
 
     pub enabled: bool,         // 0xFF40 LCDC register bit 7
     win_code_area_hi: bool,    // 0xFF40 LCDC register bit 6
@@ -52,7 +60,7 @@ pub struct Ppu {
     pub scanline_objs: [(usize, usize); 10],
     pub scanline_obj_count: usize,
     pub mode_cycles: u8,
-    pub framebuffer: [u16; SCREEN_SIZE],
+    pub framebuffer: Framebuffer,
 
     mode3_extra_cycles: u8,
 
@@ -70,7 +78,7 @@ pub enum OamCorruptionType {
     LDD,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct StatInterrupts {
     lyc_enabled: bool,    // 0xFF41 STAT register bit 6
     oam_enabled: bool,    // 0xFF41 STAT register bit 5
@@ -84,7 +92,7 @@ pub struct StatInterrupts {
 
 /// The OAMEntry struct is packed in C representation (no padding) so that we can efficiently access it as a
 /// contiguous byte array when performing DMA copies and OAM memory reads/writes from the CPU.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[repr(C)]
 pub struct OAMEntry {
     pub y: u8,
@@ -93,12 +101,12 @@ pub struct OAMEntry {
     pub attrs: u8,
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Palette {
     entries: [u8; 4],
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub enum Mode {
     Mode0(u8),  // HBlank (51 or fewer cycles, depending on how long previous Mode3 took)
     FirstMode0, // When enabling the LCD, the first line starts in a shortened Mode0 that then goes straight to Mode0.
@@ -107,12 +115,12 @@ pub enum Mode {
     Mode3,      // Pixel transfer (43+ cycles, depending on sprites)
 }
 
-impl Ppu {
-    pub fn new() -> Ppu {
+impl Default for Ppu {
+    fn default() -> Ppu {
         Ppu {
-            tiles: [0; 0x1800],
-            tilemap: [0; 0x800],
-            oam: [Default::default(); 40],
+            tiles: Default::default(),
+            tilemap: Default::default(),
+            oam: Default::default(),
 
             enabled: false,
             win_code_area_hi: false,
@@ -147,12 +155,18 @@ impl Ppu {
             scanline_objs: [(0, 0); 10],
             scanline_obj_count: 0,
             mode_cycles: 0,
-            framebuffer: [0; SCREEN_SIZE],
+            framebuffer: Default::default(),
 
             mode3_extra_cycles: 0,
             dirty: false,
             next_dirty: false,
         }
+    }
+}
+
+impl Ppu {
+    pub fn new() -> Ppu {
+        Default::default()
     }
 
     pub fn clock(&mut self, interrupts: &mut InterruptController, new_frame: &mut bool) {

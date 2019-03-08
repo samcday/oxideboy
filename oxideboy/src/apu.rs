@@ -1,6 +1,8 @@
 //! Implementation of the Gameboy APU.
 //! TODO: more overview info here.
 
+use serde::{Deserialize, Serialize};
+
 const SAMPLE_RATE: f64 = 44100.0;
 const DUTY_CYCLES: [[f32; 8]; 4] = [
     [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0],
@@ -10,7 +12,7 @@ const DUTY_CYCLES: [[f32; 8]; 4] = [
 ];
 const NOISE_DIVISORS: [u16; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 
-#[derive(Default)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct Apu {
     sample_cycles: f64,
 
@@ -30,10 +32,12 @@ pub struct Apu {
 
     wave_ram: [u8; 32],
 
+    // TODO: don't really like this here
+    #[serde(skip)]
     pub sample_queue: Vec<f32>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Channel1 {
     pub on: bool,
     left: bool,
@@ -54,7 +58,7 @@ pub struct Channel1 {
     pos: u8,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 struct Channel2 {
     on: bool,
     left: bool,
@@ -68,7 +72,7 @@ struct Channel2 {
     pos: u8,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 struct Channel3 {
     enabled: bool,
     on: bool,
@@ -83,7 +87,7 @@ struct Channel3 {
     wav_read_clocks: u16,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 struct Channel4 {
     on: bool,
     left: bool,
@@ -98,7 +102,7 @@ struct Channel4 {
     freq_timer: u16,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct VolumeEnvelope {
     pub default: u8,
     pub inc: bool,

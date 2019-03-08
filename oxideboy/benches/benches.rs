@@ -2,7 +2,43 @@
 extern crate bencher;
 
 use bencher::Bencher;
-use oxideboy::{interrupt, ppu};
+use oxideboy::{interrupt, ppu, Gameboy, Model};
+
+fn save_state(bench: &mut Bencher) {
+    let rom = include_bytes!("../tests/blargg/mem_timing.gb").to_vec();
+    let mut gb = Gameboy::new(Model::DMG0, rom);
+    gb.skip_bootrom();
+    for _ in 0..50000 {
+        gb.run_instruction();
+    }
+
+    let mut vec = Vec::new();
+    gb.save_state(&mut vec);
+
+    bench.iter(|| {
+        vec.clear();
+        gb.save_state(&mut vec);
+        assert_eq!(vec.len(), 63242);
+    });
+}
+fn load_state(bench: &mut Bencher) {
+    let rom = include_bytes!("../tests/blargg/mem_timing.gb").to_vec();
+    let mut gb = Gameboy::new(Model::DMG0, rom);
+    gb.skip_bootrom();
+    for _ in 0..50000 {
+        gb.run_instruction();
+    }
+
+    let mut vec = Vec::new();
+    gb.save_state(&mut vec);
+    gb.run_instruction();
+    let cycle_count = gb.cycle_count;
+
+    bench.iter(|| {
+        gb.load_state(&vec);
+        assert!(gb.cycle_count < cycle_count);
+    });
+}
 
 fn ppu_drawline(bench: &mut Bencher) {
     let mut ppu = ppu::Ppu::new();
@@ -33,5 +69,5 @@ fn ppu_drawline_sprites(bench: &mut Bencher) {
     });
 }
 
-benchmark_group!(benches, ppu_drawline, ppu_drawline_sprites);
+benchmark_group!(benches, save_state, load_state, ppu_drawline, ppu_drawline_sprites);
 benchmark_main!(benches);

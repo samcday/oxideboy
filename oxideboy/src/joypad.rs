@@ -3,7 +3,9 @@
 //! button would simply be a bit in a register. You would be wrong. For whatever reason, the buttons are divided into
 //! two groups of 4, and you have to set the upper bits to select which button group state will appear in the register.
 
-#[derive(Default)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Default, Deserialize, Serialize)]
 pub struct Joypad {
     btn: bool,
     dir: bool,

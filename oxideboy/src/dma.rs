@@ -1,7 +1,9 @@
 //! DMA transfers are a faster way to copy data into the OAM entry table. Doing this manually with LD commands would
 //! take at least 320 cycles. DMA takes only 160 cycles.
 
-#[derive(Default)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Default, Deserialize, Serialize)]
 pub struct DmaController {
     pub reg: u8,
     request: bool,

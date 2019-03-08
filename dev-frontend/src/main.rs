@@ -62,6 +62,7 @@ fn main() -> Result<()> {
         audio_device.resume();
     }
 
+    let mut save_state: Vec<u8> = Vec::new();
     let mut gb_buffer = [0; ppu::SCREEN_SIZE];
     let mut limit = false;
     let mut paused = false;
@@ -202,6 +203,22 @@ fn main() -> Result<()> {
                     ..
                 } => {
                     gb.joypad.select = false;
+                }
+                Event::KeyUp {
+                    keycode: Some(Keycode::F7),
+                    ..
+                } => {
+                    save_state.clear();
+                    gb.save_state(&mut save_state);
+                }
+                Event::KeyUp {
+                    keycode: Some(Keycode::F8),
+                    ..
+                } => {
+                    if !save_state.is_empty() {
+                        gb.load_state(&save_state);
+                        audio_device.clear();
+                    }
                 }
 
                 Event::KeyUp {

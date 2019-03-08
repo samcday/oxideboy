@@ -5,9 +5,13 @@
 //! amounts of ROM data that can be paged into the available space via writes to certain locations. We implement the
 //! various types of MBCs (Memory Bank Controllers) here.
 
-#[derive(Default)]
+use serde::{Deserialize, Serialize};
+use serde_bytes;
+
+#[derive(Default, Deserialize, Serialize)]
 pub struct Cartridge {
     cart_type: CartridgeType,
+    #[serde(skip)]
     pub rom: Vec<u8>,
 
     // Used by MBC1 + MBC3
@@ -18,10 +22,12 @@ pub struct Cartridge {
     ram_enabled: bool,
     ram_bank: u8,
     ram_bank_mask: u8,
+
+    #[serde(with = "serde_bytes")]
     pub ram: Vec<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 enum CartridgeType {
     ROMOnly,
     MBC1,

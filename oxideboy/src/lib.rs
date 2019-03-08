@@ -18,13 +18,19 @@ use crate::joypad::Joypad;
 use crate::ppu::Ppu;
 use crate::serial::Serial;
 use crate::timer::Timer;
+use bincode;
+use serde::{Deserialize, Serialize};
 
 pub const CYCLES_PER_MICRO: f32 = 1_048_576.0 / 1_000_000.0;
 
 static DMG0_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg0.rom");
 static DMG_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg.rom");
 
+memory_segment! { Ram; u8; 0x2000 }
+memory_segment! { HRam; u8; 0x7F }
+
 // The main entrypoint into Oxideboy. Represents an emulation session for a Gameboy.
+#[derive(Deserialize, Serialize)]
 pub struct Gameboy {
     pub model: Model,
     pub bootrom_enabled: bool,
@@ -35,18 +41,18 @@ pub struct Gameboy {
     pub cart: Cartridge,
     pub cpu: Cpu,
     pub dma: DmaController,
-    pub hram: [u8; 0x7F], // 0xFF80 - 0xFFFE
+    pub hram: HRam, // 0xFF80 - 0xFFFE
     pub interrupts: InterruptController,
     pub joypad: Joypad,
     pub ppu: Ppu,
-    pub ram: [u8; 0x2000], // 0xC000 - 0xDFFF (and echoed in 0xE000 - 0xFDFF)
+    pub ram: Ram, // 0xC000 - 0xDFFF (and echoed in 0xE000 - 0xFDFF)
     pub serial: Serial,
     pub timer: Timer,
 }
 
 /// There are different models of the Gameboy that each behave slightly differently (different HW quirks, etc).
 /// When creating a Gameboy emulation context, the desired Model must be chosen.
-#[derive(Eq, PartialEq)]
+#[derive(Eq, Deserialize, PartialEq, Serialize)]
 pub enum Model {
     DMG0,
     DMG,
@@ -66,14 +72,30 @@ impl Gameboy {
             cart,
             cpu: Cpu::new(),
             dma: Default::default(),
-            hram: [0; 0x7F],
+            hram: Default::default(),
             interrupts: InterruptController::new(),
             joypad: Default::default(),
             ppu: Ppu::new(),
-            ram: [0; 0x2000],
+            ram: Default::default(),
             serial: Serial::new(),
             timer: Timer::new(),
         }
+    }
+
+    /// Serializes the entire state of the emulator into the destination Vec<u8>. The emulator can be restored to the
+    /// state with load_state().
+    pub fn save_state(&self, dst: &mut Vec<u8>) {
+        bincode::serialize_into(dst, self).unwrap();
+    }
+
+    ///
+    pub fn load_state(&mut self, state: &Vec<u8>) {
+        // The deserialize call overwrites the whole struct with a new one from the given state. As a result the rom
+        // field of the cartridge gets reset to an empty Vec. So we grab it out first and put it into the new struct
+        // after the deserialize call.
+        let rom = std::mem::replace(&mut self.cart.rom, vec![]);
+        *self = bincode::deserialize(state).unwrap();
+        std::mem::replace(&mut self.cart.rom, rom);
     }
 
     /// Run the Gameboy for a single CPU instruction. Useful for debuggers / tests.
@@ -407,4 +429,110 @@ impl Gameboy {
         self.ppu.clock(&mut self.interrupts, &mut self.new_frame);
         self.apu.clock();
     }
+}
+
+// Until Rust gets support for const generics, we need to create "glue" types to wrap our big array types in order to
+// get Serde to correctly serialize them as byte array blobs, which is *significantly* faster than the "Seq" fallback
+// that shims like the serde-big-array crate use. Seriously, like, nearly 100x faster. Thankfully Rust is awesome and
+// lets us implement a bunch of std::ops traits, so we can still index/deref the wrapped data transparently.
+// IMPORTANT: memory segments can only be created out of primitive types or structs with repr(C) layout. We do some
+// ugly unsafe shit below to shuffle things in and out as &[u8] slices.
+#[macro_export]
+macro_rules! memory_segment {
+    ( $name:ident; $type:tt; $size:tt ) => {
+        #[repr(C)]
+        pub struct $name([$type; $size]);
+
+        impl Default for $name {
+            fn default() -> $name {
+                $name {
+                    0: [Default::default(); $size],
+                }
+            }
+        }
+
+        #[allow(unused)]
+        impl $name {
+            fn as_ptr(&self) -> *const $type {
+                self.0.as_ptr()
+            }
+
+            fn iter(&self) -> std::slice::Iter<$type> {
+                self.0.iter()
+            }
+        }
+
+        impl std::ops::Index<usize> for $name {
+            type Output = $type;
+
+            fn index(&self, index: usize) -> &$type {
+                &self.0[index]
+            }
+        }
+        impl std::ops::IndexMut<usize> for $name {
+            fn index_mut(&mut self, index: usize) -> &mut $type {
+                &mut self.0[index]
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = [$type];
+
+            fn deref(&self) -> &[$type] {
+                &self.0
+            }
+        }
+
+        impl serde::Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                let slice: &[u8] = unsafe {
+                    std::slice::from_raw_parts(self.0.as_ptr() as *const u8, std::mem::size_of::<$type>() * $size)
+                };
+                serializer.serialize_bytes(slice)
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<$name, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct ArrayVisitor;
+
+                impl<'de> serde::de::Visitor<'de> for ArrayVisitor {
+                    type Value = $name;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        formatter.write_str(&format!("a byte array of {} elements", $size))
+                    }
+
+                    fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        let expected_size = std::mem::size_of::<$type>() * $size;
+
+                        if value.len() != expected_size {
+                            return Err(E::custom(format!(
+                                "expected byte array of {:x}, but this is {:x}",
+                                $size,
+                                value.len()
+                            )));
+                        }
+                        let mut segment: $name = Default::default();
+                        unsafe {
+                            let dst = segment.0.as_mut_ptr() as *mut u8;
+                            std::ptr::copy(value.as_ptr(), dst, expected_size);
+                        }
+                        Ok(segment)
+                    }
+                }
+
+                deserializer.deserialize_bytes(ArrayVisitor)
+            }
+        }
+    };
 }

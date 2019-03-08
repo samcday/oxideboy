@@ -2,8 +2,9 @@
 //! http://gbdev.gg8.se/wiki/articles/Serial_Data_Transfer_(Link_Cable)
 
 use crate::interrupt::{Interrupt, InterruptController};
+use serde::{Deserialize, Serialize};
 
-#[derive(Default)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct Serial {
     pub serial_out: Option<u8>, // When serial port is active, SB register will get shifted to here to be read out.
     serial_in: Option<u8>,      // When serial port is active, this incoming value will be read into the SB register.

@@ -1,8 +1,9 @@
 //! Implementation of the timer unit in the Gameboy LR35902 chip.
 
 use crate::interrupt::{Interrupt, InterruptController};
+use serde::{Deserialize, Serialize};
 
-#[derive(Default)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct Timer {
     enabled: bool,       // Controls whether the timer unit is running.
     freq: u16,           // Expressed as a divisor of the DIV register.
