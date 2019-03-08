@@ -18,7 +18,7 @@ Well let's be real, I'm writing this because I want to. But here's some post-rat
 ## Roadmap
 
 - [x] Initial implementation of CPU, PPU, APU, serial, interrupts, etc.
-- [ ] Save states
+- [x] Save states
 - [ ] Web-based debugger
 - [x] Passing all blargg cpu/memory/timing tests.
 - [ ] Passing all blargg dmg_sound tests.
