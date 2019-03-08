@@ -64,8 +64,8 @@ impl WebEmu {
         let mut gb = Gameboy::new(Model::DMG0, rom.to_vec());
         gb.skip_bootrom();
 
-        let rom_title = String::from(gb.hw.cart.rom_title());
-        let rom_hash = format!("{:x}", md5::compute(&gb.hw.cart.rom));
+        let rom_title = String::from(gb.cart.rom_title());
+        let rom_hash = format!("{:x}", md5::compute(&gb.cart.rom));
 
         WebEmu {
             gb,
@@ -90,15 +90,14 @@ impl WebEmu {
     }
 
     pub fn run(&mut self, microseconds: f32) {
-        self.gb.hw.cycle_count = 0;
+        self.gb.cycle_count = 0;
 
-        let desired_cycles = (CYCLES_PER_MICRO * microseconds) as u32;
+        let desired_cycles = (CYCLES_PER_MICRO * microseconds) as u64;
 
-        while self.gb.hw.cycle_count < desired_cycles {
+        while self.gb.cycle_count < desired_cycles {
             self.step();
 
-            let breakpoint =
-                self.pc_breakpoints.contains(&self.gb.cpu.pc) || self.gb.hw.mem_get(self.gb.cpu.pc) == 0x40;
+            let breakpoint = self.pc_breakpoints.contains(&self.gb.cpu.pc) || self.gb.mem_get(self.gb.cpu.pc) == 0x40;
 
             if breakpoint {
                 let _ = self.breakpoint_cb.call0(&JsValue::NULL);
@@ -110,10 +109,10 @@ impl WebEmu {
     pub fn step(&mut self) {
         self.gb.run_instruction();
 
-        if self.gb.hw.new_frame {
+        if self.gb.new_frame {
             let buf = unsafe {
                 Uint16Array::view(slice::from_raw_parts(
-                    (self.gb.hw.ppu.framebuffer).as_ptr() as *const u16,
+                    (self.gb.ppu.framebuffer).as_ptr() as *const u16,
                     160 * 144,
                 ))
             };
@@ -123,7 +122,7 @@ impl WebEmu {
     }
 
     pub fn step_frame(&mut self) {
-        while !self.gb.hw.new_frame {
+        while !self.gb.new_frame {
             self.step();
         }
     }
@@ -137,7 +136,7 @@ impl WebEmu {
         while instrs.len() < n {
             let inst_loc = loc;
             let inst = cpu::decode_instruction(|| {
-                let b = self.gb.hw.mem_get(loc);
+                let b = self.gb.mem_get(loc);
                 loc = loc.wrapping_add(1);
                 b
             });
@@ -152,11 +151,11 @@ impl WebEmu {
     }
 
     pub fn mem_read(&self, addr: u16) -> u8 {
-        self.gb.hw.mem_get(addr)
+        self.gb.mem_get(addr)
     }
 
     pub fn mem_write(&mut self, addr: u16, v: u8) {
-        self.gb.hw.mem_set(addr, v)
+        self.gb.mem_set(addr, v)
     }
 
     pub fn cpu_state(&self) -> JsValue {
@@ -194,14 +193,14 @@ impl WebEmu {
 
     pub fn set_joypad_state(&mut self, key: &str, pressed: bool) {
         match key {
-            "ArrowUp" | "Up" => self.gb.hw.joypad.up = pressed,
-            "ArrowDown" | "Down" => self.gb.hw.joypad.down = pressed,
-            "ArrowLeft" | "Left" => self.gb.hw.joypad.left = pressed,
-            "ArrowRight" | "Right" => self.gb.hw.joypad.right = pressed,
-            "Enter" => self.gb.hw.joypad.start = pressed,
-            "Shift" => self.gb.hw.joypad.select = pressed,
-            "a" => self.gb.hw.joypad.a = pressed,
-            "s" => self.gb.hw.joypad.b = pressed,
+            "ArrowUp" | "Up" => self.gb.joypad.up = pressed,
+            "ArrowDown" | "Down" => self.gb.joypad.down = pressed,
+            "ArrowLeft" | "Left" => self.gb.joypad.left = pressed,
+            "ArrowRight" | "Right" => self.gb.joypad.right = pressed,
+            "Enter" => self.gb.joypad.start = pressed,
+            "Shift" => self.gb.joypad.select = pressed,
+            "a" => self.gb.joypad.a = pressed,
+            "s" => self.gb.joypad.b = pressed,
             _ => {}
         }
     }

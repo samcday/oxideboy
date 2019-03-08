@@ -5,7 +5,7 @@
 //! This module contains everything needed to decode and execute instructions for this CPU.
 
 use crate::ppu::OamCorruptionType;
-use crate::GameboyHardware;
+use crate::Gameboy;
 
 /// The main Cpu struct, containing all the CPU registers and core CPU state. Many of the CPU instructions modify the
 /// registers contained here. Anything else is modified by reading/writing from the external memory bus.
@@ -148,149 +148,7 @@ enum BitwiseOp {
 
 impl Cpu {
     pub fn new() -> Cpu {
-        Cpu { ..Default::default() }
-    }
-
-    /// Runs the CPU for a single fetch-decode-execute step. The actual number of cycles this will take depends on which
-    /// instruction is executed.
-    pub fn step(&mut self, hw: &mut GameboyHardware) {
-        // If the CPU is currently halted, we need to pump a clock cycle of the other hardware, so that if there's a new
-        // interrupt available, we can wake up from HALT and continue on.
-        if self.halted {
-            hw.clock();
-        }
-
-        // Are there any pending interrupts to service?
-        if self.process_interrupts(hw) {
-            // We processed an interrupt. We return now before decoding and executing the next instruction.
-            // This gives debuggers a chance to examine the new PC location and handle any potential breakpoints.
-            return;
-        }
-
-        // Apply deferred change to IME register.
-        if self.ime_defer {
-            self.ime = true;
-            self.ime_defer = false;
-        }
-
-        if self.halted {
-            // CPU is halted and there wasn't any pending interrupts to wake us up, we're done for now.
-            return;
-        }
-
-        // Decode the next instruction from memory location pointed to by PC.
-        let instruction = decode_instruction(|| {
-            let v = hw.mem_read(self.pc);
-            self.pc = self.pc.wrapping_add(1);
-            v
-        });
-
-        match instruction {
-            ADC(o) => self.add(hw, o, true),
-            ADD(o) => self.add(hw, o, false),
-            ADD16(rr) => self.add16(hw, rr),
-            ADD_SP_r8(r8) => self.add_sp_r8(hw, r8),
-            AND(o) => self.bitwise(hw, BitwiseOp::AND, o),
-            BIT(b, o) => self.bit(hw, b, o),
-            CALL(cc, addr) => self.call(hw, cc, addr),
-            CCF => self.ccf(),
-            CP(o) => self.sub(hw, o, false, false),
-            CPL => self.cpl(),
-            DAA => self.daa(),
-            DEC(o) => self.dec(hw, o),
-            DEC16(rr) => self.dec16(hw, rr),
-            DI => self.set_ime(false),
-            EI => self.set_ime(true),
-            HALT => self.halt(),
-            INC(o) => self.inc(hw, o),
-            INC16(rr) => self.inc16(hw, rr),
-            JP(cc, o) => self.jp(hw, cc, o),
-            JR(cc, r8) => self.jr(hw, cc, r8),
-            LD(lhs, rhs) => self.ld(hw, lhs, rhs),
-            LD16(lhs @ Operand16::Register(SP), rhs @ Operand16::Register(HL)) => self.ld16(hw, lhs, rhs, true),
-            LD16(lhs, rhs) => self.ld16(hw, lhs, rhs, false),
-            LD_HL_SP(d) => self.ld_hl_sp(hw, d),
-            NOP => {}
-            OR(o) => self.bitwise(hw, BitwiseOp::OR, o),
-            POP(rr) => self.pop(hw, rr),
-            PUSH(rr) => self.push(hw, rr),
-            RES(b, o) => self.setbit(hw, b, o, false),
-            RET(cc) => self.ret(hw, cc, false),
-            RETI => self.ret(hw, None, true),
-            RL(o) => self.rl(hw, o, true, true),
-            RLA => self.rl(hw, Operand::Register(A), false, true),
-            RLC(o) => self.rlc(hw, o, true),
-            RLCA => self.rlc(hw, Operand::Register(A), false),
-            RR(o) => self.rr(hw, o, true),
-            RRA => self.rr(hw, Operand::Register(A), false),
-            RRC(o) => self.rrc(hw, o, true),
-            RRCA => self.rrc(hw, Operand::Register(A), false),
-            RST(vec) => self.rst(hw, vec),
-            SBC(o) => self.sub(hw, o, true, true),
-            SCF => self.scf(),
-            SET(b, o) => self.setbit(hw, b, o, true),
-            SLA(o) => self.rl(hw, o, true, false),
-            SRA(o) => self.shift_right(hw, o, true),
-            SRL(o) => self.shift_right(hw, o, false),
-            STOP => self.stop(),
-            SUB(o) => self.sub(hw, o, false, true),
-            SWAP(o) => self.swap(hw, o),
-            XOR(o) => self.bitwise(hw, BitwiseOp::XOR, o),
-            Invalid(_) => panic!("Unhandled instruction: {:?}", instruction),
-        }
-    }
-
-    /// Process any pending interrupts. Called before the CPU fetches the next instruction to execute.
-    /// Returns true if an interrupt was successfully serviced.
-    fn process_interrupts(&mut self, hw: &mut GameboyHardware) -> bool {
-        // We can bail quickly if there's no interrupts to process.
-        if !hw.interrupts.pending {
-            return false;
-        }
-
-        let interrupt = hw.interrupts.next_interrupt();
-
-        // If there are interrupts to process, we clear HALT state, even if IME is disabled.
-        self.halted = false;
-
-        if !self.ime {
-            // If IME isn't enabled though, we don't actually process any interrupts.
-            return false;
-        }
-
-        // Interrupt handling needs 3 internal cycles to do interrupt-y stuff.
-        hw.clock();
-        hw.clock();
-        hw.clock();
-
-        // Here's an interesting quirk. If the stack pointer was set to 0000 or 0001, then the push we just did
-        // above would have overwritten IE. If the new IE value no longer matches the interrupt we were processing,
-        // then we cancel that interrupt and set PC to 0. We then try and find another interrupt.
-        // If there isn't one, we end up running code from 0000. Crazy.
-        let pc = self.pc;
-        let mut sp = self.sp;
-        sp = sp.wrapping_sub(1);
-        hw.mem_write(sp, ((pc & 0xFF00) >> 8) as u8);
-        // This is where we capture what IE is after pushing the upper byte. Pushing the lower byte might
-        // also overwrite IE, but in that case we ignore that occurring.
-        let still_pending = hw.interrupts.pending && hw.interrupts.next_interrupt() == interrupt;
-        sp = sp.wrapping_sub(1);
-        hw.mem_write(sp, pc as u8);
-        self.sp = self.sp.wrapping_sub(2);
-
-        if !still_pending {
-            self.pc = 0;
-            // Okay so this interrupt didn't go so good. Let's see if there's another one.
-            let res = self.process_interrupts(hw);
-            // Regardless of what happens in the next try, IME needs to be disabled.
-            self.ime = false;
-            return res;
-        }
-
-        self.pc = interrupt.handler_addr();
-        hw.interrupts.clear(interrupt);
-        self.ime = false;
-        true
+        Default::default()
     }
 
     /// Returns the current value of an 8-bit CPU register.
@@ -352,455 +210,601 @@ impl Cpu {
         *hi = ((v & 0xFF00) >> 8) as u8;
         *lo = v as u8;
     }
+}
 
+impl Operand {
     /// Resolves this Operand into a concrete 8-bit value.
-    pub fn operand_get(&mut self, hw: &mut GameboyHardware, o: Operand) -> u8 {
-        match o {
-            Operand::Register(r) => self.register_get(r),
+    pub fn get(self, gb: &mut Gameboy) -> u8 {
+        match self {
+            Operand::Register(r) => gb.cpu.register_get(r),
             Operand::Immediate(d) => d,
             Operand::Address(rr) => {
-                let addr = self.register16_get(rr);
-                hw.mem_read(addr)
+                let addr = gb.cpu.register16_get(rr);
+                gb.mem_read(addr)
             }
             Operand::AddressInc(rr) => {
-                let addr = self.register16_get(rr);
+                let addr = gb.cpu.register16_get(rr);
                 if addr >= 0xFE00 && addr <= 0xFEFF {
-                    hw.ppu.maybe_trash_oam(OamCorruptionType::LDI);
+                    gb.ppu.maybe_trash_oam(OamCorruptionType::LDI);
                 }
-                self.register16_set(rr, addr.wrapping_add(1));
-                hw.mem_read(addr)
+                gb.cpu.register16_set(rr, addr.wrapping_add(1));
+                gb.mem_read(addr)
             }
             Operand::AddressDec(rr) => {
-                let addr = self.register16_get(rr);
+                let addr = gb.cpu.register16_get(rr);
                 if addr >= 0xFE00 && addr <= 0xFEFF {
-                    hw.ppu.maybe_trash_oam(OamCorruptionType::LDD);
+                    gb.ppu.maybe_trash_oam(OamCorruptionType::LDD);
                 }
-                self.register16_set(rr, addr.wrapping_sub(1));
-                hw.mem_read(addr)
+                gb.cpu.register16_set(rr, addr.wrapping_sub(1));
+                gb.mem_read(addr)
             }
-            Operand::ImmediateAddress(addr) => hw.mem_read(addr),
-            Operand::ImmediateAddressHigh(addr) => hw.mem_read(0xFF00 + u16::from(addr)),
+            Operand::ImmediateAddress(addr) => gb.mem_read(addr),
+            Operand::ImmediateAddressHigh(addr) => gb.mem_read(0xFF00 + u16::from(addr)),
             Operand::AddressHigh(r) => {
-                let addr = 0xFF00 + u16::from(self.register_get(r));
-                hw.mem_read(addr)
+                let addr = 0xFF00 + u16::from(gb.cpu.register_get(r));
+                gb.mem_read(addr)
             }
         }
     }
 
     /// Saves provided 8-bit value into Operand destination.
-    pub fn operand_set(&mut self, hw: &mut GameboyHardware, o: Operand, v: u8) {
-        match o {
-            Operand::Register(r) => self.register_set(r, v),
+    pub fn set(self, gb: &mut Gameboy, v: u8) {
+        match self {
+            Operand::Register(r) => gb.cpu.register_set(r, v),
             Operand::Immediate(_) => panic!("Attempted to write to immediate operand"),
             Operand::Address(rr) => {
-                let addr = self.register16_get(rr);
-                hw.mem_write(addr, v)
+                let addr = gb.cpu.register16_get(rr);
+                gb.mem_write(addr, v)
             }
             Operand::AddressInc(rr) => {
-                let addr = self.register16_get(rr);
-                self.register16_set(rr, addr.wrapping_add(1));
-                hw.mem_write(addr, v)
+                let addr = gb.cpu.register16_get(rr);
+                gb.cpu.register16_set(rr, addr.wrapping_add(1));
+                gb.mem_write(addr, v)
             }
             Operand::AddressDec(rr) => {
-                let addr = self.register16_get(rr);
-                self.register16_set(rr, addr.wrapping_sub(1));
-                hw.mem_write(addr, v)
+                let addr = gb.cpu.register16_get(rr);
+                gb.cpu.register16_set(rr, addr.wrapping_sub(1));
+                gb.mem_write(addr, v)
             }
-            Operand::ImmediateAddress(addr) => hw.mem_write(addr, v),
-            Operand::ImmediateAddressHigh(addr) => hw.mem_write(0xFF00 + u16::from(addr), v),
+            Operand::ImmediateAddress(addr) => gb.mem_write(addr, v),
+            Operand::ImmediateAddressHigh(addr) => gb.mem_write(0xFF00 + u16::from(addr), v),
             Operand::AddressHigh(r) => {
-                let addr = self.register_get(r);
-                hw.mem_write(0xFF00 + u16::from(addr), v)
+                let addr = gb.cpu.register_get(r);
+                gb.mem_write(0xFF00 + u16::from(addr), v)
             }
         }
     }
+}
 
+impl Operand16 {
     /// Resolves the value for a given 16-bit instruction operand.
-    fn operand16_get(&mut self, hw: &mut GameboyHardware, o: Operand16) -> u16 {
-        match o {
-            Operand16::Register(r) => self.register16_get(r),
+    fn get(self, gb: &mut Gameboy) -> u16 {
+        match self {
+            Operand16::Register(r) => gb.cpu.register16_get(r),
             Operand16::Immediate(d) => d,
-            Operand16::ImmediateAddress(addr) => hw.mem_read16(addr),
+            Operand16::ImmediateAddress(addr) => gb.mem_read16(addr),
         }
     }
 
     /// Writes a new value to the target of a 16-bit instruction operand.
-    fn operand16_set(&mut self, hw: &mut GameboyHardware, o: Operand16, v: u16) {
-        match o {
-            Operand16::Register(r) => self.register16_set(r, v),
+    fn set(self, gb: &mut Gameboy, v: u16) {
+        match self {
+            Operand16::Register(r) => gb.cpu.register16_set(r, v),
             Operand16::Immediate(_) => panic!("Attempted to write to immediate operand"),
-            Operand16::ImmediateAddress(addr) => hw.mem_write16(addr, v),
+            Operand16::ImmediateAddress(addr) => gb.mem_write16(addr, v),
         }
     }
+}
 
-    fn halt(&mut self) {
-        // TODO: pretty sure I need to check interrupt states here.
-        self.halted = true;
+/// Runs the CPU for a single fetch-decode-execute step. The actual number of cycles this will take depends on which
+/// instruction is executed.
+pub fn step(gb: &mut Gameboy) {
+    // If the CPU is currently halted, we need to pump a clock cycle of the other hardware, so that if there's a new
+    // interrupt available, we can wake up from HALT and continue on.
+    if gb.cpu.halted {
+        gb.clock();
     }
 
-    fn stop(&mut self) {
-        // TODO: this should be more than a noop.
-        self.pc = self.pc.wrapping_add(1);
+    // Are there any pending interrupts to service?
+    if process_interrupts(gb) {
+        // We processed an interrupt. We return now before decoding and executing the next instruction.
+        // This gives debuggers a chance to examine the new PC location and handle any potential breakpoints.
+        return;
     }
 
-    pub fn set_ime(&mut self, v: bool) {
-        if v {
-            // Enabling interrupts happens on the next cycle ...
-            self.ime_defer = true;
-        } else {
-            // ... However, disabling interrupts is immediate.
-            self.ime = false;
-        }
+    // Apply deferred change to IME register.
+    if gb.cpu.ime_defer {
+        gb.cpu.ime = true;
+        gb.cpu.ime_defer = false;
     }
 
-    fn inc(&mut self, hw: &mut GameboyHardware, o: Operand) {
-        let v = self.operand_get(hw, o).wrapping_add(1);
-        self.f.z = v == 0;
-        self.f.n = false;
-        self.f.h = v.trailing_zeros() >= 4;
-        self.operand_set(hw, o, v);
+    if gb.cpu.halted {
+        // CPU is halted and there wasn't any pending interrupts to wake us up, we're done for now.
+        return;
     }
 
-    fn inc16(&mut self, hw: &mut GameboyHardware, reg: Register16) {
-        let v = self.register16_get(reg);
-        if v >= 0xFE00 && v <= 0xFEFF {
-            hw.ppu.maybe_trash_oam(OamCorruptionType::READ);
-        }
-        self.register16_set(reg, v.wrapping_add(1));
-        hw.clock();
-    }
-
-    fn dec(&mut self, hw: &mut GameboyHardware, o: Operand) {
-        let v = self.operand_get(hw, o).wrapping_sub(1);
-        self.f.z = v == 0;
-        self.f.n = true;
-        self.f.h = v & 0x0F == 0x0F;
-        self.operand_set(hw, o, v);
-    }
-
-    fn dec16(&mut self, hw: &mut GameboyHardware, r: Register16) {
-        let v = self.register16_get(r);
-        if v >= 0xFE00 && v <= 0xFEFF {
-            hw.ppu.maybe_trash_oam(OamCorruptionType::READ);
-        }
-        self.register16_set(r, v.wrapping_sub(1));
-        hw.clock();
-    }
-
-    fn add(&mut self, hw: &mut GameboyHardware, o: Operand, carry: bool) {
-        let carry = if carry && self.f.c { 1 } else { 0 };
-
-        let old = self.a;
-        let v = self.operand_get(hw, o);
-        let new = old.wrapping_add(v).wrapping_add(carry);
-        self.a = new;
-        self.f.z = new == 0;
-        self.f.n = false;
-        self.f.h = (((old & 0xF) + (v & 0xF)) + carry) & 0x10 == 0x10;
-        self.f.c = u16::from(old) + u16::from(v) + u16::from(carry) > 0xFF;
-    }
-
-    fn add16(&mut self, hw: &mut GameboyHardware, r: Register16) {
-        let hl = self.register16_get(HL);
-        let v = self.register16_get(r);
-        let (new_hl, overflow) = hl.overflowing_add(v);
-        self.register16_set(HL, new_hl);
-
-        hw.clock();
-
-        self.f.n = false;
-        self.f.h = ((hl & 0xFFF) + (v & 0xFFF)) & 0x1000 > 0;
-        self.f.c = overflow;
-    }
-
-    fn add_sp_r8(&mut self, hw: &mut GameboyHardware, d: i8) {
-        let d = i16::from(d) as u16;
-        let sp = self.sp;
-
-        self.sp = sp.wrapping_add(d as i16 as u16);
-
-        hw.clock();
-        hw.clock();
-
-        self.f.z = false;
-        self.f.n = false;
-        self.f.h = ((sp & 0xF) + (d & 0xF)) & 0x10 > 0;
-        self.f.c = ((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0;
-    }
-
-    fn sub(&mut self, hw: &mut GameboyHardware, o: Operand, carry: bool, store: bool) {
-        let carry = if carry && self.f.c { 1 } else { 0 };
-
-        let a = self.a;
-        let v = self.operand_get(hw, o);
-        let new_a = a.wrapping_sub(v).wrapping_sub(carry);
-        if store {
-            self.a = new_a;
-        }
-
-        self.f.z = new_a == 0;
-        self.f.n = true;
-        self.f.h = u16::from(a & 0xF) < u16::from(v & 0xF) + u16::from(carry);
-        self.f.c = u16::from(a) < u16::from(v) + u16::from(carry);
-    }
-
-    fn ld(&mut self, hw: &mut GameboyHardware, lhs: Operand, rhs: Operand) {
-        let v = self.operand_get(hw, rhs);
-        self.operand_set(hw, lhs, v);
-    }
-
-    fn ld16(&mut self, hw: &mut GameboyHardware, lhs: Operand16, rhs: Operand16, extra_clock: bool) {
-        let v = self.operand16_get(hw, rhs);
-        self.operand16_set(hw, lhs, v);
-
-        // In the specific case of loading a 16bit reg into another 16bit reg, this consumes another CPU cycle. I don't
-        // really understand why, since in every other case the cost of reading/writing a 16bit reg appears to be free.
-        if extra_clock {
-            hw.clock();
-        }
-    }
-
-    fn ld_hl_sp(&mut self, hw: &mut GameboyHardware, d: i8) {
-        let sp = self.sp;
-        let d = i16::from(d) as u16;
-        let v = sp.wrapping_add(d);
-        self.register16_set(HL, v);
-        self.f.reset();
-        self.f.h = ((sp & 0xF) + (d & 0xF)) & 0x10 > 0;
-        self.f.c = ((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0;
-        hw.clock();
-    }
-
-    // TODO: clean this dumpster fire up.
-    fn daa(&mut self) {
-        let mut carry = false;
-
-        if !self.f.n {
-            if self.f.c || self.a > 0x99 {
-                self.a = self.a.wrapping_add(0x60);
-                carry = true;
-            }
-            if self.f.h || (self.a & 0xF) > 9 {
-                self.a = self.a.wrapping_add(0x06);
-            }
-        } else if self.f.c {
-            carry = true;
-            self.a = self.a.wrapping_add(if self.f.h { 0x9A } else { 0xA0 });
-        } else if self.f.h {
-            self.a = self.a.wrapping_add(0xFA);
-        }
-
-        self.f.z = self.a == 0;
-        self.f.h = false;
-        self.f.c = carry;
-    }
-
-    fn cpl(&mut self) {
-        self.a = !self.a;
-        self.f.n = true;
-        self.f.h = true;
-    }
-
-    fn ccf(&mut self) {
-        self.f.n = false;
-        self.f.h = false;
-        self.f.c = !self.f.c;
-    }
-
-    fn scf(&mut self) {
-        self.f.n = false;
-        self.f.h = false;
-        self.f.c = true;
-    }
-
-    fn bitwise(&mut self, hw: &mut GameboyHardware, op: BitwiseOp, o: Operand) {
-        let a = self.a;
-        let v = self.operand_get(hw, o);
-        let mut hc = false;
-        self.a = match op {
-            BitwiseOp::AND => {
-                hc = true;
-                a & v
-            }
-            BitwiseOp::OR => a | v,
-            BitwiseOp::XOR => a ^ v,
-        };
-
-        self.f.reset();
-        self.f.z = self.a == 0;
-        self.f.h = hc;
-    }
-
-    fn bit(&mut self, hw: &mut GameboyHardware, b: u8, o: Operand) {
-        let v = self.operand_get(hw, o) & (1 << b);
-        self.f.z = v == 0;
-        self.f.n = false;
-        self.f.h = true;
-    }
-
-    fn setbit(&mut self, hw: &mut GameboyHardware, b: u8, o: Operand, on: bool) {
-        let v = self.operand_get(hw, o);
-        self.operand_set(hw, o, if on { v | 1 << b } else { v & !(1 << b) });
-    }
-
-    fn rl(&mut self, hw: &mut GameboyHardware, o: Operand, set_zero: bool, preserve_lsb: bool) {
-        let v = self.operand_get(hw, o);
-        let lsb = if preserve_lsb && self.f.c { 1 } else { 0 };
-        let carry = v & 0x80 > 0;
-        let v = v << 1 | lsb;
-        self.operand_set(hw, o, v);
-        self.f.reset();
-        self.f.z = set_zero && v == 0;
-        self.f.c = carry;
-    }
-
-    fn rlc(&mut self, hw: &mut GameboyHardware, o: Operand, extended: bool) {
-        let v = self.operand_get(hw, o);
-        let carry = v & 0x80 > 0;
-        let lsb = if carry { 1 } else { 0 };
-        let v = v << 1 | lsb;
-        self.operand_set(hw, o, v);
-        self.f.reset();
-        self.f.z = extended && v == 0;
-        self.f.c = carry;
-    }
-
-    fn rr(&mut self, hw: &mut GameboyHardware, o: Operand, extended: bool) {
-        let v = self.operand_get(hw, o);
-        let msb = if self.f.c { 0x80 } else { 0 };
-        let carry = v & 0x1 > 0;
-        let v = v >> 1 | msb;
-        self.operand_set(hw, o, v);
-        self.f.reset();
-        self.f.z = extended && v == 0;
-        self.f.c = carry;
-    }
-
-    fn rrc(&mut self, hw: &mut GameboyHardware, o: Operand, extended: bool) {
-        let v = self.operand_get(hw, o);
-        let carry = v & 0x1 > 0;
-        let msb = if carry { 0x80 } else { 0 };
-        let v = v >> 1 | msb;
-        self.operand_set(hw, o, v);
-        self.f.reset();
-        self.f.z = extended && v == 0;
-        self.f.c = carry;
-    }
-
-    fn shift_right(&mut self, hw: &mut GameboyHardware, o: Operand, preserve_msb: bool) {
-        let v = self.operand_get(hw, o);
-        let carry = v & 0x01 > 0;
-        let preserve = if preserve_msb { v & 0x80 } else { 0 };
-        let v = v >> 1 | preserve;
-        self.operand_set(hw, o, v);
-        self.f.reset();
-        self.f.z = v == 0;
-        self.f.c = carry;
-    }
-
-    fn swap(&mut self, hw: &mut GameboyHardware, o: Operand) {
-        let v = self.operand_get(hw, o);
-        let v = ((v & 0xF) << 4) | ((v & 0xF0) >> 4);
-        self.operand_set(hw, o, v);
-        self.f.reset();
-        self.f.z = v == 0;
-    }
-
-    fn stack_push(&mut self, hw: &mut GameboyHardware, v: u16) {
-        if self.sp >= 0xFE00 && self.sp <= 0xFEFF {
-            hw.ppu.maybe_trash_oam(OamCorruptionType::PUSH);
-        }
-
-        self.sp = self.sp.wrapping_sub(2);
-        let sp = self.sp;
-        hw.mem_write16(sp, v);
-    }
-
-    fn stack_pop(&mut self, hw: &mut GameboyHardware) -> u16 {
-        if self.sp >= 0xFDFF && self.sp <= 0xFEFE {
-            hw.ppu.maybe_trash_oam(OamCorruptionType::POP);
-        }
-
-        let addr = self.sp;
-        let v = hw.mem_read16(addr);
-        self.sp = self.sp.wrapping_add(2);
-
+    // Decode the next instruction from memory location pointed to by PC.
+    let instruction = decode_instruction(|| {
+        let v = gb.mem_read(gb.cpu.pc);
+        gb.cpu.pc = gb.cpu.pc.wrapping_add(1);
         v
+    });
+
+    match instruction {
+        ADC(o) => add(gb, o, true),
+        ADD(o) => add(gb, o, false),
+        ADD16(rr) => add16(gb, rr),
+        ADD_SP_r8(r8) => add_sp_r8(gb, r8),
+        AND(o) => bitwise(gb, BitwiseOp::AND, o),
+        BIT(b, o) => bit(gb, b, o),
+        CALL(cc, addr) => call(gb, cc, addr),
+        CCF => ccf(gb),
+        CP(o) => sub(gb, o, false, false),
+        CPL => cpl(gb),
+        DAA => daa(gb),
+        DEC(o) => dec(gb, o),
+        DEC16(rr) => dec16(gb, rr),
+        DI => set_ime(gb, false),
+        EI => set_ime(gb, true),
+        HALT => halt(gb),
+        INC(o) => inc(gb, o),
+        INC16(rr) => inc16(gb, rr),
+        JP(cc, o) => jp(gb, cc, o),
+        JR(cc, r8) => jr(gb, cc, r8),
+        LD(lhs, rhs) => ld(gb, lhs, rhs),
+        LD16(lhs @ Operand16::Register(SP), rhs @ Operand16::Register(HL)) => ld16(gb, lhs, rhs, true),
+        LD16(lhs, rhs) => ld16(gb, lhs, rhs, false),
+        LD_HL_SP(d) => ld_hl_sp(gb, d),
+        NOP => {}
+        OR(o) => bitwise(gb, BitwiseOp::OR, o),
+        POP(rr) => pop(gb, rr),
+        PUSH(rr) => push(gb, rr),
+        RES(b, o) => setbit(gb, b, o, false),
+        RET(cc) => ret(gb, cc, false),
+        RETI => ret(gb, None, true),
+        RL(o) => rl(gb, o, true, true),
+        RLA => rl(gb, Operand::Register(A), false, true),
+        RLC(o) => rlc(gb, o, true),
+        RLCA => rlc(gb, Operand::Register(A), false),
+        RR(o) => rr(gb, o, true),
+        RRA => rr(gb, Operand::Register(A), false),
+        RRC(o) => rrc(gb, o, true),
+        RRCA => rrc(gb, Operand::Register(A), false),
+        RST(vec) => rst(gb, vec),
+        SBC(o) => sub(gb, o, true, true),
+        SCF => scf(gb),
+        SET(b, o) => setbit(gb, b, o, true),
+        SLA(o) => rl(gb, o, true, false),
+        SRA(o) => shift_right(gb, o, true),
+        SRL(o) => shift_right(gb, o, false),
+        STOP => stop(gb),
+        SUB(o) => sub(gb, o, false, true),
+        SWAP(o) => swap(gb, o),
+        XOR(o) => bitwise(gb, BitwiseOp::XOR, o),
+        Invalid(_) => panic!("Unhandled instruction: {:?}", instruction),
+    }
+}
+
+/// Process any pending interrupts. Called before the CPU fetches the next instruction to execute.
+/// Returns true if an interrupt was successfully serviced.
+fn process_interrupts(gb: &mut Gameboy) -> bool {
+    // We can bail quickly if there's no interrupts to process.
+    if !gb.interrupts.pending {
+        return false;
     }
 
-    fn push(&mut self, hw: &mut GameboyHardware, r: Register16) {
-        let v = self.register16_get(r);
-        hw.clock();
-        self.stack_push(hw, v);
+    let interrupt = gb.interrupts.next_interrupt();
+
+    // If there are interrupts to process, we clear HALT state, even if IME is disabled.
+    gb.cpu.halted = false;
+
+    if !gb.cpu.ime {
+        // If IME isn't enabled though, we don't actually process any interrupts.
+        return false;
     }
 
-    fn pop(&mut self, hw: &mut GameboyHardware, r: Register16) {
-        let mut v = self.stack_pop(hw);
-        if let AF = r {
-            // Reset bits 0-3 in F.
-            v &= 0xFFF0;
+    // Interrupt handling needs 3 internal cycles to do interrupt-y stuff.
+    gb.clock();
+    gb.clock();
+    gb.clock();
+
+    // Here's an interesting quirk. If the stack pointer was set to 0000 or 0001, then the push we just did
+    // above would have overwritten IE. If the new IE value no longer matches the interrupt we were processing,
+    // then we cancel that interrupt and set PC to 0. We then try and find another interrupt.
+    // If there isn't one, we end up running code from 0000. Crazy.
+    let pc = gb.cpu.pc;
+    let mut sp = gb.cpu.sp;
+    sp = sp.wrapping_sub(1);
+    gb.mem_write(sp, ((pc & 0xFF00) >> 8) as u8);
+    // This is where we capture what IE is after pushing the upper byte. Pushing the lower byte might
+    // also overwrite IE, but in that case we ignore that occurring.
+    let still_pending = gb.interrupts.pending && gb.interrupts.next_interrupt() == interrupt;
+    sp = sp.wrapping_sub(1);
+    gb.mem_write(sp, pc as u8);
+    gb.cpu.sp = gb.cpu.sp.wrapping_sub(2);
+
+    if !still_pending {
+        gb.cpu.pc = 0;
+        // Okay so this interrupt didn't go so good. Let's see if there's another one.
+        let res = process_interrupts(gb);
+        // Regardless of what happens in the next try, IME needs to be disabled.
+        gb.cpu.ime = false;
+        return res;
+    }
+
+    gb.cpu.pc = interrupt.handler_addr();
+    gb.interrupts.clear(interrupt);
+    gb.cpu.ime = false;
+    true
+}
+
+fn halt(gb: &mut Gameboy) {
+    // TODO: pretty sure I need to check interrupt states here.
+    gb.cpu.halted = true;
+}
+
+fn stop(gb: &mut Gameboy) {
+    // TODO: this should be more than a noop.
+    gb.cpu.pc = gb.cpu.pc.wrapping_add(1);
+}
+
+pub fn set_ime(gb: &mut Gameboy, v: bool) {
+    if v {
+        // Enabling interrupts happens on the next cycle ...
+        gb.cpu.ime_defer = true;
+    } else {
+        // ... However, disabling interrupts is immediate.
+        gb.cpu.ime = false;
+    }
+}
+
+fn inc(gb: &mut Gameboy, o: Operand) {
+    let v = o.get(gb).wrapping_add(1);
+    gb.cpu.f.z = v == 0;
+    gb.cpu.f.n = false;
+    gb.cpu.f.h = v.trailing_zeros() >= 4;
+    o.set(gb, v);
+}
+
+fn inc16(gb: &mut Gameboy, reg: Register16) {
+    let v = gb.cpu.register16_get(reg);
+    if v >= 0xFE00 && v <= 0xFEFF {
+        gb.ppu.maybe_trash_oam(OamCorruptionType::READ);
+    }
+    gb.cpu.register16_set(reg, v.wrapping_add(1));
+    gb.clock();
+}
+
+fn dec(gb: &mut Gameboy, o: Operand) {
+    let v = o.get(gb).wrapping_sub(1);
+    gb.cpu.f.z = v == 0;
+    gb.cpu.f.n = true;
+    gb.cpu.f.h = v & 0x0F == 0x0F;
+    o.set(gb, v);
+}
+
+fn dec16(gb: &mut Gameboy, r: Register16) {
+    let v = gb.cpu.register16_get(r);
+    if v >= 0xFE00 && v <= 0xFEFF {
+        gb.ppu.maybe_trash_oam(OamCorruptionType::READ);
+    }
+    gb.cpu.register16_set(r, v.wrapping_sub(1));
+    gb.clock();
+}
+
+fn add(gb: &mut Gameboy, o: Operand, carry: bool) {
+    let carry = if carry && gb.cpu.f.c { 1 } else { 0 };
+
+    let old = gb.cpu.a;
+    let v = o.get(gb);
+    let new = old.wrapping_add(v).wrapping_add(carry);
+    gb.cpu.a = new;
+    gb.cpu.f.z = new == 0;
+    gb.cpu.f.n = false;
+    gb.cpu.f.h = (((old & 0xF) + (v & 0xF)) + carry) & 0x10 == 0x10;
+    gb.cpu.f.c = u16::from(old) + u16::from(v) + u16::from(carry) > 0xFF;
+}
+
+fn add16(gb: &mut Gameboy, r: Register16) {
+    let hl = gb.cpu.register16_get(HL);
+    let v = gb.cpu.register16_get(r);
+    let (new_hl, overflow) = hl.overflowing_add(v);
+    gb.cpu.register16_set(HL, new_hl);
+
+    gb.clock();
+
+    gb.cpu.f.n = false;
+    gb.cpu.f.h = ((hl & 0xFFF) + (v & 0xFFF)) & 0x1000 > 0;
+    gb.cpu.f.c = overflow;
+}
+
+fn add_sp_r8(gb: &mut Gameboy, d: i8) {
+    let d = i16::from(d) as u16;
+    let sp = gb.cpu.sp;
+
+    gb.cpu.sp = sp.wrapping_add(d as i16 as u16);
+
+    gb.clock();
+    gb.clock();
+
+    gb.cpu.f.z = false;
+    gb.cpu.f.n = false;
+    gb.cpu.f.h = ((sp & 0xF) + (d & 0xF)) & 0x10 > 0;
+    gb.cpu.f.c = ((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0;
+}
+
+fn sub(gb: &mut Gameboy, o: Operand, carry: bool, store: bool) {
+    let carry = if carry && gb.cpu.f.c { 1 } else { 0 };
+
+    let a = gb.cpu.a;
+    let v = o.get(gb);
+    let new_a = a.wrapping_sub(v).wrapping_sub(carry);
+    if store {
+        gb.cpu.a = new_a;
+    }
+
+    gb.cpu.f.z = new_a == 0;
+    gb.cpu.f.n = true;
+    gb.cpu.f.h = u16::from(a & 0xF) < u16::from(v & 0xF) + u16::from(carry);
+    gb.cpu.f.c = u16::from(a) < u16::from(v) + u16::from(carry);
+}
+
+fn ld(gb: &mut Gameboy, lhs: Operand, rhs: Operand) {
+    let v = rhs.get(gb);
+    lhs.set(gb, v);
+}
+
+fn ld16(gb: &mut Gameboy, lhs: Operand16, rhs: Operand16, extra_clock: bool) {
+    let v = rhs.get(gb);
+    lhs.set(gb, v);
+
+    // In the specific case of loading a 16bit reg into another 16bit reg, this consumes another CPU cycle. I don't
+    // really understand why, since in every other case the cost of reading/writing a 16bit reg appears to be free.
+    if extra_clock {
+        gb.clock();
+    }
+}
+
+fn ld_hl_sp(gb: &mut Gameboy, d: i8) {
+    let sp = gb.cpu.sp;
+    let d = i16::from(d) as u16;
+    let v = sp.wrapping_add(d);
+    gb.cpu.register16_set(HL, v);
+    gb.cpu.f.reset();
+    gb.cpu.f.h = ((sp & 0xF) + (d & 0xF)) & 0x10 > 0;
+    gb.cpu.f.c = ((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0;
+    gb.clock();
+}
+
+// TODO: clean this dumpster fire up.
+fn daa(gb: &mut Gameboy) {
+    let mut carry = false;
+
+    if !gb.cpu.f.n {
+        if gb.cpu.f.c || gb.cpu.a > 0x99 {
+            gb.cpu.a = gb.cpu.a.wrapping_add(0x60);
+            carry = true;
         }
-        self.register16_set(r, v);
+        if gb.cpu.f.h || (gb.cpu.a & 0xF) > 9 {
+            gb.cpu.a = gb.cpu.a.wrapping_add(0x06);
+        }
+    } else if gb.cpu.f.c {
+        carry = true;
+        gb.cpu.a = gb.cpu.a.wrapping_add(if gb.cpu.f.h { 0x9A } else { 0xA0 });
+    } else if gb.cpu.f.h {
+        gb.cpu.a = gb.cpu.a.wrapping_add(0xFA);
     }
 
-    fn push_and_jump(&mut self, hw: &mut GameboyHardware, addr: u16) {
-        let pc = self.pc;
-        self.stack_push(hw, pc);
-        self.pc = addr;
+    gb.cpu.f.z = gb.cpu.a == 0;
+    gb.cpu.f.h = false;
+    gb.cpu.f.c = carry;
+}
+
+fn cpl(gb: &mut Gameboy) {
+    gb.cpu.a = !gb.cpu.a;
+    gb.cpu.f.n = true;
+    gb.cpu.f.h = true;
+}
+
+fn ccf(gb: &mut Gameboy) {
+    gb.cpu.f.n = false;
+    gb.cpu.f.h = false;
+    gb.cpu.f.c = !gb.cpu.f.c;
+}
+
+fn scf(gb: &mut Gameboy) {
+    gb.cpu.f.n = false;
+    gb.cpu.f.h = false;
+    gb.cpu.f.c = true;
+}
+
+fn bitwise(gb: &mut Gameboy, op: BitwiseOp, o: Operand) {
+    let a = gb.cpu.a;
+    let v = o.get(gb);
+    let mut hc = false;
+    gb.cpu.a = match op {
+        BitwiseOp::AND => {
+            hc = true;
+            a & v
+        }
+        BitwiseOp::OR => a | v,
+        BitwiseOp::XOR => a ^ v,
+    };
+
+    gb.cpu.f.reset();
+    gb.cpu.f.z = gb.cpu.a == 0;
+    gb.cpu.f.h = hc;
+}
+
+fn bit(gb: &mut Gameboy, b: u8, o: Operand) {
+    let v = o.get(gb) & (1 << b);
+    gb.cpu.f.z = v == 0;
+    gb.cpu.f.n = false;
+    gb.cpu.f.h = true;
+}
+
+fn setbit(gb: &mut Gameboy, b: u8, o: Operand, on: bool) {
+    let v = o.get(gb);
+    o.set(gb, if on { v | 1 << b } else { v & !(1 << b) });
+}
+
+fn rl(gb: &mut Gameboy, o: Operand, set_zero: bool, preserve_lsb: bool) {
+    let v = o.get(gb);
+    let lsb = if preserve_lsb && gb.cpu.f.c { 1 } else { 0 };
+    let carry = v & 0x80 > 0;
+    let v = v << 1 | lsb;
+    o.set(gb, v);
+    gb.cpu.f.reset();
+    gb.cpu.f.z = set_zero && v == 0;
+    gb.cpu.f.c = carry;
+}
+
+fn rlc(gb: &mut Gameboy, o: Operand, extended: bool) {
+    let v = o.get(gb);
+    let carry = v & 0x80 > 0;
+    let lsb = if carry { 1 } else { 0 };
+    let v = v << 1 | lsb;
+    o.set(gb, v);
+    gb.cpu.f.reset();
+    gb.cpu.f.z = extended && v == 0;
+    gb.cpu.f.c = carry;
+}
+
+fn rr(gb: &mut Gameboy, o: Operand, extended: bool) {
+    let v = o.get(gb);
+    let msb = if gb.cpu.f.c { 0x80 } else { 0 };
+    let carry = v & 0x1 > 0;
+    let v = v >> 1 | msb;
+    o.set(gb, v);
+    gb.cpu.f.reset();
+    gb.cpu.f.z = extended && v == 0;
+    gb.cpu.f.c = carry;
+}
+
+fn rrc(gb: &mut Gameboy, o: Operand, extended: bool) {
+    let v = o.get(gb);
+    let carry = v & 0x1 > 0;
+    let msb = if carry { 0x80 } else { 0 };
+    let v = v >> 1 | msb;
+    o.set(gb, v);
+    gb.cpu.f.reset();
+    gb.cpu.f.z = extended && v == 0;
+    gb.cpu.f.c = carry;
+}
+
+fn shift_right(gb: &mut Gameboy, o: Operand, preserve_msb: bool) {
+    let v = o.get(gb);
+    let carry = v & 0x01 > 0;
+    let preserve = if preserve_msb { v & 0x80 } else { 0 };
+    let v = v >> 1 | preserve;
+    o.set(gb, v);
+    gb.cpu.f.reset();
+    gb.cpu.f.z = v == 0;
+    gb.cpu.f.c = carry;
+}
+
+fn swap(gb: &mut Gameboy, o: Operand) {
+    let v = o.get(gb);
+    let v = ((v & 0xF) << 4) | ((v & 0xF0) >> 4);
+    o.set(gb, v);
+    gb.cpu.f.reset();
+    gb.cpu.f.z = v == 0;
+}
+
+fn stack_push(gb: &mut Gameboy, v: u16) {
+    if gb.cpu.sp >= 0xFE00 && gb.cpu.sp <= 0xFEFF {
+        gb.ppu.maybe_trash_oam(OamCorruptionType::PUSH);
     }
 
-    fn call(&mut self, hw: &mut GameboyHardware, cc: Option<FlagCondition>, addr: u16) {
-        if !self.f.check_jmp_condition(cc) {
-            return;
-        }
-        hw.clock();
-        self.push_and_jump(hw, addr);
+    gb.cpu.sp = gb.cpu.sp.wrapping_sub(2);
+    let sp = gb.cpu.sp;
+    gb.mem_write16(sp, v);
+}
+
+fn stack_pop(gb: &mut Gameboy) -> u16 {
+    if gb.cpu.sp >= 0xFDFF && gb.cpu.sp <= 0xFEFE {
+        gb.ppu.maybe_trash_oam(OamCorruptionType::POP);
     }
 
-    fn jp(&mut self, hw: &mut GameboyHardware, cc: Option<FlagCondition>, o: Operand16) {
-        if !self.f.check_jmp_condition(cc) {
-            return;
-        }
+    let addr = gb.cpu.sp;
+    let v = gb.mem_read16(addr);
+    gb.cpu.sp = gb.cpu.sp.wrapping_add(2);
 
-        let addr = self.operand16_get(hw, o);
-        self.pc = addr;
+    v
+}
 
-        if let Operand16::Register(HL) = o {
-            // For some reason, JP (HL) doesn't cause an extra clock cycle. Very mysterious.
-        } else {
-            hw.clock();
-        }
+fn push(gb: &mut Gameboy, r: Register16) {
+    let v = gb.cpu.register16_get(r);
+    gb.clock();
+    stack_push(gb, v);
+}
+
+fn pop(gb: &mut Gameboy, r: Register16) {
+    let mut v = stack_pop(gb);
+    if let AF = r {
+        // Reset bits 0-3 in F.
+        v &= 0xFFF0;
+    }
+    gb.cpu.register16_set(r, v);
+}
+
+fn push_and_jump(gb: &mut Gameboy, addr: u16) {
+    let pc = gb.cpu.pc;
+    stack_push(gb, pc);
+    gb.cpu.pc = addr;
+}
+
+fn call(gb: &mut Gameboy, cc: Option<FlagCondition>, addr: u16) {
+    if !gb.cpu.f.check_jmp_condition(cc) {
+        return;
+    }
+    gb.clock();
+    push_and_jump(gb, addr);
+}
+
+fn jp(gb: &mut Gameboy, cc: Option<FlagCondition>, o: Operand16) {
+    if !gb.cpu.f.check_jmp_condition(cc) {
+        return;
     }
 
-    fn jr(&mut self, hw: &mut GameboyHardware, cc: Option<FlagCondition>, n: u8) {
-        if !self.f.check_jmp_condition(cc) {
-            return;
-        }
-        hw.clock();
-        self.pc = self.pc.wrapping_add(i16::from(n as i8) as u16);
-    }
+    let addr = o.get(gb);
+    gb.cpu.pc = addr;
 
-    fn ret(&mut self, hw: &mut GameboyHardware, cc: Option<FlagCondition>, ei: bool) {
-        if !self.f.check_jmp_condition(cc) {
-            hw.clock();
-            return;
-        }
-        if cc.is_some() {
-            hw.clock();
-        }
-        if ei {
-            // RETI immediately enables IME, it's not deferred like eith an EI or DI call.
-            self.ime = true;
-        }
-        let pc = self.stack_pop(hw);
-        hw.clock();
-        self.pc = pc;
+    if let Operand16::Register(HL) = o {
+        // For some reason, JP (HL) doesn't cause an extra clock cycle. Very mysterious.
+    } else {
+        gb.clock();
     }
+}
 
-    fn rst(&mut self, hw: &mut GameboyHardware, a: u8) {
-        hw.clock();
-        self.push_and_jump(hw, u16::from(a));
+fn jr(gb: &mut Gameboy, cc: Option<FlagCondition>, n: u8) {
+    if !gb.cpu.f.check_jmp_condition(cc) {
+        return;
     }
+    gb.clock();
+    gb.cpu.pc = gb.cpu.pc.wrapping_add(i16::from(n as i8) as u16);
+}
+
+fn ret(gb: &mut Gameboy, cc: Option<FlagCondition>, ei: bool) {
+    if !gb.cpu.f.check_jmp_condition(cc) {
+        gb.clock();
+        return;
+    }
+    if cc.is_some() {
+        gb.clock();
+    }
+    if ei {
+        // RETI immediately enables IME, it's not deferred like eith an EI or DI call.
+        gb.cpu.ime = true;
+    }
+    let pc = stack_pop(gb);
+    gb.clock();
+    gb.cpu.pc = pc;
+}
+
+fn rst(gb: &mut Gameboy, a: u8) {
+    gb.clock();
+    push_and_jump(gb, u16::from(a));
 }
 
 impl Flags {
@@ -1574,6 +1578,5 @@ pub fn decode_extended_instruction<T: FnMut() -> u8>(mut fetch: T) -> Instructio
         0xFD /* SET 7,L     */ => Instruction::SET(7, Operand::Register(L)),
         0xFE /* SET 7,(HL)  */ => Instruction::SET(7, Operand::Address(HL)),
         0xFF /* SET 7,A     */ => Instruction::SET(7, Operand::Register(A)),
-        _ => unreachable!("All u8 values handled"),
     }
 }

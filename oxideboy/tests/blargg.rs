@@ -16,7 +16,7 @@ fn run_blargg_serial_test(rom: &[u8]) {
         }
 
         gb.run_instruction();
-        let sb = gb.hw.serial.serial_out.take();
+        let sb = gb.serial.serial_out.take();
         if sb.is_some() {
             serial_output.push(sb.unwrap() as char);
         }
@@ -35,7 +35,7 @@ fn run_blargg_harness_test(rom: &[u8]) {
 
     // The test runner writes the magic value to RAM before specifying that tests are in progress.
     // Which is kinda dumb. Anyway, we force that value now so we know when tests are *actually* done.
-    gb.hw.cart.ram[0] = 0x80;
+    gb.cart.ram[0] = 0x80;
 
     gb.skip_bootrom();
 
@@ -43,14 +43,14 @@ fn run_blargg_harness_test(rom: &[u8]) {
         gb.run_instruction();
 
         // Wait until the magic value is present in RAM and the test is signalled as complete.
-        if gb.hw.cart.ram[1] == 0xDE && gb.hw.cart.ram[2] == 0xB0 && gb.hw.cart.ram[3] == 0x61 {
-            let exit_code = gb.hw.cart.ram[0];
+        if gb.cart.ram[1] == 0xDE && gb.cart.ram[2] == 0xB0 && gb.cart.ram[3] == 0x61 {
+            let exit_code = gb.cart.ram[0];
             if exit_code != 0x80 {
                 let mut end = 0x04;
-                while gb.hw.cart.ram[end] != 0 && end < 0x1FFF {
+                while gb.cart.ram[end] != 0 && end < 0x1FFF {
                     end += 1;
                 }
-                let output = std::str::from_utf8(&gb.hw.cart.ram[0x04..end]).unwrap();
+                let output = std::str::from_utf8(&gb.cart.ram[0x04..end]).unwrap();
                 if exit_code != 0 {
                     panic!("Test failed. Output: {}", output);
                 }

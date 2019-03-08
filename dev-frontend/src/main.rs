@@ -25,7 +25,7 @@ fn main() -> Result<()> {
 
     let mut gb = Gameboy::new(model, rom);
 
-    println!("Loaded ROM {:?}", gb.hw.cart.rom_title());
+    println!("Loaded ROM {:?}", gb.cart.rom_title());
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
@@ -111,97 +111,97 @@ fn main() -> Result<()> {
                     keycode: Some(Keycode::Up),
                     ..
                 } => {
-                    gb.hw.joypad.up = true;
+                    gb.joypad.up = true;
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::Down),
                     ..
                 } => {
-                    gb.hw.joypad.down = true;
+                    gb.joypad.down = true;
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::Right),
                     ..
                 } => {
-                    gb.hw.joypad.right = true;
+                    gb.joypad.right = true;
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::Left),
                     ..
                 } => {
-                    gb.hw.joypad.left = true;
+                    gb.joypad.left = true;
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::A),
                     ..
                 } => {
-                    gb.hw.joypad.a = true;
+                    gb.joypad.a = true;
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::S),
                     ..
                 } => {
-                    gb.hw.joypad.b = true;
+                    gb.joypad.b = true;
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::Return),
                     ..
                 } => {
-                    gb.hw.joypad.start = true;
+                    gb.joypad.start = true;
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::RShift),
                     ..
                 } => {
-                    gb.hw.joypad.select = true;
+                    gb.joypad.select = true;
                 }
                 Event::KeyUp {
                     keycode: Some(Keycode::Up),
                     ..
                 } => {
-                    gb.hw.joypad.up = false;
+                    gb.joypad.up = false;
                 }
                 Event::KeyUp {
                     keycode: Some(Keycode::Down),
                     ..
                 } => {
-                    gb.hw.joypad.down = false;
+                    gb.joypad.down = false;
                 }
                 Event::KeyUp {
                     keycode: Some(Keycode::Right),
                     ..
                 } => {
-                    gb.hw.joypad.right = false;
+                    gb.joypad.right = false;
                 }
                 Event::KeyUp {
                     keycode: Some(Keycode::Left),
                     ..
                 } => {
-                    gb.hw.joypad.left = false;
+                    gb.joypad.left = false;
                 }
                 Event::KeyUp {
                     keycode: Some(Keycode::A),
                     ..
                 } => {
-                    gb.hw.joypad.a = false;
+                    gb.joypad.a = false;
                 }
                 Event::KeyUp {
                     keycode: Some(Keycode::S),
                     ..
                 } => {
-                    gb.hw.joypad.b = false;
+                    gb.joypad.b = false;
                 }
                 Event::KeyUp {
                     keycode: Some(Keycode::Return),
                     ..
                 } => {
-                    gb.hw.joypad.start = false;
+                    gb.joypad.start = false;
                 }
                 Event::KeyUp {
                     keycode: Some(Keycode::RShift),
                     ..
                 } => {
-                    gb.hw.joypad.select = false;
+                    gb.joypad.select = false;
                 }
 
                 Event::KeyUp {
@@ -246,16 +246,16 @@ fn main() -> Result<()> {
         }
 
         if !paused {
-            gb.hw.apu.sample_queue.clear();
+            gb.apu.sample_queue.clear();
             for _ in 0..17556 {
                 gb.run_instruction();
 
-                if gb.hw.new_frame {
-                    gb_buffer.copy_from_slice(&gb.hw.ppu.framebuffer);
+                if gb.new_frame {
+                    gb_buffer.copy_from_slice(&gb.ppu.framebuffer);
                 }
             }
 
-            let mut samples = &gb.hw.apu.sample_queue[..];
+            let mut samples = &gb.apu.sample_queue[..];
             if throwaway_samples {
                 if throwaway_count > samples.len() {
                     throwaway_count -= samples.len();

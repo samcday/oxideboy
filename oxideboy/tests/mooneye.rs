@@ -12,7 +12,7 @@ fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
 
     let start = Instant::now();
     loop {
-        if gb.hw.mem_get(gb.cpu.pc) == 0x40 {
+        if gb.mem_get(gb.cpu.pc) == 0x40 {
             break;
         }
 
@@ -170,7 +170,7 @@ fn mooneye_sprite_priority() {
 
     let start = Instant::now();
     loop {
-        if gb.hw.mem_get(gb.cpu.pc) == 0x40 {
+        if gb.mem_get(gb.cpu.pc) == 0x40 {
             break;
         }
         gb.run_instruction();
@@ -186,7 +186,7 @@ fn mooneye_sprite_priority() {
     }
 
     common::compare_framebuffer(
-        &gb.hw.ppu.framebuffer,
+        &gb.ppu.framebuffer,
         include_bytes!("mooneye/manual-only/sprite_priority-expected.png"),
         |col| match col {
             0xFFFFFFFF => 0xE7DA,
