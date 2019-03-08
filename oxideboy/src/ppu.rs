@@ -61,6 +61,7 @@ pub struct Ppu {
     pub scanline_obj_count: usize,
     pub mode_cycles: u8,
 
+    #[serde(skip)]
     pub framebuffer: Framebuffer,
 
     mode3_extra_cycles: u8,

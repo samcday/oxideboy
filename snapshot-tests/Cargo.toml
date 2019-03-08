@@ -1,0 +1,12 @@
+[package]
+name = "snapshot-tests"
+version = "0.1.0"
+authors = ["Sam Day <me@samcday.com>"]
+edition = "2018"
+
+[dependencies]
+byteorder = "1.3.1"
+snap = "0.2"
+
+[dependencies.oxideboy]
+path = "../oxideboy"
