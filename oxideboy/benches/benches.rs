@@ -209,8 +209,6 @@ fn state_delta(bench: &mut Bencher) {
         }
 
         assert_eq!(matching, 49427);
-
-        // panic!("size: {} matching: {}", state.len(), matching);
     });
 }
 

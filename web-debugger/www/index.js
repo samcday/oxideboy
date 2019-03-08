@@ -10,6 +10,7 @@ import SplitPane from "react-split-pane";
 import {FixedSizeList} from "react-window";
 import { get, set } from "idb-keyval";
 import * as wasm from "web-debugger";
+import regl from "regl";
 
 // TODO: debounce memory view resize handler.
 // TODO: window resize handler for memory view.
@@ -88,8 +89,40 @@ class App extends React.Component {
 
   componentDidMount() {
     this.lcd = this.refs.lcd;
-    this.ctx = this.lcd.getContext('2d');
-    this.screenBuffer = this.ctx.getImageData(0, 0, this.lcd.width, this.lcd.height);
+    this.regl = regl(this.lcd);
+    this.framebuffer = this.regl.texture();
+    this.screen = this.regl({
+      frag: `
+      precision mediump float;
+      uniform sampler2D texture;
+      varying vec2 uv;
+      void main () {
+        gl_FragColor = texture2D(texture, uv);
+      }`,
+
+      vert: `
+      precision mediump float;
+      attribute vec2 position;
+      varying vec2 uv;
+      void main () {
+        uv = position;
+        gl_Position = vec4(2.0 * position.x - 1.0, 1.0 - 2.0 * position.y, 0, 1);
+      }`,
+
+      attributes: {
+        position: [
+          -2, 0,
+          0, -2,
+          2, 2]
+      },
+
+      uniforms: {
+        texture: this.framebuffer,
+      },
+
+      count: 3,
+    });
+
     this.setState({memoryViewerHeight: this.refs.split.pane1.getBoundingClientRect().height});
 
     document.addEventListener("keydown", this.keyDown = (ev) => {
@@ -357,32 +390,13 @@ class App extends React.Component {
 
   newFrame(framebuffer) {
     try {
-      // Pixel data is in RGB565 format, which is not directly usable in a canvas.
-      // So we convert it now, and also double the pixels while we're at it.
-      const line_size = 160 * 4 * 2;
-      let fb_pos = 0;
-      let screenbuf_pos = 0;
-      for (let y = 0; y < 144; y++) {
-        for (let x = 0; x < 160; x++) {
-          let col = framebuffer[fb_pos++];
-          let r = ((col&0xf800) >> 8);
-          let g = ((col&0x7e0) >> 3);
-          let b = ((col&0x1f) << 3);
-
-          for (let i = 0; i < 2; i++) {
-            this.screenBuffer.data[screenbuf_pos++] = r;
-            this.screenBuffer.data[screenbuf_pos++] = g;
-            this.screenBuffer.data[screenbuf_pos++] = b;
-            this.screenBuffer.data[screenbuf_pos++] = 255;
-          }
-        }
-        // Copy the whole line we just drew, this doubles the pixels vertically.
-        this.screenBuffer.data.set(
-          this.screenBuffer.data.subarray(screenbuf_pos - line_size, screenbuf_pos),
-          screenbuf_pos);
-        screenbuf_pos += line_size;
-      }
-      this.ctx.putImageData(this.screenBuffer, 0, 0);
+      this.framebuffer({
+        format: "rgb565",
+        data: framebuffer,
+        width: 160,
+        height: 144,
+      });
+      this.screen();
     } catch(err) {
       console.error(err);
     }
