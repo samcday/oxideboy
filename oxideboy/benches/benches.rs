@@ -83,15 +83,15 @@ lazy_static! {
                 gb.run_instruction();
             }
             gb.run_instruction();
-            gb.save_state(&mut base_state);
         }
+        gb.save_state(&mut base_state);
         for _ in 0..60 {
             while !gb.new_frame {
                 gb.run_instruction();
             }
             gb.run_instruction();
-            gb.save_state(&mut new_state);
         }
+        gb.save_state(&mut new_state);
 
         (base_state, new_state)
     };
