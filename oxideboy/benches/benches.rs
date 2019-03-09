@@ -2,7 +2,8 @@
 extern crate bencher;
 
 use bencher::Bencher;
-use oxideboy::{interrupt, ppu, Gameboy, Model};
+use lazy_static::lazy_static;
+use oxideboy::{interrupt, ppu, simple_diff, Gameboy, Model};
 use snap;
 
 fn save_state(bench: &mut Bencher) {
@@ -45,7 +46,7 @@ fn load_state(bench: &mut Bencher) {
 }
 
 fn state_snap(bench: &mut Bencher) {
-    let rom = include_bytes!("/home/sam/Downloads/pokemonblue.gb").to_vec();
+    let rom = include_bytes!("../tests/blargg/mem_timing.gb").to_vec();
     let mut gb = Gameboy::new(Model::DMG, rom);
     gb.skip_bootrom();
     for _ in 0..60 {
@@ -66,6 +67,60 @@ fn state_snap(bench: &mut Bencher) {
     bench.iter(|| {
         let new_size = encoder.compress(&state, &mut output).unwrap();
         assert_eq!(new_size, size);
+    });
+}
+
+lazy_static! {
+    static ref DIFF_STATES: (Vec<u8>, Vec<u8>) = {
+        let rom = include_bytes!("../tests/blargg/mem_timing.gb").to_vec();
+        let mut gb = Gameboy::new(Model::DMG, rom);
+
+        let mut base_state = Vec::new();
+        let mut new_state = Vec::new();
+
+        for _ in 0..60 {
+            while !gb.new_frame {
+                gb.run_instruction();
+            }
+            gb.run_instruction();
+            gb.save_state(&mut base_state);
+        }
+        for _ in 0..60 {
+            while !gb.new_frame {
+                gb.run_instruction();
+            }
+            gb.run_instruction();
+            gb.save_state(&mut new_state);
+        }
+
+        (base_state, new_state)
+    };
+}
+
+fn diff_small(bench: &mut Bencher) {
+    let base_state = &DIFF_STATES.0;
+    let new_state = &DIFF_STATES.1;
+
+    let mut diff_out = vec![0; base_state.len() + 12];
+    let diff_size = simple_diff::generate(&base_state, &new_state, &mut diff_out);
+
+    bench.iter(|| {
+        let size = simple_diff::generate(&base_state, &new_state, &mut diff_out);
+        assert_eq!(size, diff_size);
+    });
+}
+
+fn diff_small_apply(bench: &mut Bencher) {
+    let base_state = &DIFF_STATES.0;
+    let new_state = &DIFF_STATES.1;
+
+    let mut diff_out = vec![0; base_state.len() + 12];
+    let diff_size = simple_diff::generate(&base_state, &new_state, &mut diff_out);
+
+    let mut rebuilt = base_state.clone();
+
+    bench.iter(|| {
+        simple_diff::apply(&mut rebuilt, &diff_out[0..diff_size]);
     });
 }
 
@@ -103,6 +158,8 @@ benchmark_group!(
     save_state,
     load_state,
     state_snap,
+    diff_small,
+    diff_small_apply,
     ppu_drawline,
     ppu_drawline_sprites
 );

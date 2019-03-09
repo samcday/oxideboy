@@ -19,7 +19,10 @@ fn main() -> Result<()> {
 
     let mut base_state = Vec::new();
     let mut new_state = Vec::new();
-    let mut diff = Vec::new();
+
+    gb.save_state(&mut new_state);
+
+    let mut diff = vec![0; new_state.len() + 12];
 
     let mut compress_out = [0; 200000];
     let mut encoder = snap::Encoder::new();
@@ -40,29 +43,22 @@ fn main() -> Result<()> {
         new_state.clear();
         gb.save_state(&mut new_state);
 
-        if base_state.len() == 0 {
-            let base_compressed_size = encoder.compress(&base_state, &mut compress_out).unwrap();
-            total_size += base_compressed_size;
-            // Very first state save, nothing to diff yet.
-            continue;
-        }
-
         // Every 60 seconds we save a base state.
-        if seconds % 60 == 0 {
-            total_size += encoder.compress(&base_state, &mut compress_out).unwrap();
-        } else {
-            diff_states(&base_state, &new_state, &mut diff);
-            // Every 30 seconds we save the diffed states compressed.
-            if seconds % 30 == 0 {
-                let diff_compressed_size = encoder.compress(&diff, &mut compress_out).unwrap();
-                diff.clear();
-                total_size += diff_compressed_size;
-            }
-        }
+        // if seconds % 60 == 0 {
+        //     total_size += encoder.compress(&new_state, &mut compress_out).unwrap();
+        // } else {
+        //     diff_states(&base_state, &new_state, &mut diff);
+        //     // Every 30 seconds we save the diffed states compressed.
+        //     if seconds % 30 == 0 {
+        //         let diff_compressed_size = encoder.compress(&diff, &mut compress_out).unwrap();
+        //         diff.clear();
+        //         total_size += diff_compressed_size;
+        //     }
+        // }
 
-        // diff.clear();
-        // let diff_compressed_size = encoder.compress(&diff, &mut compress_out).unwrap();
-        // total_size += diff_compressed_size;
+        let diff_size = oxideboy::simple_diff::generate(&base_state, &new_state, &mut diff);
+        let diff_compressed_size = encoder.compress(&diff[0..diff_size], &mut compress_out).unwrap();
+        total_size += diff_compressed_size;
         // apply_diff(&base_state, &new_state, &diff);
 
         if seconds % 60 == 0 {
@@ -75,72 +71,13 @@ fn main() -> Result<()> {
             );
         }
 
-        // println!(
-        //     "State size={} Diff size={} snap={} Compression={}% (base state compressed: {})",
-        //     base_state.len(),
-        //     diff.len(),
-        //     diff_compressed_size,
-        //     (1.0 - ((diff_compressed_size as f32) / (base_state.len() as f32))) * 100.0,
-        //     base_compressed_size,
-        // );
-    }
-}
-
-fn diff_states(base: &[u8], new: &[u8], diff: &mut Vec<u8>) {
-    let mut chunk_start: usize = 0;
-    let mut chunk_end: usize = 0;
-    let mut in_chunk = false;
-    let mut chunk_count = 0;
-
-    // This will be the chunk count, we'll fill it in at the end.
-    diff.write_u32::<LittleEndian>(0).unwrap();
-
-    for (i, (l, r)) in base.iter().zip(new.iter()).enumerate() {
-        if l != r {
-            if !in_chunk {
-                in_chunk = true;
-                chunk_start = i;
-            }
-            chunk_end = i;
-        }
-
-        if l == r && in_chunk {
-            if i - chunk_end > 16 {
-                chunk_count += 1;
-                diff.write_u32::<LittleEndian>(chunk_start as u32).unwrap();
-                diff.write_u32::<LittleEndian>((chunk_end - chunk_start + 1) as u32)
-                    .unwrap();
-                diff.write(&new[chunk_start..chunk_end + 1]).unwrap();
-                in_chunk = false;
-            }
-        }
-    }
-
-    if in_chunk {
-        chunk_count += 1;
-        diff.write_u32::<LittleEndian>(chunk_start as u32).unwrap();
-        diff.write_u32::<LittleEndian>((chunk_end - chunk_start + 1) as u32)
-            .unwrap();
-        diff.write(&new[chunk_start..chunk_end + 1]).unwrap();
-    }
-
-    LittleEndian::write_u32(&mut diff[0..4], chunk_count);
-}
-
-fn apply_diff(base: &[u8], new: &[u8], mut diff: &[u8]) {
-    let mut rebuilt = vec![0; base.len()];
-    rebuilt.copy_from_slice(base);
-
-    let chunk_count = diff.read_u32::<LittleEndian>().unwrap();
-    for _ in 0..chunk_count {
-        let offset = diff.read_u32::<LittleEndian>().unwrap() as usize;
-        let len = diff.read_u32::<LittleEndian>().unwrap() as usize;
-        diff.read_exact(&mut rebuilt[offset..offset + len]).unwrap();
-    }
-
-    for (i, (l, r)) in rebuilt.iter().zip(new.iter()).enumerate() {
-        if l != r {
-            panic!("Nope, index {} did not match. Expected={}, got {}", i, r, l);
-        }
+        println!(
+            "State size={} Diff size={} snap={} Compression={}% (base state compressed: {})",
+            base_state.len(),
+            diff_size,
+            diff_compressed_size,
+            (1.0 - ((diff_compressed_size as f32) / (base_state.len() as f32))) * 100.0,
+            encoder.compress(&new_state, &mut compress_out).unwrap(),
+        );
     }
 }

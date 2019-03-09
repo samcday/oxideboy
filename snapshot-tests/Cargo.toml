@@ -10,3 +10,4 @@ snap = "0.2"
 
 [dependencies.oxideboy]
 path = "../oxideboy"
+

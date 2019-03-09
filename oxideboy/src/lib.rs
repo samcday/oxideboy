@@ -6,6 +6,7 @@ pub mod interrupt;
 pub mod joypad;
 pub mod ppu;
 pub mod serial;
+pub mod simple_diff;
 pub mod timer;
 pub mod util;
 
