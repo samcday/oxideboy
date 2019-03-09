@@ -108,156 +108,61 @@ fn main() -> Result<()> {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
-                Event::KeyDown {
-                    keycode: Some(Keycode::Up),
-                    ..
-                } => {
-                    gb.joypad.up = true;
-                }
-                Event::KeyDown {
-                    keycode: Some(Keycode::Down),
-                    ..
-                } => {
-                    gb.joypad.down = true;
-                }
-                Event::KeyDown {
-                    keycode: Some(Keycode::Right),
-                    ..
-                } => {
-                    gb.joypad.right = true;
-                }
-                Event::KeyDown {
-                    keycode: Some(Keycode::Left),
-                    ..
-                } => {
-                    gb.joypad.left = true;
-                }
-                Event::KeyDown {
-                    keycode: Some(Keycode::A),
-                    ..
-                } => {
-                    gb.joypad.a = true;
-                }
-                Event::KeyDown {
-                    keycode: Some(Keycode::S),
-                    ..
-                } => {
-                    gb.joypad.b = true;
-                }
-                Event::KeyDown {
-                    keycode: Some(Keycode::Return),
-                    ..
-                } => {
-                    gb.joypad.start = true;
-                }
-                Event::KeyDown {
-                    keycode: Some(Keycode::RShift),
-                    ..
-                } => {
-                    gb.joypad.select = true;
-                }
-                Event::KeyUp {
-                    keycode: Some(Keycode::Up),
-                    ..
-                } => {
-                    gb.joypad.up = false;
-                }
-                Event::KeyUp {
-                    keycode: Some(Keycode::Down),
-                    ..
-                } => {
-                    gb.joypad.down = false;
-                }
-                Event::KeyUp {
-                    keycode: Some(Keycode::Right),
-                    ..
-                } => {
-                    gb.joypad.right = false;
-                }
-                Event::KeyUp {
-                    keycode: Some(Keycode::Left),
-                    ..
-                } => {
-                    gb.joypad.left = false;
-                }
-                Event::KeyUp {
-                    keycode: Some(Keycode::A),
-                    ..
-                } => {
-                    gb.joypad.a = false;
-                }
-                Event::KeyUp {
-                    keycode: Some(Keycode::S),
-                    ..
-                } => {
-                    gb.joypad.b = false;
-                }
-                Event::KeyUp {
-                    keycode: Some(Keycode::Return),
-                    ..
-                } => {
-                    gb.joypad.start = false;
-                }
-                Event::KeyUp {
-                    keycode: Some(Keycode::RShift),
-                    ..
-                } => {
-                    gb.joypad.select = false;
-                }
-                Event::KeyUp {
-                    keycode: Some(Keycode::F7),
-                    ..
-                } => {
-                    save_state.clear();
-                    gb.save_state(&mut save_state);
-                }
-                Event::KeyUp {
-                    keycode: Some(Keycode::F8),
-                    ..
-                } => {
-                    if !save_state.is_empty() {
-                        gb.load_state(&save_state);
-                        audio_device.clear();
-                    }
-                }
 
                 Event::KeyUp {
-                    keycode: Some(Keycode::L),
-                    ..
-                } => {
-                    limit = !limit;
-                    audio_device.clear();
-                }
-                Event::KeyUp {
-                    keycode: Some(Keycode::P),
-                    ..
-                } => {
-                    paused = !paused;
-                }
-                Event::KeyUp {
-                    keycode: Some(Keycode::M),
-                    ..
-                } => {
-                    if audio_device.status() == AudioStatus::Playing {
-                        audio_device.clear();
-                        audio_device.pause();
-                    } else {
-                        audio_device.resume();
-                    }
-                }
+                    keycode: Some(keycode), ..
+                } => match keycode {
+                    Keycode::Up => gb.joypad.up = false,
+                    Keycode::Down => gb.joypad.down = false,
+                    Keycode::Right => gb.joypad.right = false,
+                    Keycode::Left => gb.joypad.left = false,
+                    Keycode::A => gb.joypad.a = false,
+                    Keycode::S => gb.joypad.b = false,
+                    Keycode::Return => gb.joypad.start = false,
+                    Keycode::RShift => gb.joypad.select = false,
+                    _ => {}
+                },
 
-                // Event::KeyUp {keycode: Some(Keycode::LeftBracket), ..} => {
-                //     save_state = Some(gameboy.save_state());
-                // }
-                // Event::KeyUp {keycode: Some(Keycode::RightBracket), ..} => {
-                //     if let Some(ref data) = save_state {
-                //         gameboy.load_state(&data[..]);
-                //         gameboy.state.joypad = Default::default();
-                //         gb_buffer.copy_from_slice(gameboy.state.ppu.framebuffer());
-                //         audio_device.clear();
-                //         audio_device.queue(&gameboy.state.apu.sample_queue[..]);
-                //     }
-                // }
+                Event::KeyDown {
+                    keycode: Some(keycode), ..
+                } => match keycode {
+                    Keycode::Escape => break 'running,
+                    Keycode::Up => gb.joypad.up = true,
+                    Keycode::Down => gb.joypad.down = true,
+                    Keycode::Right => gb.joypad.right = true,
+                    Keycode::Left => gb.joypad.left = true,
+                    Keycode::A => gb.joypad.a = true,
+                    Keycode::S => gb.joypad.b = true,
+                    Keycode::Return => gb.joypad.start = true,
+                    Keycode::RShift => gb.joypad.select = true,
+
+                    Keycode::F7 => {
+                        save_state.clear();
+                        gb.save_state(&mut save_state);
+                    }
+                    Keycode::F8 => {
+                        if !save_state.is_empty() {
+                            gb.load_state(&save_state);
+                            audio_device.clear();
+                        }
+                    }
+                    Keycode::L => {
+                        limit = !limit;
+                        audio_device.clear();
+                    }
+                    Keycode::P => {
+                        paused = !paused;
+                    }
+                    Keycode::M => {
+                        if audio_device.status() == AudioStatus::Playing {
+                            audio_device.clear();
+                            audio_device.pause();
+                        } else {
+                            audio_device.resume();
+                        }
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
