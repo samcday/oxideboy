@@ -273,7 +273,7 @@ impl<'a> DMGBus<'a> {
     /// clocked correctly and reads are prevented during situations like active DMA transfers.
     pub fn memory_get(&self, addr: u16) -> u8 {
         match addr {
-            0x0000...0x0100 if *self.bootrom_enabled => self.bootrom_read(addr),
+            0x0000...0x00FF if *self.bootrom_enabled => self.bootrom_read(addr),
             0x0000...0x3FFF => self.cart.rom_lo(&self.context.rom.data, addr as usize),
             0x4000...0x7FFF => self.cart.rom_hi(&self.context.rom.data, (addr - 0x4000) as usize),
             0x8000...0x9FFF => self.ppu.vram_read(addr - 0x8000),

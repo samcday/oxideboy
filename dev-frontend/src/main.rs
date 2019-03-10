@@ -23,7 +23,11 @@ fn main() -> Result<()> {
     f.read_to_end(&mut rom)?;
 
     let model_str = env::var("MODEL").ok().unwrap_or_else(|| String::from("DMG0"));
-    let model = if model_str == "DMG" { Model::DMGABC } else { Model::DMG0 };
+    let model = match model_str.as_str() {
+        "DMG" => Model::DMGABC,
+        "MGB" => Model::MGB,
+        _ => Model::DMG0,
+    };
 
     let rom = Rom::new(rom.into()).expect("Loading ROM failed");
     let mut gb = DMG::new(model, &rom);
