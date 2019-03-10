@@ -379,7 +379,7 @@ impl<'a> DMGBus<'a> {
             0xFF49 => self.ppu.reg_obp1_write(v),
             0xFF4A => self.ppu.reg_wy_write(v),
             0xFF4B => self.ppu.reg_wx_write(v),
-            0xFF50 if v == 1 => *self.bootrom_enabled = false,
+            0xFF50 => *self.bootrom_enabled = false,
             0xFF80...0xFFFE => self.hram[(addr - 0xFF80) as usize] = v,
             0xFFFF => self.interrupts.reg_ie_write(v),
 
