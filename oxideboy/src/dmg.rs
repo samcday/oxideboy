@@ -145,22 +145,23 @@ impl DMG {
                 self.cpu.h = 0x84;
                 self.cpu.l = 0x03;
             }
-            Model::DMGABC => {
+            // DMGABC and MGB are very similar. MGB just differs in A register being 0xFF.
+            Model::DMGABC | Model::MGB => {
                 self.cpu.b = 0x00;
                 self.cpu.h = 0x01;
                 self.cpu.f.unpack(0xB0);
                 self.cpu.e = 0xD8;
                 self.cpu.l = 0x4D;
-            }
-            Model::MGB => {
-                panic!("TODO:");
+
+                if self.model == Model::MGB {
+                    self.cpu.a = 0xFF;
+                }
             }
         }
 
         self.timer.div = match self.model {
             Model::DMG0 => 0x182C,
-            Model::DMGABC => 0xABC8,
-            Model::MGB => panic!("TODO:"),
+            Model::DMGABC | Model::MGB => 0xABC8,
         };
         self.interrupts.request = 0x1;
 
@@ -173,16 +174,13 @@ impl DMG {
         // Where the PPU is at in terms of mode + cycles depends on which bootrom was run.
         self.ppu.mode = ppu::Mode::Mode1;
         match self.model {
-            Model::DMGABC => {
-                self.ppu.ly = 153;
-                self.ppu.mode_cycles = 100;
-            }
             Model::DMG0 => {
                 self.ppu.ly = 145;
                 self.ppu.mode_cycles = 24;
             }
-            Model::MGB => {
-                panic!("TODO:");
+            Model::DMGABC | Model::MGB => {
+                self.ppu.ly = 153;
+                self.ppu.mode_cycles = 100;
             }
         }
 
@@ -228,14 +226,17 @@ impl DMG {
             vram_addr += 2;
         }
 
-        if self.model == Model::DMGABC {
-            let mut src_addr = 0xD8;
-            for _ in 0..8 {
-                let v = rom.data[src_addr];
-                self.ppu.vram_write(vram_addr, v);
-                src_addr += 1;
-                vram_addr += 2;
+        match self.model {
+            Model::DMGABC | Model::MGB => {
+                let mut src_addr = 0xD8;
+                for _ in 0..8 {
+                    let v = rom.data[src_addr];
+                    self.ppu.vram_write(vram_addr, v);
+                    src_addr += 1;
+                    vram_addr += 2;
+                }
             }
+            _ => {}
         }
 
         // After bootrom is finished, sound1 is still enabled but muted.
