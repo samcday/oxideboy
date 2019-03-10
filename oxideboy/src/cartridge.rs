@@ -11,8 +11,6 @@ use serde_bytes;
 #[derive(Default, Deserialize, Serialize)]
 pub struct Cartridge {
     cart_type: CartridgeType,
-    #[serde(skip)]
-    pub rom: Vec<u8>,
 
     // Used by MBC1 + MBC3
     ram_bank_mode: bool,
@@ -41,7 +39,7 @@ impl Default for CartridgeType {
 }
 
 impl Cartridge {
-    pub fn from_rom(rom: Vec<u8>) -> Self {
+    pub fn from_rom(rom: &[u8]) -> Self {
         let cart_type = match rom[0x147] {
             0 => CartridgeType::ROMOnly,
             1 | 2 | 3 => CartridgeType::MBC1,
@@ -70,7 +68,6 @@ impl Cartridge {
         Self {
             cart_type,
             ram,
-            rom,
             hi_rom_bank: 1,
             rom_bank_mask,
             ram_bank_mask,
@@ -79,30 +76,31 @@ impl Cartridge {
         }
     }
 
-    pub fn rom_title(&self) -> &str {
+    // TODO:
+    /*pub fn rom_title(&self) -> &str {
         self.rom[0x134..=0x143]
             .split(|b| *b == 0)
             .next()
             .and_then(|v| std::str::from_utf8(v).ok())
             .unwrap_or(&"UNKNOWN")
-    }
+    }*/
 
-    pub fn rom_lo(&self, addr: usize) -> u8 {
+    pub fn rom_lo(&self, rom: &[u8], addr: usize) -> u8 {
         match self.cart_type {
-            CartridgeType::ROMOnly => self.rom[addr],
+            CartridgeType::ROMOnly => rom[addr],
             CartridgeType::MBC1 | CartridgeType::MBC3 => {
                 let base = (self.lo_rom_bank as usize) * 0x4000;
-                self.rom[base + addr]
+                rom[base + addr]
             }
         }
     }
 
-    pub fn rom_hi(&self, addr: usize) -> u8 {
+    pub fn rom_hi(&self, rom: &[u8], addr: usize) -> u8 {
         match self.cart_type {
-            CartridgeType::ROMOnly => self.rom[0x4000 + addr],
+            CartridgeType::ROMOnly => rom[0x4000 + addr],
             CartridgeType::MBC1 | CartridgeType::MBC3 => {
                 let base = (self.hi_rom_bank as usize) * 0x4000;
-                self.rom[base + addr]
+                rom[base + addr]
             }
         }
     }

@@ -22,7 +22,7 @@ fn main() -> Result<()> {
 
     gb.save_state(&mut new_state);
 
-    let mut diff = vec![0; new_state.len() + 12];
+    let mut diff = vec![];
 
     let mut compress_out = [0; 200000];
     let mut encoder = snap::Encoder::new();
@@ -31,13 +31,13 @@ fn main() -> Result<()> {
     let mut total_size = 0;
 
     loop {
-        for _ in 0..300 {
+        for _ in 0..120 {
             while !gb.new_frame {
                 gb.run_instruction();
             }
             gb.run_instruction();
         }
-        seconds += 5;
+        seconds += 2;
 
         std::mem::swap(&mut base_state, &mut new_state);
         new_state.clear();
@@ -56,8 +56,9 @@ fn main() -> Result<()> {
         //     }
         // }
 
-        let diff_size = oxideboy::simple_diff::generate(&base_state, &new_state, &mut diff);
-        let diff_compressed_size = encoder.compress(&diff[0..diff_size], &mut compress_out).unwrap();
+        diff.clear();
+        let diff_size = oxideboy::simple_diff::generate(&base_state, &new_state, &mut diff).unwrap();
+        let diff_compressed_size = encoder.compress(&diff, &mut compress_out).unwrap();
         total_size += diff_compressed_size;
         // apply_diff(&base_state, &new_state, &diff);
 

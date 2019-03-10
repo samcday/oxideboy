@@ -1,3 +1,4 @@
+use oxideboy::dmg::*;
 use oxideboy::*;
 use sdl2::audio::{AudioSpecDesired, AudioStatus};
 use sdl2::event::Event;
@@ -21,11 +22,16 @@ fn main() -> Result<()> {
     f.read_to_end(&mut rom)?;
 
     let model_str = env::var("MODEL").ok().unwrap_or_else(|| String::from("DMG0"));
-    let model = if model_str == "DMG" { Model::DMG } else { Model::DMG0 };
+    let model = if model_str == "DMG" { Model::DMGABC } else { Model::DMG0 };
 
-    let mut gb = Gameboy::new(model, rom);
+    let mut gb = DMG::new(model, &rom);
+    if env::var("RUN_BOOTROM").ok().unwrap_or_else(|| String::from("0")) != "1" {
+        gb.skip_bootrom(&rom);
+    }
+    let mut gb_context = Context::new(rom);
 
-    println!("Loaded ROM {:?}", gb.cart.rom_title());
+    // TODO:
+    // println!("Loaded ROM {:?}", gb.cart.rom_title());
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
@@ -53,10 +59,6 @@ fn main() -> Result<()> {
         .create_texture_streaming(PixelFormatEnum::RGB565, 160, 144)
         .unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
-
-    if env::var("RUN_BOOTROM").ok().unwrap_or_else(|| String::from("0")) != "1" {
-        gb.skip_bootrom();
-    }
 
     if env::var("MUTE").ok().unwrap_or_else(|| String::from("0")) != "1" {
         audio_device.resume();
@@ -87,8 +89,7 @@ fn main() -> Result<()> {
         canvas.present();
     };
 
-    let mut throwaway_samples = true;
-    let mut throwaway_count = 44100;
+    let mut frame_count = 0;
     let mut frames = 0;
     let mut fps_timer = Instant::now();
     let sec = Duration::from_secs(1);
@@ -136,16 +137,17 @@ fn main() -> Result<()> {
                     Keycode::Return => gb.joypad.start = true,
                     Keycode::RShift => gb.joypad.select = true,
 
-                    Keycode::F7 => {
-                        save_state.clear();
-                        gb.save_state(&mut save_state);
-                    }
-                    Keycode::F8 => {
-                        if !save_state.is_empty() {
-                            gb.load_state(&save_state);
-                            audio_device.clear();
-                        }
-                    }
+                    // TODO:
+                    // Keycode::F7 => {
+                    //     save_state.clear();
+                    //     gb.save_state(&mut save_state);
+                    // }
+                    // Keycode::F8 => {
+                    //     if !save_state.is_empty() {
+                    //         gb.load_state(&save_state);
+                    //         audio_device.clear();
+                    //     }
+                    // }
                     Keycode::L => {
                         limit = !limit;
                         audio_device.clear();
@@ -168,32 +170,36 @@ fn main() -> Result<()> {
         }
 
         if !paused {
-            gb.apu.sample_queue.clear();
             for _ in 0..17556 {
-                gb.run_instruction();
+                gb.run_instruction(&mut gb_context);
 
-                if gb.new_frame {
-                    gb_buffer.copy_from_slice(&gb.ppu.framebuffer);
+                if gb.frame_count > frame_count {
+                    frame_count = gb.frame_count;
+                    gb_buffer.copy_from_slice(&gb_context.current_framebuffer());
                 }
             }
 
-            let mut samples = &gb.apu.sample_queue[..];
-            if throwaway_samples {
-                if throwaway_count > samples.len() {
-                    throwaway_count -= samples.len();
-                    samples = &[];
-                } else {
-                    samples = &samples[throwaway_count..];
-                    throwaway_samples = false;
-                }
-            }
+            // if throwaway_samples {
+            //     let mut samples = samples.skip_while(|_| {
 
-            if audio_device.status() == AudioStatus::Playing {
-                if !limit {
-                    audio_device.clear();
+            //     });
+            //     if throwaway_count > samples.len() {
+            //         throwaway_count -= samples.len();
+            //         samples = &[];
+            //     } else {
+            //         samples = &samples[throwaway_count..];
+            //         throwaway_samples = false;
+            //     }
+            // }
+
+            gb_context.drain_audio_samples(|samples| {
+                if audio_device.status() == AudioStatus::Playing {
+                    if !limit {
+                        audio_device.clear();
+                    }
+                    audio_device.queue(samples);
                 }
-                audio_device.queue(samples);
-            }
+            });
         }
 
         if limit {

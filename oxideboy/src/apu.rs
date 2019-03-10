@@ -2,6 +2,7 @@
 //! TODO: more overview info here.
 
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 const SAMPLE_RATE: f64 = 44100.0;
 const DUTY_CYCLES: [[f32; 8]; 4] = [
@@ -31,10 +32,6 @@ pub struct Apu {
     chan4: Channel4,     // Noise voice
 
     wave_ram: [u8; 32],
-
-    // TODO: don't really like this here
-    #[serde(skip)]
-    pub sample_queue: Vec<f32>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -274,7 +271,7 @@ impl Apu {
     }
 
     /// Advances the APU by a single CPU clock step.
-    pub fn clock(&mut self) {
+    pub fn clock(&mut self, sample_queue: &mut VecDeque<f32>) {
         if !self.enabled {
             return;
         }
@@ -349,7 +346,13 @@ impl Apu {
         let cycles_per_sample = 1_048_576.0 / SAMPLE_RATE;
         if self.sample_cycles >= cycles_per_sample {
             self.sample_cycles -= cycles_per_sample;
-            self.generate_sample();
+
+            // TODO: check we don't exceed max sample capacity (what is that?)
+            if !cfg!(test) {
+                let (l, r) = self.generate_sample();
+                sample_queue.push_back(l);
+                sample_queue.push_back(r);
+            }
         }
     }
 
@@ -362,7 +365,7 @@ impl Apu {
         }
     }
 
-    fn generate_sample(&mut self) {
+    fn generate_sample(&mut self) -> (f32, f32) {
         let l = 0.0;
         let r = 0.0;
 
@@ -379,12 +382,7 @@ impl Apu {
         let l = l * f32::from(self.left_vol) / 7.;
         let r = r * f32::from(self.right_vol) / 7.;
 
-        if cfg!(test) {
-            return;
-        }
-
-        self.sample_queue.push(l);
-        self.sample_queue.push(r);
+        (l, r)
     }
 
     pub fn reg_nr10_read(&self) -> u8 {

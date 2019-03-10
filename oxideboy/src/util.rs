@@ -15,3 +15,107 @@ pub const BIT_REVERSE_TABLE: [u8; 256] = [
     0x27, 0xA7, 0x67, 0xE7, 0x17, 0x97, 0x57, 0xD7, 0x37, 0xB7, 0x77, 0xF7, 0x0F, 0x8F, 0x4F, 0xCF, 0x2F, 0xAF, 0x6F,
     0xEF, 0x1F, 0x9F, 0x5F, 0xDF, 0x3F, 0xBF, 0x7F, 0xFF,
 ];
+
+// Until Rust gets support for const generics, we need to create "glue" types to wrap our big array types in order to
+// get Serde to correctly serialize them as byte array blobs, which is *significantly* faster than the "Seq" fallback
+// that shims like the serde-big-array crate use. Seriously, like, nearly 100x faster. Thankfully Rust is awesome and
+// lets us implement a bunch of std::ops traits, so we can still index/deref the wrapped data transparently.
+// IMPORTANT: memory segments can only be created out of primitive types or structs with repr(C) layout. We do some
+// ugly unsafe shit below to shuffle things in and out as &[u8] slices.
+#[macro_export]
+macro_rules! memory_segment {
+    ( $name:ident; $type:tt; $size:tt ) => {
+        #[repr(C)]
+        pub struct $name([$type; $size]);
+
+        impl Default for $name {
+            fn default() -> $name {
+                $name([Default::default(); $size])
+            }
+        }
+
+        #[allow(unused)]
+        impl $name {
+            fn as_ptr(&self) -> *const $type {
+                self.0.as_ptr()
+            }
+
+            fn iter(&self) -> std::slice::Iter<$type> {
+                self.0.iter()
+            }
+        }
+
+        impl std::ops::Index<usize> for $name {
+            type Output = $type;
+
+            fn index(&self, index: usize) -> &$type {
+                &self.0[index]
+            }
+        }
+        impl std::ops::IndexMut<usize> for $name {
+            fn index_mut(&mut self, index: usize) -> &mut $type {
+                &mut self.0[index]
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = [$type];
+
+            fn deref(&self) -> &[$type] {
+                &self.0
+            }
+        }
+
+        impl serde::Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                let slice: &[u8] = unsafe {
+                    std::slice::from_raw_parts(self.0.as_ptr() as *const u8, std::mem::size_of::<$type>() * $size)
+                };
+                serializer.serialize_bytes(slice)
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<$name, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct ArrayVisitor;
+
+                impl<'de> serde::de::Visitor<'de> for ArrayVisitor {
+                    type Value = $name;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        formatter.write_str(&format!("a byte array of {} elements", $size))
+                    }
+
+                    fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        let expected_size = std::mem::size_of::<$type>() * $size;
+
+                        if value.len() != expected_size {
+                            return Err(E::custom(format!(
+                                "expected byte array of {:x}, but this is {:x}",
+                                $size,
+                                value.len()
+                            )));
+                        }
+                        let mut segment: $name = Default::default();
+                        unsafe {
+                            let dst = segment.0.as_mut_ptr() as *mut u8;
+                            std::ptr::copy(value.as_ptr(), dst, expected_size);
+                        }
+                        Ok(segment)
+                    }
+                }
+
+                deserializer.deserialize_bytes(ArrayVisitor)
+            }
+        }
+    };
+}

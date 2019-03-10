@@ -30,7 +30,7 @@ use std::io::prelude::*;
 pub const DIFF_WINDOW: usize = 64;
 
 /// Generates a diff between the base data and the new data. Diff is written to provided Write sink.
-pub fn generate<W: Write>(base: &[u8], new: &[u8], mut w: W) -> std::io::Result<()> {
+pub fn generate<W: Write>(base: &[u8], new: &[u8], mut w: W) -> std::io::Result<usize> {
     // This whole deal only works if our two blobs are the same size.
     assert_eq!(base.len(), new.len());
 
@@ -76,15 +76,17 @@ pub fn generate<W: Write>(base: &[u8], new: &[u8], mut w: W) -> std::io::Result<
         chunks.push((chunk_start * DIFF_WINDOW, base.len() - (chunk_start * DIFF_WINDOW)));
     }
 
+    let mut diff_size = 4;
     w.write_u32::<LittleEndian>(chunks.len() as u32)?;
 
     for (chunk_offset, chunk_len) in chunks {
+        diff_size += 8 + chunk_len;
         w.write_u32::<LittleEndian>(chunk_offset as u32)?;
         w.write_u32::<LittleEndian>(chunk_len as u32)?;
         w.write(&new[chunk_offset..chunk_offset + chunk_len])?;
     }
 
-    Ok(())
+    Ok(diff_size)
 }
 
 /// Applies a diff to the given base data. The base data is mutated in place.

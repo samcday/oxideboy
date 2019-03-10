@@ -18,7 +18,6 @@ const COLOR_MAPPING: [u16; 4] = [0xE7DA, 0x8E0E, 0x334A, 0x08c4];
 
 memory_segment! { Tiles; u8; 0x1800 }
 memory_segment! { Tilemap; u8; 0x800 }
-memory_segment! { Framebuffer; u16; SCREEN_SIZE }
 memory_segment! { OamTable; OAMEntry; 40 }
 
 #[derive(Deserialize, Serialize)]
@@ -60,9 +59,6 @@ pub struct Ppu {
     pub scanline_objs: [(usize, usize); 10],
     pub scanline_obj_count: usize,
     pub mode_cycles: u8,
-
-    #[serde(skip)]
-    pub framebuffer: Framebuffer,
 
     mode3_extra_cycles: u8,
 
@@ -157,7 +153,6 @@ impl Default for Ppu {
             scanline_objs: [(0, 0); 10],
             scanline_obj_count: 0,
             mode_cycles: 0,
-            framebuffer: Default::default(),
 
             mode3_extra_cycles: 0,
             dirty: false,
@@ -171,20 +166,23 @@ impl Ppu {
         Default::default()
     }
 
-    pub fn clock(&mut self, interrupts: &mut InterruptController, new_frame: &mut bool) {
+    pub fn clock(&mut self, framebuffer: &mut [u16], interrupts: &mut InterruptController) -> bool {
         if !self.enabled {
-            return;
+            return false;
         }
 
+        let mut new_frame = false;
         self.mode_cycles += 1;
 
         match self.mode {
             Mode::Mode0(n) => self.mode_0_hblank(n, interrupts),
             Mode::FirstMode0 => self.first_mode_0_hblank(),
-            Mode::Mode1 => self.mode_1_vblank(interrupts, new_frame),
+            Mode::Mode1 => self.mode_1_vblank(interrupts, &mut new_frame),
             Mode::Mode2 => self.mode_2_oam_search(interrupts),
-            Mode::Mode3 => self.mode_3_pixel_transfer(),
+            Mode::Mode3 => self.mode_3_pixel_transfer(framebuffer),
         }
+
+        new_frame
     }
 
     pub fn first_mode_0_hblank(&mut self) {
@@ -339,7 +337,7 @@ impl Ppu {
         }
     }
 
-    pub fn mode_3_pixel_transfer(&mut self) {
+    pub fn mode_3_pixel_transfer(&mut self, framebuffer: &mut [u16]) {
         if self.mode_cycles == 1 {
             self.reported_mode = 3;
             self.oam_allow_read = false;
@@ -350,7 +348,7 @@ impl Ppu {
             self.update_stat_interrupt(None, |state| state.oam_active = false);
 
             self.calculate_line_overhead();
-            self.draw_line();
+            self.draw_line(framebuffer);
         }
 
         if self.mode_cycles == 2 {
@@ -425,7 +423,7 @@ impl Ppu {
     /// This method is used when we can "get away with it". That is, if the CPU isn't trying to modify any PPU-related
     /// registers in the middle of a Mode 3, then we don't need to run the complex (and slower) state machine, we can
     /// just rasterize the whole line in one go.
-    pub fn draw_line(&mut self) {
+    pub fn draw_line(&mut self, framebuffer: &mut [u16]) {
         let mut skip = self.scx % 8; // Throw away the first self.scx % 8 pixels. This is how fine scrolling is done.
         let mut in_win = false;
 
@@ -547,7 +545,7 @@ impl Ppu {
         #[allow(clippy::needless_range_loop)]
         for i in 0..160 {
             let pixel = COLOR_MAPPING[pixels[i]];
-            self.framebuffer[framebuffer_base + i] = pixel;
+            framebuffer[framebuffer_base + i] = pixel;
         }
     }
 
