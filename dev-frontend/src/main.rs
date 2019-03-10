@@ -71,7 +71,6 @@ fn main() -> Result<()> {
     }
 
     let mut save_state: Vec<u8> = Vec::new();
-    let mut gb_buffer = [0; ppu::SCREEN_SIZE];
     let mut limit = false;
     let mut paused = false;
     let print_fps = env::var("PRINT_FPS").ok().unwrap_or_else(|| String::from("0")) == "1";
@@ -79,14 +78,11 @@ fn main() -> Result<()> {
     let start = Instant::now();
     let mut next_frame = FRAME_TIME;
 
-    let mut update_fb = |gb_buffer: &[u16]| {
+    let mut update_fb = |framebuffer: &[u16]| {
         texture
             .with_lock(None, |buffer: &mut [u8], _: usize| {
-                // TODO: clippy doesn't like this because it can apparently lead to undefined behaviour.
-                // Spent a few mins googling and couldn't figure out the idiomatic way to do this...
-                #[allow(clippy::cast_ptr_alignment)]
-                let buffer = unsafe { slice::from_raw_parts_mut(buffer.as_ptr() as *mut u16, 160 * 144) };
-                buffer.copy_from_slice(&gb_buffer[..]);
+                let framebuffer = unsafe { slice::from_raw_parts(framebuffer.as_ptr() as *mut u8, 160 * 144 * 2) };
+                buffer.copy_from_slice(&framebuffer);
             })
             .unwrap();
 
@@ -95,7 +91,6 @@ fn main() -> Result<()> {
         canvas.present();
     };
 
-    let mut frame_count = 0;
     let mut frames = 0;
     let mut fps_timer = Instant::now();
     let sec = Duration::from_secs(1);
@@ -178,11 +173,6 @@ fn main() -> Result<()> {
         if !paused {
             for _ in 0..17556 {
                 gb.run_instruction(&mut gb_context);
-
-                if gb.frame_count > frame_count {
-                    frame_count = gb.frame_count;
-                    gb_buffer.copy_from_slice(&gb_context.current_framebuffer());
-                }
             }
 
             // if throwaway_samples {
@@ -209,15 +199,14 @@ fn main() -> Result<()> {
         }
 
         if limit {
-            update_fb(&gb_buffer);
-
+            update_fb(gb_context.current_framebuffer());
             let elapsed = start.elapsed();
             if elapsed < next_frame {
                 std::thread::sleep(next_frame - elapsed);
             }
             next_frame += FRAME_TIME;
         } else if start.elapsed() >= next_frame {
-            update_fb(&gb_buffer);
+            update_fb(gb_context.current_framebuffer());
             next_frame += FRAME_TIME;
         }
 
