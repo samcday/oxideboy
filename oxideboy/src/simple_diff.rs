@@ -17,7 +17,7 @@
 //! the chunks follow. Each chunk starts with a header containing first a u32 denoting the offset where the chunk should
 //! be applied to, followed by a u32 indicating the length of the chunk.
 
-use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::prelude::*;
 
 /// How big is the window of data we compare when building the diff? Setting this number higher makes the diff run
@@ -29,68 +29,50 @@ use std::io::prelude::*;
 /// compression ratio continues to suffer the higher the window gets.
 pub const DIFF_WINDOW: usize = 64;
 
-/// Generates a diff between the base data and the new data. Results are written into the diff slice.
-pub fn generate(base: &[u8], new: &[u8], diff: &mut [u8]) -> usize {
+/// Generates a diff between the base data and the new data. Diff is written to provided Write sink.
+pub fn generate<W: Write>(base: &[u8], new: &[u8], mut w: W) -> std::io::Result<()> {
     // This whole deal only works if our two blobs are the same size.
     assert_eq!(base.len(), new.len());
-    // Diff memory area needs to be at least as big as the data size + 12 bytes for diff format overhead.
-    // This is for the pathological case where absolutely no chunks matched, in which case the "diff" will just be the
-    // entirety of the new data with the chunk header + length header.
-    assert!(diff.len() >= base.len() + 12);
 
     let mut chunk_start: usize = 0;
     let mut chunk_end: usize = 0;
     let mut in_chunk = false;
-    let mut chunk_count = 0;
-    let mut diff_size: usize = 4;
 
-    fn write_chunk(data: &[u8], offset: usize, len: usize, diff: &mut [u8], diff_size: &mut usize) {
-        LittleEndian::write_u32(&mut diff[*diff_size..*diff_size + 4], offset as u32);
-        *diff_size += 4;
-
-        LittleEndian::write_u32(&mut diff[*diff_size..*diff_size + 4], len as u32);
-        *diff_size += 4;
-
-        diff[*diff_size..*diff_size + len].copy_from_slice(&data[offset..offset + len]);
-        *diff_size += len;
-    }
-
-    for (i, (l, r)) in base.chunks(DIFF_WINDOW).zip(new.chunks(DIFF_WINDOW)).enumerate() {
-        // This comparison is fast because https://github.com/rust-lang/rust/pull/32699/files
-        // Rust specializes u8 slice comparisons with a memcmp call. Neat.
-        if l != r {
-            if !in_chunk {
-                in_chunk = true;
-                chunk_start = i;
+    let mut chunks = base
+        .chunks(DIFF_WINDOW)
+        .zip(new.chunks(DIFF_WINDOW))
+        .enumerate()
+        .filter_map(|(i, (l, r))| {
+            // This comparison is fast because https://github.com/rust-lang/rust/pull/32699/files
+            // Rust specializes u8 slice comparisons with a memcmp call. Neat.
+            if l != r {
+                if !in_chunk {
+                    in_chunk = true;
+                    chunk_start = i;
+                }
+                chunk_end = i;
+            } else if in_chunk {
+                in_chunk = false;
+                return Some((chunk_start * DIFF_WINDOW, (chunk_end - chunk_start + 1) * DIFF_WINDOW));
             }
-            chunk_end = i;
-        } else if in_chunk {
-            chunk_count += 1;
-            write_chunk(
-                new,
-                chunk_start * DIFF_WINDOW,
-                (chunk_end - chunk_start + 1) * DIFF_WINDOW,
-                diff,
-                &mut diff_size,
-            );
-            in_chunk = false;
-        }
-    }
+            None
+        })
+        .collect::<Vec<(usize, usize)>>();
 
     // Flush the remaining chunk if there is one.
     if in_chunk {
-        chunk_count += 1;
-        write_chunk(
-            new,
-            chunk_start * DIFF_WINDOW,
-            base.len() - (chunk_start * DIFF_WINDOW),
-            diff,
-            &mut diff_size,
-        );
+        chunks.push((chunk_start * DIFF_WINDOW, base.len() - (chunk_start * DIFF_WINDOW)));
     }
 
-    LittleEndian::write_u32(&mut diff[0..4], chunk_count);
-    diff_size
+    w.write_u32::<LittleEndian>(chunks.len() as u32)?;
+
+    for (chunk_offset, chunk_len) in chunks {
+        w.write_u32::<LittleEndian>(chunk_offset as u32)?;
+        w.write_u32::<LittleEndian>(chunk_len as u32)?;
+        w.write(&new[chunk_offset..chunk_offset + chunk_len])?;
+    }
+
+    Ok(())
 }
 
 /// Applies a diff to the given base data. The base data is mutated in place.

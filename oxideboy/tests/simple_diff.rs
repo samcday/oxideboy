@@ -8,10 +8,10 @@ fn simple_diff_no_changes() {
     let base = vec![1, 2, 3];
     let new = vec![1, 2, 3];
 
-    let mut diff = [0; 15];
-    let diff_size = generate(&base, &new, &mut diff);
+    let mut diff = vec![];
+    generate(&base, &new, &mut diff).unwrap();
 
-    assert_eq!(diff_size, 4);
+    assert_eq!(diff.len(), 4);
     assert_eq!(LittleEndian::read_u32(&diff), 0);
 }
 
@@ -21,8 +21,8 @@ fn simple_diff_whole_diff() {
     let base = vec![3, 2, 1];
     let new = vec![1, 2, 3];
 
-    let mut diff = [0; 15];
-    generate(&base, &new, &mut diff);
+    let mut diff = vec![];
+    generate(&base, &new, &mut diff).unwrap();
 
     let mut rdr = &diff[..];
     // Should be 1 chunk.
@@ -44,8 +44,8 @@ fn simple_diff_finish_last_chunk() {
     base.push(1);
     new.push(3);
 
-    let mut diff = [0; DIFF_WINDOW + 13];
-    generate(&base, &new, &mut diff);
+    let mut diff = vec![];
+    generate(&base, &new, &mut diff).unwrap();
 
     let mut rdr = &diff[..];
     // Should be 1 chunk.
@@ -72,8 +72,8 @@ fn simple_diff_chunk_end() {
     base[DIFF_WINDOW * 3 - 1] = 2;
     new[DIFF_WINDOW * 3 - 1] = 4;
 
-    let mut diff = [0; DIFF_WINDOW * 3 + 12];
-    generate(&base, &new, &mut diff);
+    let mut diff = vec![];
+    generate(&base, &new, &mut diff).unwrap();
 
     let mut rdr = &diff[..];
     // Should be 2 chunks.
@@ -101,10 +101,10 @@ fn simple_diff_apply() {
     let mut base = vec![1, 2, 3];
     let new = vec![3, 2, 1];
 
-    let mut diff = [0; 15];
-    let diff_size = generate(&base, &new, &mut diff);
+    let mut diff = vec![];
+    generate(&base, &new, &mut diff).unwrap();
 
-    apply(&mut base, &diff[0..diff_size]);
+    apply(&mut base, &diff[0..diff.len()]);
 
     assert_eq!(&base, &new);
 }

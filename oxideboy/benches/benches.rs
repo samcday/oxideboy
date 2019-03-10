@@ -101,12 +101,14 @@ fn diff_small(bench: &mut Bencher) {
     let base_state = &DIFF_STATES.0;
     let new_state = &DIFF_STATES.1;
 
-    let mut diff_out = vec![0; base_state.len() + 12];
-    let diff_size = simple_diff::generate(&base_state, &new_state, &mut diff_out);
+    let mut diff_out = vec![];
+    simple_diff::generate(&base_state, &new_state, &mut diff_out).unwrap();
+    let diff_size = diff_out.len();
 
     bench.iter(|| {
-        let size = simple_diff::generate(&base_state, &new_state, &mut diff_out);
-        assert_eq!(size, diff_size);
+        diff_out.clear();
+        simple_diff::generate(&base_state, &new_state, &mut diff_out).unwrap();
+        assert_eq!(diff_out.len(), diff_size);
     });
 }
 
@@ -114,13 +116,13 @@ fn diff_small_apply(bench: &mut Bencher) {
     let base_state = &DIFF_STATES.0;
     let new_state = &DIFF_STATES.1;
 
-    let mut diff_out = vec![0; base_state.len() + 12];
-    let diff_size = simple_diff::generate(&base_state, &new_state, &mut diff_out);
+    let mut diff_out = vec![];
+    simple_diff::generate(&base_state, &new_state, &mut diff_out).unwrap();
 
     let mut rebuilt = base_state.clone();
 
     bench.iter(|| {
-        simple_diff::apply(&mut rebuilt, &diff_out[0..diff_size]);
+        simple_diff::apply(&mut rebuilt, &diff_out);
     });
 }
 
