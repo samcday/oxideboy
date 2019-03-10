@@ -38,11 +38,13 @@ pub fn generate<W: Write>(base: &[u8], new: &[u8], mut w: W) -> std::io::Result<
     let mut chunk_end: usize = 0;
     let mut in_chunk = false;
 
-    let mut chunks = base
-        .chunks(DIFF_WINDOW)
-        .zip(new.chunks(DIFF_WINDOW))
+    // There can't be more than base.len() / DIFF_WINDOW chunks at worst.
+    let mut chunks = Vec::with_capacity(base.len() / DIFF_WINDOW);
+
+    base.chunks_exact(DIFF_WINDOW)
+        .zip(new.chunks_exact(DIFF_WINDOW))
         .enumerate()
-        .filter_map(|(i, (l, r))| {
+        .for_each(|(i, (l, r))| {
             // This comparison is fast because https://github.com/rust-lang/rust/pull/32699/files
             // Rust specializes u8 slice comparisons with a memcmp call. Neat.
             if l != r {
@@ -53,11 +55,21 @@ pub fn generate<W: Write>(base: &[u8], new: &[u8], mut w: W) -> std::io::Result<
                 chunk_end = i;
             } else if in_chunk {
                 in_chunk = false;
-                return Some((chunk_start * DIFF_WINDOW, (chunk_end - chunk_start + 1) * DIFF_WINDOW));
+                chunks.push((chunk_start * DIFF_WINDOW, (chunk_end - chunk_start + 1) * DIFF_WINDOW))
             }
-            None
-        })
-        .collect::<Vec<(usize, usize)>>();
+        });
+
+    // Check last segment of data that did not fit inside our diff window.
+    let remaining = base.len() % DIFF_WINDOW;
+    if remaining > 0 {
+        let remaining_range = base.len() - remaining..base.len();
+        if base[remaining_range.clone()] != new[remaining_range] {
+            if !in_chunk {
+                chunk_start = base.len() / DIFF_WINDOW;
+            }
+            in_chunk = true;
+        }
+    }
 
     // Flush the remaining chunk if there is one.
     if in_chunk {
