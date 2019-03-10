@@ -1,4 +1,5 @@
 use oxideboy::dmg::*;
+use oxideboy::rom::Rom;
 use oxideboy::*;
 use sdl2::audio::{AudioSpecDesired, AudioStatus};
 use sdl2::event::Event;
@@ -24,6 +25,7 @@ fn main() -> Result<()> {
     let model_str = env::var("MODEL").ok().unwrap_or_else(|| String::from("DMG0"));
     let model = if model_str == "DMG" { Model::DMGABC } else { Model::DMG0 };
 
+    let rom = Rom::new(rom.into()).expect("Loading ROM failed");
     let mut gb = DMG::new(model, &rom);
     if env::var("RUN_BOOTROM").ok().unwrap_or_else(|| String::from("0")) != "1" {
         gb.skip_bootrom(&rom);
@@ -31,7 +33,7 @@ fn main() -> Result<()> {
     let mut gb_context = Context::new(rom);
 
     // TODO:
-    // println!("Loaded ROM {:?}", gb.cart.rom_title());
+    println!("Loaded ROM {:?}", gb_context.rom.title);
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();

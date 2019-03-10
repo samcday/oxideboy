@@ -1,10 +1,15 @@
-use oxideboy::*;
+use oxideboy::dmg::{Model, DMG};
+use oxideboy::rom::Rom;
+use oxideboy::Context;
 use std::time::Instant;
 
 fn run_blargg_serial_test(rom: &[u8]) {
+    let rom = Rom::new(rom.into()).unwrap();
+    let mut gb = DMG::new(Model::DMGABC, &rom);
+    gb.skip_bootrom(&rom);
+    let mut gb_ctx = Context::new(rom);
+
     let mut serial_output = String::new();
-    let mut gb = Gameboy::new(Model::DMG, rom.to_vec());
-    gb.skip_bootrom();
 
     let start = Instant::now();
     loop {
@@ -15,7 +20,7 @@ fn run_blargg_serial_test(rom: &[u8]) {
             );
         }
 
-        gb.run_instruction();
+        gb.run_instruction(&mut gb_ctx);
         let sb = gb.serial.serial_out.take();
         if sb.is_some() {
             serial_output.push(sb.unwrap() as char);
@@ -31,16 +36,17 @@ fn run_blargg_serial_test(rom: &[u8]) {
 }
 
 fn run_blargg_harness_test(rom: &[u8]) {
-    let mut gb = Gameboy::new(Model::DMG, rom.to_vec());
+    let rom = Rom::new(rom.into()).unwrap();
+    let mut gb = DMG::new(Model::DMGABC, &rom);
+    gb.skip_bootrom(&rom);
+    let mut gb_ctx = Context::new(rom);
 
     // The test runner writes the magic value to RAM before specifying that tests are in progress.
     // Which is kinda dumb. Anyway, we force that value now so we know when tests are *actually* done.
     gb.cart.ram[0] = 0x80;
 
-    gb.skip_bootrom();
-
     loop {
-        gb.run_instruction();
+        gb.run_instruction(&mut gb_ctx);
 
         // Wait until the magic value is present in RAM and the test is signalled as complete.
         if gb.cart.ram[1] == 0xDE && gb.cart.ram[2] == 0xB0 && gb.cart.ram[3] == 0x61 {

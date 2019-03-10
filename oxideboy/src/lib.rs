@@ -6,6 +6,7 @@ pub mod dmg;
 pub mod interrupt;
 pub mod joypad;
 pub mod ppu;
+pub mod rom;
 pub mod serial;
 pub mod simple_diff;
 pub mod timer;
@@ -13,6 +14,7 @@ pub mod util;
 
 // use bincode;
 // use serde::{Deserialize, Serialize};
+use crate::rom::Rom;
 use std::collections::VecDeque;
 
 pub const CYCLES_PER_MICRO: f32 = 1_048_576.0 / 1_000_000.0;
@@ -23,14 +25,14 @@ pub const CYCLES_PER_MICRO: f32 = 1_048_576.0 / 1_000_000.0;
 /// snapshot, that would be extremely wasteful. We also don't need to calculate audio samples or frames when we're
 /// in the process of replaying a Gameboy to seek to a new rewind state.
 pub struct Context {
-    rom: Vec<u8>,
+    pub rom: Rom,
     framebuffers: [[u16; ppu::SCREEN_SIZE]; 2],
     current_framebuffer: usize,
     audio_samples: VecDeque<f32>,
 }
 
 impl Context {
-    pub fn new(rom: Vec<u8>) -> Context {
+    pub fn new(rom: Rom) -> Context {
         Context {
             rom,
             framebuffers: [[0; ppu::SCREEN_SIZE]; 2],
@@ -104,12 +106,6 @@ impl Gameboy {
     //     while self.cycle_count < desired_cycles {
     //         self.cpu.step(&mut self);
     //     }
-    // }
-
-    // pub fn core_panic(&self, msg: String) -> ! {
-    //     panic!(
-    //         "{}\nIME: {},{}\nHalt: {}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}",
-    //         msg, self.cpu.ime, self.cpu.ime_defer, self.cpu.halted, self.cpu.a, self.cpu.b, self.cpu.c, self.cpu.d, self.cpu.e, self.cpu.f.pack(), self.cpu.h, self.cpu.l, self.cpu.sp, self.cpu.pc);
     // }
 }
 */

@@ -5,6 +5,8 @@
 //! amounts of ROM data that can be paged into the available space via writes to certain locations. We implement the
 //! various types of MBCs (Memory Bank Controllers) here.
 
+use crate::rom::CartridgeType;
+use crate::rom::Rom;
 use serde::{Deserialize, Serialize};
 use serde_bytes;
 
@@ -25,48 +27,14 @@ pub struct Cartridge {
     pub ram: Vec<u8>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-enum CartridgeType {
-    ROMOnly,
-    MBC1,
-    MBC3,
-}
-
-impl Default for CartridgeType {
-    fn default() -> Self {
-        CartridgeType::ROMOnly
-    }
-}
-
 impl Cartridge {
-    pub fn from_rom(rom: &[u8]) -> Self {
-        let cart_type = match rom[0x147] {
-            0 => CartridgeType::ROMOnly,
-            1 | 2 | 3 => CartridgeType::MBC1,
-            0x12 | 0x13 => CartridgeType::MBC3,
-            v => panic!("Unsupported cartridge type: {:X}", v),
-        };
-        let rom_bank_mask = match rom[0x148] {
-            v @ 0...6 => 2u8.pow(u32::from(v) + 1),
-            0x52 => 72,
-            0x53 => 80,
-            0x54 => 96,
-            v => panic!("Unexpected ROM size {}", v),
-        } - 1;
-        let (ram, ram_bank_mask) = match cart_type {
-            CartridgeType::ROMOnly => (Vec::new(), 0),
-            _ => match rom[0x149] {
-                0 => (Vec::new(), 0),
-                1 => (vec![0; 2048], 0),
-                2 => (vec![0; 8192], 0),
-                3 => (vec![0; 32768], 0b11),
-                4 => (vec![0; 131_072], 0b1111),
-                5 => (vec![0; 65_536], 0b111),
-                v => panic!("Unexpected RAM size {} encountered", v),
-            },
-        };
+    pub fn from_rom(rom: &Rom) -> Self {
+        let rom_bank_mask = (rom.rom_banks - 1) as u8;
+        let ram = vec![0; rom.ram_size];
+        let ram_bank_mask = (ram.len() / 0x2000).saturating_sub(1) as u8;
+
         Self {
-            cart_type,
+            cart_type: rom.cart_type,
             ram,
             hi_rom_bank: 1,
             rom_bank_mask,
@@ -75,15 +43,6 @@ impl Cartridge {
             ..Default::default()
         }
     }
-
-    // TODO:
-    /*pub fn rom_title(&self) -> &str {
-        self.rom[0x134..=0x143]
-            .split(|b| *b == 0)
-            .next()
-            .and_then(|v| std::str::from_utf8(v).ok())
-            .unwrap_or(&"UNKNOWN")
-    }*/
 
     pub fn rom_lo(&self, rom: &[u8], addr: usize) -> u8 {
         match self.cart_type {

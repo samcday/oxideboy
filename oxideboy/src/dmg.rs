@@ -11,6 +11,7 @@ use crate::interrupt::InterruptController;
 use crate::joypad::Joypad;
 use crate::ppu::OamCorruptionType;
 use crate::ppu::Ppu;
+use crate::rom::Rom;
 use crate::serial::Serial;
 use crate::timer::Timer;
 use crate::Context;
@@ -54,7 +55,7 @@ pub struct DMG {
     pub timer: Timer,
 }
 
-struct DMGBus<'a> {
+pub struct DMGBus<'a> {
     model: &'a Model,
     bootrom_enabled: &'a mut bool,
     cycle_count: &'a mut u64,
@@ -73,7 +74,7 @@ struct DMGBus<'a> {
 }
 
 impl DMG {
-    pub fn new(model: Model, rom: &[u8]) -> DMG {
+    pub fn new(model: Model, rom: &Rom) -> DMG {
         let cart = Cartridge::from_rom(rom);
 
         DMG {
@@ -96,34 +97,41 @@ impl DMG {
         }
     }
 
+    pub fn bus<'a>(&'a mut self, ctx: &'a mut Context) -> (&mut Cpu, DMGBus) {
+        (
+            &mut self.cpu,
+            DMGBus {
+                context: ctx,
+
+                model: &self.model,
+                cycle_count: &mut self.cycle_count,
+                frame_count: &mut self.frame_count,
+                bootrom_enabled: &mut self.bootrom_enabled,
+
+                apu: &mut self.apu,
+                cart: &mut self.cart,
+                dma: &mut self.dma,
+                hram: &mut self.hram,
+                interrupts: &mut self.interrupts,
+                joypad: &mut self.joypad,
+                ppu: &mut self.ppu,
+                ram: &mut self.ram,
+                serial: &mut self.serial,
+                timer: &mut self.timer,
+            },
+        )
+    }
+
     pub fn run_instruction(&mut self, ctx: &mut Context) {
-        let mut bus = DMGBus {
-            context: ctx,
+        let (cpu, mut bus) = self.bus(ctx);
 
-            model: &self.model,
-            cycle_count: &mut self.cycle_count,
-            frame_count: &mut self.frame_count,
-            bootrom_enabled: &mut self.bootrom_enabled,
-
-            apu: &mut self.apu,
-            cart: &mut self.cart,
-            dma: &mut self.dma,
-            hram: &mut self.hram,
-            interrupts: &mut self.interrupts,
-            joypad: &mut self.joypad,
-            ppu: &mut self.ppu,
-            ram: &mut self.ram,
-            serial: &mut self.serial,
-            timer: &mut self.timer,
-        };
-
-        self.cpu.step(&mut bus);
+        cpu.step(&mut bus);
     }
 
     /// Skips emulating the bootrom startup process (the scrolling Nintendo logo). Emulating it is probably irritating
     /// to a lot of people that just want to pet their Pikachu and don't get the nostalgia from the distinctive startup
     /// chime. Emulating the bootrom also takes a few million CPU cycles, so skipping it in tests is a big speedup.
-    pub fn skip_bootrom(&mut self, rom: &[u8]) {
+    pub fn skip_bootrom(&mut self, rom: &Rom) {
         self.cpu.pc = 0x100;
         self.cpu.sp = 0xFFFE;
 
@@ -198,7 +206,7 @@ impl DMG {
         let mut vram_addr = 0x10;
         let mut src_addr = 0x104;
         for _ in 0..48 {
-            let b = rom[src_addr];
+            let b = rom.data[src_addr];
             src_addr += 1;
             // Double up each bit in the source byte, using sorcery.
             // The best kind of sorcery too: copy/pasted from the interwebz.
@@ -223,7 +231,7 @@ impl DMG {
         if self.model == Model::DMGABC {
             let mut src_addr = 0xD8;
             for _ in 0..8 {
-                let v = rom[src_addr];
+                let v = rom.data[src_addr];
                 self.ppu.vram_write(vram_addr, v);
                 src_addr += 1;
                 vram_addr += 2;
@@ -251,17 +259,23 @@ impl DMG {
 
         self.bootrom_enabled = false;
     }
+
+    pub fn core_panic(&self, msg: String) -> ! {
+        panic!(
+            "{}\nIME: {},{}\nHalt: {}\nRegs:\n\tA=0x{:02X}\n\tB=0x{:02X}\n\tC=0x{:02X}\n\tD=0x{:02X}\n\tE=0x{:02X}\n\tF=0x{:02X}\n\tH=0x{:02X}\n\tL=0x{:02X}\n\tSP={:#04X}\n\tPC={:#04X}",
+            msg, self.cpu.ime, self.cpu.ime_defer, self.cpu.halted, self.cpu.a, self.cpu.b, self.cpu.c, self.cpu.d, self.cpu.e, self.cpu.f.pack(), self.cpu.h, self.cpu.l, self.cpu.sp, self.cpu.pc);
+    }
 }
 
 impl<'a> DMGBus<'a> {
     /// Handles reads from the memory bus. This method is responsible for resolving memory addresses to the correct
     /// memory segments and registers. Generally though, mem_read should be used since it ensures components are
     /// clocked correctly and reads are prevented during situations like active DMA transfers.
-    fn memory_get(&self, addr: u16) -> u8 {
+    pub fn memory_get(&self, addr: u16) -> u8 {
         match addr {
             0x0000...0x0100 if *self.bootrom_enabled => self.bootrom_read(addr),
-            0x0000...0x3FFF => self.cart.rom_lo(&self.context.rom, addr as usize),
-            0x4000...0x7FFF => self.cart.rom_hi(&self.context.rom, (addr - 0x4000) as usize),
+            0x0000...0x3FFF => self.cart.rom_lo(&self.context.rom.data, addr as usize),
+            0x4000...0x7FFF => self.cart.rom_hi(&self.context.rom.data, (addr - 0x4000) as usize),
             0x8000...0x9FFF => self.ppu.vram_read(addr - 0x8000),
             0xA000...0xBFFF => self.cart.ram((addr - 0xA000) as usize),
             0xC000...0xDFFF => self.ram[(addr - 0xC000) as usize],
