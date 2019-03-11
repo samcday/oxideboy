@@ -1,17 +1,14 @@
 mod common;
 
-use oxideboy::dmg::{Model, DMG};
 use oxideboy::rom::Rom;
 use oxideboy::Context;
+use oxideboy::{Gameboy, Model};
 use paste;
 use std::time::Instant;
 
 fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
     let rom = Rom::new(rom.into()).unwrap();
-    let mut gb = DMG::new(model, &rom);
-    if !enable_bootrom {
-        gb.skip_bootrom(&rom);
-    }
+    let mut gb = Gameboy::new(model, &rom, enable_bootrom);
     let mut gb_ctx = Context::new(rom);
 
     let start = Instant::now();
@@ -177,8 +174,7 @@ mbc1_test_cases! {
 fn mooneye_sprite_priority() {
     let rom: &[u8] = include_bytes!("mooneye/manual-only/sprite_priority.gb");
     let rom = Rom::new(rom.into()).unwrap();
-    let mut gb = DMG::new(Model::DMGABC, &rom);
-    gb.skip_bootrom(&rom);
+    let mut gb = Gameboy::new(Model::DMGABC, &rom, false);
     let mut gb_ctx = Context::new(rom);
 
     let start = Instant::now();

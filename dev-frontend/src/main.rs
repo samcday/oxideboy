@@ -1,4 +1,3 @@
-use oxideboy::dmg::*;
 use oxideboy::rom::Rom;
 use oxideboy::*;
 use sdl2::audio::{AudioSpecDesired, AudioStatus};
@@ -28,15 +27,12 @@ fn main() -> Result<()> {
         "MGB" => Model::MGB,
         _ => Model::DMG0,
     };
+    let run_bootrom = env::var("RUN_BOOTROM").ok().unwrap_or_else(|| String::from("0")) != "1";
 
     let rom = Rom::new(rom.into()).expect("Loading ROM failed");
-    let mut gb = DMG::new(model, &rom);
-    if env::var("RUN_BOOTROM").ok().unwrap_or_else(|| String::from("0")) != "1" {
-        gb.skip_bootrom(&rom);
-    }
+    let mut gb = Gameboy::new(model, &rom, run_bootrom);
     let mut gb_context = Context::new(rom);
 
-    // TODO:
     println!("Loaded ROM {:?}", gb_context.rom.title);
 
     let sdl_context = sdl2::init().unwrap();

@@ -1,12 +1,11 @@
-use oxideboy::dmg::{Model, DMG};
 use oxideboy::rom::Rom;
 use oxideboy::Context;
+use oxideboy::{Gameboy, Model};
 use std::time::Instant;
 
 fn run_blargg_serial_test(rom: &[u8]) {
     let rom = Rom::new(rom.into()).unwrap();
-    let mut gb = DMG::new(Model::DMGABC, &rom);
-    gb.skip_bootrom(&rom);
+    let mut gb = Gameboy::new(Model::DMGABC, &rom, false);
     let mut gb_ctx = Context::new(rom);
 
     let mut serial_output = String::new();
@@ -37,8 +36,7 @@ fn run_blargg_serial_test(rom: &[u8]) {
 
 fn run_blargg_harness_test(rom: &[u8]) {
     let rom = Rom::new(rom.into()).unwrap();
-    let mut gb = DMG::new(Model::DMGABC, &rom);
-    gb.skip_bootrom(&rom);
+    let mut gb = Gameboy::new(Model::DMGABC, &rom, false);
     let mut gb_ctx = Context::new(rom);
 
     // The test runner writes the magic value to RAM before specifying that tests are in progress.
