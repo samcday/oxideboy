@@ -7,6 +7,7 @@
 use crate::interrupt::{Interrupt, InterruptController};
 use crate::memory_segment;
 use crate::util::BIT_REVERSE_TABLE;
+use crate::Context;
 use serde::{Deserialize, Serialize};
 use std::slice;
 
@@ -22,9 +23,9 @@ memory_segment! { OamTable; OAMEntry; 40 }
 
 #[derive(Deserialize, Serialize)]
 pub struct Ppu {
-    pub tiles: Tiles,  // 0x8000 - 0x97FF
-    tilemap: Tilemap,  // 0x9800 - 0x9FFF
-    pub oam: OamTable, // 0xFE00 - 0xFDFF
+    pub tiles: Tiles,     // 0x8000 - 0x97FF
+    pub tilemap: Tilemap, // 0x9800 - 0x9FFF
+    pub oam: OamTable,    // 0xFE00 - 0xFDFF
 
     pub enabled: bool,         // 0xFF40 LCDC register bit 7
     win_code_area_hi: bool,    // 0xFF40 LCDC register bit 6
@@ -166,7 +167,7 @@ impl Ppu {
         Default::default()
     }
 
-    pub fn clock(&mut self, framebuffer: &mut [u16], interrupts: &mut InterruptController) -> bool {
+    pub fn clock(&mut self, context: &mut Context, interrupts: &mut InterruptController) -> bool {
         if !self.enabled {
             return false;
         }
@@ -179,7 +180,16 @@ impl Ppu {
             Mode::FirstMode0 => self.first_mode_0_hblank(),
             Mode::Mode1 => self.mode_1_vblank(interrupts, &mut new_frame),
             Mode::Mode2 => self.mode_2_oam_search(interrupts),
-            Mode::Mode3 => self.mode_3_pixel_transfer(framebuffer),
+            Mode::Mode3 => self.mode_3_pixel_transfer(&mut context.next_framebuffer),
+        }
+
+        if new_frame {
+            // Handling a new frame is slightly finicky with our dirty checking.
+            // If we finished the frame and the dirty check was never set, then there's no need to flip buffers. The
+            // current frame is still good (nothing changed). Otherwise, we gotta flip.
+            if self.dirty {
+                context.swap_framebuffers();
+            }
         }
 
         new_frame
@@ -260,7 +270,7 @@ impl Ppu {
                 }
             });
 
-            if self.ly == 144 {
+            if vblank_start {
                 *new_frame = true;
                 interrupts.request(Interrupt::VBlank);
             }
@@ -549,16 +559,36 @@ impl Ppu {
         }
     }
 
+    /// Marks the current frame as dirty. This means we have to redraw the lines from here on out for the rest of this
+    /// frame. Note that we may not mark ourselves dirty until midway through a frame. In that case we need to copy the
+    /// pixel data from the current frame into the next one up to the current line.
+    /// e.g say we were clean from LY=0 to LY=60 and then something changed. We need to copy all pixel data for lines
+    /// 0.. 60 from the current framebuffer into the next one, and then continue drawing new lines into the next one
+    /// as per normal.
+    pub fn mark_dirty(&mut self, context: &mut Context) {
+        self.dirty = true;
+        self.next_dirty = true;
+
+        // Although if we mark dirty after vblank, then that's fine. Just marking ourselves as dirty is enough.
+        if self.ly >= 144 {
+            return;
+        }
+
+        if self.ly > 0 {
+            let bound = 0..usize::from(self.ly) * 160;
+            context.next_framebuffer[bound.clone()].copy_from_slice(&context.current_framebuffer[bound.clone()]);
+        }
+    }
+
     /// Replicate the (bizarre) hardware bugs relating to OAM during PPU Mode2.
     /// In a nutshell, if the CPU even breaths in the general direction of OAM memory locations while the PPU has the
     /// OAM locked for Mode 2 (OAM Search), then weird memory corruption happens. There's different patterns of memory
     /// corruption depending on which instruction the CPU was executing. Here's the weird thing though, in all cases
     /// the CPU wasn't actually even trying to access the OAM memory. It was just doing stuff to CPU 16-bit registers
     /// with values that fall inside of the OAM memory range (0xFE00 - 0xFE9F). Crazy.
-    pub fn maybe_trash_oam(&mut self, corruption_type: OamCorruptionType) {
+    pub fn maybe_trash_oam(&mut self, context: &mut Context, corruption_type: OamCorruptionType) {
         if self.mode == Mode::Mode2 && self.mode_cycles > 0 && self.mode_cycles < 20 {
-            self.dirty = true;
-            self.next_dirty = true;
+            self.mark_dirty(context);
 
             let oam_mem = unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) };
             let mut pos = (self.mode_cycles as usize) * 2 * 4;
@@ -633,14 +663,13 @@ impl Ppu {
         (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr]
     }
 
-    pub fn oam_write(&mut self, addr: usize, v: u8) {
+    pub fn oam_write(&mut self, context: &mut Context, addr: usize, v: u8) {
         if !self.oam_allow_write {
             return; // Writing OAM memory during Mode2 & Mode3 is not permitted.
         }
         let oam = unsafe { slice::from_raw_parts_mut(self.oam.as_ptr() as *mut u8, 160) };
         if oam[addr] != v {
-            self.next_dirty = true;
-            self.dirty = true;
+            self.mark_dirty(context);
         }
         oam[addr] = v;
     }
@@ -657,7 +686,7 @@ impl Ppu {
         }
     }
 
-    pub fn vram_write(&mut self, addr: u16, v: u8) {
+    pub fn vram_write(&mut self, context: &mut Context, addr: u16, v: u8) {
         if !self.vram_allow_write {
             return; // Writing VRAM during Mode3 is not permitted.
         }
@@ -666,15 +695,13 @@ impl Ppu {
 
         if addr < 0x1800 {
             if self.tiles[addr] != v {
-                self.next_dirty = true;
-                self.dirty = true;
+                self.mark_dirty(context);
             }
             self.tiles[addr] = v;
         } else {
             let addr = addr - 0x1800;
             if self.tilemap[addr] != v {
-                self.next_dirty = true;
-                self.dirty = true;
+                self.mark_dirty(context);
             }
             self.tilemap[addr] = v;
         }
@@ -693,12 +720,11 @@ impl Ppu {
     }
 
     /// Write to the 0xFF40 LCDC register
-    pub fn reg_lcdc_write(&mut self, v: u8, interrupts: &mut InterruptController) {
+    pub fn reg_lcdc_write(&mut self, context: &mut Context, v: u8, interrupts: &mut InterruptController) {
         let enabled = v & 0b1000_0000 > 0;
 
         // TODO: can do a better dirty check here. No need to set dirty flags if we didn't change anything important.
-        self.dirty = true;
-        self.next_dirty = true;
+        self.mark_dirty(context);
 
         if enabled {
             self.enabled = true;
@@ -769,70 +795,65 @@ impl Ppu {
     }
 
     /// Write to the 0xFF42 SCY register.
-    pub fn reg_scy_write(&mut self, v: u8) {
+    pub fn reg_scy_write(&mut self, context: &mut Context, v: u8) {
         if self.scy != v {
-            self.dirty = true;
-            self.next_dirty = true;
+            self.mark_dirty(context);
         }
         self.scy = v;
     }
 
     /// Write to the 0xFF43 SCX register.
-    pub fn reg_scx_write(&mut self, v: u8) {
+    pub fn reg_scx_write(&mut self, context: &mut Context, v: u8) {
         if self.scx != v {
-            self.dirty = true;
-            self.next_dirty = true;
+            self.mark_dirty(context);
         }
         self.scx = v;
     }
 
     /// Write to the 0xFF47 BGP register.
-    pub fn reg_bgp_write(&mut self, v: u8) {
+    pub fn reg_bgp_write(&mut self, context: &mut Context, v: u8) {
         if self.bgp.pack() != v {
-            self.dirty = true;
-            self.next_dirty = true;
+            self.mark_dirty(context);
         }
         self.bgp.update(v);
     }
 
     /// Write to the 0xFF48 OBP0 register.
-    pub fn reg_obp0_write(&mut self, v: u8) {
+    pub fn reg_obp0_write(&mut self, context: &mut Context, v: u8) {
         if self.obp0.pack() != v {
-            self.dirty = true;
-            self.next_dirty = true;
+            self.mark_dirty(context);
         }
         self.obp0.update(v);
     }
 
     /// Write to the 0xFF49 OBP1 register.
-    pub fn reg_obp1_write(&mut self, v: u8) {
+    pub fn reg_obp1_write(&mut self, context: &mut Context, v: u8) {
         if self.obp1.pack() != v {
-            self.dirty = true;
-            self.next_dirty = true;
+            self.mark_dirty(context);
         }
         self.obp1.update(v);
     }
 
     /// Write to the 0xFF4A WY register.
-    pub fn reg_wy_write(&mut self, v: u8) {
+    pub fn reg_wy_write(&mut self, context: &mut Context, v: u8) {
         if self.wy != v {
-            self.dirty = true;
-            self.next_dirty = true;
+            self.mark_dirty(context);
         }
         self.wy = v;
     }
 
     /// Write to the 0xFF4B WX register.
-    pub fn reg_wx_write(&mut self, v: u8) {
+    pub fn reg_wx_write(&mut self, context: &mut Context, v: u8) {
         if self.wx != v {
-            self.dirty = true;
-            self.next_dirty = true;
+            self.mark_dirty(context);
         }
         self.wx = v;
     }
 
     /// Write to the 0xFF45 LYC register.
     pub fn reg_lyc_write(&mut self, v: u8, interrupts: &mut InterruptController) {
+        // TODO: mark dirty here? Pretty sure we would need to.
+
         // LYC can be set any time ...
         self.lyc = v;
 

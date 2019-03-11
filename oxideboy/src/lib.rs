@@ -11,8 +11,6 @@ pub mod simple_diff;
 pub mod timer;
 pub mod util;
 
-// use bincode;
-// use serde::{Deserialize, Serialize};
 use crate::apu::Apu;
 use crate::cartridge::Cartridge;
 use crate::cpu::Bus;
@@ -22,11 +20,14 @@ use crate::interrupt::InterruptController;
 use crate::joypad::Joypad;
 use crate::ppu::OamCorruptionType;
 use crate::ppu::Ppu;
+use crate::ppu::SCREEN_SIZE;
 use crate::rom::Rom;
 use crate::serial::Serial;
 use crate::timer::Timer;
+use bincode;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::io::{Read, Write};
 
 static DMG0_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg0.rom");
 static DMG_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg.rom");
@@ -39,47 +40,12 @@ pub const CYCLES_PER_MICRO: f32 = 1_048_576.0 / 1_000_000.0;
 /// rewinding, and also for efficiency reasons. We don't want to serialize the framebuffer and audio samples in every
 /// snapshot, that would be extremely wasteful. We also don't need to calculate audio samples or frames when we're
 /// in the process of replaying a Gameboy to seek to a new rewind state.
+memory_segment! { Framebuffer; u16; SCREEN_SIZE }
 pub struct Context {
     pub rom: Rom,
-    framebuffers: [[u16; ppu::SCREEN_SIZE]; 2],
-    current_framebuffer: usize,
+    pub current_framebuffer: Framebuffer,
+    pub next_framebuffer: Framebuffer,
     audio_samples: VecDeque<f32>,
-}
-
-impl Context {
-    pub fn new(rom: Rom) -> Context {
-        Context {
-            rom,
-            framebuffers: [[0; ppu::SCREEN_SIZE]; 2],
-            current_framebuffer: 0,
-            audio_samples: VecDeque::new(),
-        }
-    }
-
-    /// Returns the framebuffer for the last fully written frame.
-    pub fn current_framebuffer(&mut self) -> &mut [u16] {
-        &mut self.framebuffers[self.current_framebuffer]
-    }
-
-    /// Returns the framebuffer to write the next frame into.
-    pub fn next_framebuffer(&mut self) -> &mut [u16] {
-        &mut self.framebuffers[self.current_framebuffer]
-    }
-
-    pub fn swap_framebuffers(&mut self) {
-        self.current_framebuffer = self.current_framebuffer + 1 & 1;
-    }
-
-    pub fn drain_audio_samples<F: FnMut(&[f32])>(&mut self, mut f: F) {
-        let (l, r) = self.audio_samples.as_slices();
-        if l.len() > 0 {
-            f(l);
-        }
-        if r.len() > 0 {
-            f(r);
-        }
-        self.audio_samples.clear();
-    }
 }
 
 #[derive(Eq, Deserialize, PartialEq, Serialize)]
@@ -111,6 +77,7 @@ memory_segment! { HRam; u8; 0x7F }
 /// Parent structure for a Gameboy emulation session. Contains all the state of the Gameboy CPU and its various
 /// components (LCD, APU, Serial port, timer, IRQ, Joypad, etc). Notably, this struct does *not* hold the framebuffer,
 /// audio sample queue, or ROM. Those are externalized to the Context struct to make rewinds and snapshots cleaner.
+#[derive(Default, Deserialize, Serialize)]
 pub struct Gameboy {
     pub model: Model,
     pub bootrom_enabled: bool,
@@ -148,6 +115,51 @@ pub struct GameboyBus<'a> {
     ram: &'a mut Ram, // 0xC000 - 0xDFFF (and echoed in 0xE000 - 0xFDFF)
     serial: &'a mut Serial,
     timer: &'a mut Timer,
+}
+
+/// Saves the state of a given Gameboy + Context pair. This is a complete save state - including the framebuffers, audio
+/// sample queue, and emulator state.
+pub fn save_state<W: Write>(gb: &Gameboy, ctx: &Context, mut w: W) -> bincode::Result<()> {
+    bincode::serialize_into(&mut w, gb)?;
+    bincode::serialize_into(&mut w, &ctx.current_framebuffer)?;
+    bincode::serialize_into(&mut w, &ctx.next_framebuffer)?;
+    bincode::serialize_into(&mut w, &ctx.audio_samples)?;
+    Ok(())
+}
+
+pub fn load_state<R: Read>(gb: &mut Gameboy, ctx: &mut Context, mut state: R) -> bincode::Result<()> {
+    *gb = bincode::deserialize_from(&mut state)?;
+    ctx.current_framebuffer = bincode::deserialize_from(&mut state)?;
+    ctx.next_framebuffer = bincode::deserialize_from(&mut state)?;
+    ctx.audio_samples = bincode::deserialize_from(&mut state)?;
+
+    Ok(())
+}
+
+impl Context {
+    pub fn new(rom: Rom) -> Context {
+        Context {
+            rom,
+            current_framebuffer: Default::default(),
+            next_framebuffer: Default::default(),
+            audio_samples: VecDeque::new(),
+        }
+    }
+
+    pub fn swap_framebuffers(&mut self) {
+        std::mem::swap(&mut self.current_framebuffer, &mut self.next_framebuffer);
+    }
+
+    pub fn drain_audio_samples<F: FnMut(&[f32])>(&mut self, mut f: F) {
+        let (l, r) = self.audio_samples.as_slices();
+        if l.len() > 0 {
+            f(l);
+        }
+        if r.len() > 0 {
+            f(r);
+        }
+        self.audio_samples.clear();
+    }
 }
 
 impl Gameboy {
@@ -268,20 +280,20 @@ impl Gameboy {
         }
 
         // Setup Nintendo logo in tilemap.
-        let mut addr = 0x1904;
+        let mut tilemap_addr = 0x104;
         for v in 1..=12 {
-            self.ppu.vram_write(addr, v);
-            addr += 1;
+            self.ppu.tilemap[tilemap_addr] = v;
+            tilemap_addr += 1;
         }
 
         if self.model == Model::DMGABC {
-            self.ppu.vram_write(addr, 0x19);
+            self.ppu.tilemap[tilemap_addr] = 0x19;
         }
 
-        addr = 0x1924;
+        tilemap_addr = 0x124;
         for v in 13..=24 {
-            self.ppu.vram_write(addr, v);
-            addr += 1;
+            self.ppu.tilemap[tilemap_addr] = v;
+            tilemap_addr += 1;
         }
         // Copy Nintendo logo data from ROM.
         let mut vram_addr = 0x10;
@@ -299,13 +311,13 @@ impl Gameboy {
                     .wrapping_mul(0x0102_0408_1020_4081)
                     >> 48)
                     & 0xAAAAu64;
-            self.ppu.vram_write(vram_addr, (z >> 8) as u8);
+            self.ppu.tiles[vram_addr] = (z >> 8) as u8;
             vram_addr += 2;
-            self.ppu.vram_write(vram_addr, (z >> 8) as u8);
+            self.ppu.tiles[vram_addr] = (z >> 8) as u8;
             vram_addr += 2;
-            self.ppu.vram_write(vram_addr, z as u8);
+            self.ppu.tiles[vram_addr] = z as u8;
             vram_addr += 2;
-            self.ppu.vram_write(vram_addr, z as u8);
+            self.ppu.tiles[vram_addr] = z as u8;
             vram_addr += 2;
         }
 
@@ -314,7 +326,7 @@ impl Gameboy {
                 let mut src_addr = 0xD8;
                 for _ in 0..8 {
                     let v = rom.data[src_addr];
-                    self.ppu.vram_write(vram_addr, v);
+                    self.ppu.tiles[vram_addr] = v;
                     src_addr += 1;
                     vram_addr += 2;
                 }
@@ -417,11 +429,11 @@ impl<'a> GameboyBus<'a> {
     pub fn memory_set(&mut self, addr: u16, v: u8) {
         match addr {
             0x0000...0x7FFF => self.cart.write(addr, v),
-            0x8000...0x9FFF => self.ppu.vram_write(addr - 0x8000, v),
+            0x8000...0x9FFF => self.ppu.vram_write(&mut self.context, addr - 0x8000, v),
             0xA000...0xBFFF => self.cart.write(addr, v),
             0xC000...0xDFFF => self.ram[(addr - 0xC000) as usize] = v,
             0xE000...0xFDFF => self.ram[(addr - 0xE000) as usize] = v,
-            0xFE00...0xFE9F => self.ppu.oam_write((addr - 0xFE00) as usize, v),
+            0xFE00...0xFE9F => self.ppu.oam_write(&mut self.context, (addr - 0xFE00) as usize, v),
             0xFF00 => self.joypad.reg_p1_write(v),
             0xFF01 => self.serial.reg_sb_write(v),
             0xFF02 => self.serial.reg_sc_write(v),
@@ -452,17 +464,17 @@ impl<'a> GameboyBus<'a> {
             0xFF25 => self.apu.reg_nr51_write(v),
             0xFF26 => self.apu.reg_nr52_write(v),
             0xFF30...0xFF3F => self.apu.wave_write(addr - 0xFF30, v),
-            0xFF40 => self.ppu.reg_lcdc_write(v, &mut self.interrupts),
+            0xFF40 => self.ppu.reg_lcdc_write(&mut self.context, v, &mut self.interrupts),
             0xFF41 => self.ppu.reg_stat_write(v, &mut self.interrupts),
-            0xFF42 => self.ppu.reg_scy_write(v),
-            0xFF43 => self.ppu.reg_scx_write(v),
+            0xFF42 => self.ppu.reg_scy_write(&mut self.context, v),
+            0xFF43 => self.ppu.reg_scx_write(&mut self.context, v),
             0xFF45 => self.ppu.reg_lyc_write(v, &mut self.interrupts),
             0xFF46 => self.dma.start(v),
-            0xFF47 => self.ppu.reg_bgp_write(v),
-            0xFF48 => self.ppu.reg_obp0_write(v),
-            0xFF49 => self.ppu.reg_obp1_write(v),
-            0xFF4A => self.ppu.reg_wy_write(v),
-            0xFF4B => self.ppu.reg_wx_write(v),
+            0xFF47 => self.ppu.reg_bgp_write(&mut self.context, v),
+            0xFF48 => self.ppu.reg_obp0_write(&mut self.context, v),
+            0xFF49 => self.ppu.reg_obp1_write(&mut self.context, v),
+            0xFF4A => self.ppu.reg_wy_write(&mut self.context, v),
+            0xFF4B => self.ppu.reg_wx_write(&mut self.context, v),
             0xFF50 => *self.bootrom_enabled = false,
             0xFF80...0xFFFE => self.hram[(addr - 0xFF80) as usize] = v,
             0xFFFF => self.interrupts.reg_ie_write(v),
@@ -523,13 +535,10 @@ impl<'a> Bus for GameboyBus<'a> {
         let (dma_active, dma_src, dma_dst) = self.dma.clock();
         if dma_active {
             let v = self.memory_get(dma_src);
-            self.ppu.oam_write(dma_dst, v);
+            self.ppu.oam_write(&mut self.context, dma_dst, v);
         }
         self.serial.clock(&mut self.interrupts);
-        if self
-            .ppu
-            .clock(&mut self.context.next_framebuffer(), &mut self.interrupts)
-        {
+        if self.ppu.clock(&mut self.context, &mut self.interrupts) {
             *self.frame_count += 1;
         }
         self.apu.clock(&mut self.context.audio_samples);
@@ -540,38 +549,12 @@ impl<'a> Bus for GameboyBus<'a> {
     }
 
     fn trigger_oam_glitch(&mut self, kind: OamCorruptionType) {
-        self.ppu.maybe_trash_oam(kind);
+        self.ppu.maybe_trash_oam(&mut self.context, kind);
     }
 }
 
-/*
-impl Gameboy {
-    /// Serializes the entire state of the emulator into the destination Vec<u8>. The emulator can be restored to the
-    /// state with load_state().
-    // pub fn save_state(&self, dst: &mut Vec<u8>) {
-    //     bincode::serialize_into(dst, self).unwrap();
-    // }
-    // pub fn load_state(&mut self, state: &Vec<u8>) {
-    //     // The deserialize call overwrites the whole struct with a new one from the given state. As a result the rom
-    //     // field of the cartridge gets reset to an empty Vec. So we grab it out first and put it into the new struct
-    //     // after the deserialize call.
-    //     let rom = std::mem::replace(&mut self.cart.rom, vec![]);
-    //     *self = bincode::deserialize(state).unwrap();
-    //     std::mem::replace(&mut self.cart.rom, rom);
-    // }
-
-    /// Run the Gameboy for the specified number of microseconds.
-    /// This entrypoint is useful for emulating the Gameboy in real-time, while adhering to a refresh rate or some other
-    /// external timing control. For example, the web emulator uses requestAnimationFrame to drive emulation, which
-    /// provides a microsecond-resolution timestamp that can be used to determine how many microseconds passed since the
-    /// last emulation step.
-    // TODO:
-    // pub fn run_for_microseconds(&mut self, num_micros: f32) {
-    //     let desired_cycles = (CYCLES_PER_MICRO * num_micros) as u64;
-
-    //     while self.cycle_count < desired_cycles {
-    //         self.cpu.step(&mut self);
-    //     }
-    // }
+impl Default for Model {
+    fn default() -> Model {
+        Model::DMG0
+    }
 }
-*/

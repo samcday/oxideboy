@@ -26,6 +26,7 @@ pub const BIT_REVERSE_TABLE: [u8; 256] = [
 macro_rules! memory_segment {
     ( $name:ident; $type:tt; $size:tt ) => {
         #[repr(C)]
+        #[derive(Clone, Copy)]
         pub struct $name([$type; $size]);
 
         impl Default for $name {
@@ -52,9 +53,23 @@ macro_rules! memory_segment {
                 &self.0[index]
             }
         }
+        impl std::ops::Index<std::ops::Range<usize>> for $name {
+            type Output = [$type];
+
+            fn index(&self, range: std::ops::Range<usize>) -> &[$type] {
+                &self.0[range]
+            }
+        }
+
         impl std::ops::IndexMut<usize> for $name {
             fn index_mut(&mut self, index: usize) -> &mut $type {
                 &mut self.0[index]
+            }
+        }
+
+        impl std::ops::IndexMut<std::ops::Range<usize>> for $name {
+            fn index_mut(&mut self, range: std::ops::Range<usize>) -> &mut [$type] {
+                &mut self.0[range]
             }
         }
 
@@ -63,6 +78,12 @@ macro_rules! memory_segment {
 
             fn deref(&self) -> &[$type] {
                 &self.0
+            }
+        }
+
+        impl std::ops::DerefMut for $name {
+            fn deref_mut(&mut self) -> &mut [$type] {
+                &mut self.0
             }
         }
 

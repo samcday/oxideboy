@@ -197,7 +197,7 @@ fn mooneye_sprite_priority() {
     }
 
     common::compare_framebuffer(
-        &gb_ctx.current_framebuffer(),
+        &gb_ctx.current_framebuffer,
         include_bytes!("mooneye/manual-only/sprite_priority-expected.png"),
         |col| match col {
             0xFFFFFFFF => 0xE7DA,

@@ -235,96 +235,96 @@ impl Cpu {
     }
 
     /// Resolves this Operand into a concrete 8-bit value.
-    pub fn operand_get<T: Bus>(&mut self, ctx: &mut T, o: Operand) -> u8 {
+    pub fn operand_get<T: Bus>(&mut self, bus: &mut T, o: Operand) -> u8 {
         match o {
             Operand::Register(r) => self.register_get(r),
             Operand::Immediate(d) => d,
             Operand::Address(rr) => {
                 let addr = self.register16_get(rr);
-                ctx.memory_read(addr)
+                bus.memory_read(addr)
             }
             Operand::AddressInc(rr) => {
                 let addr = self.register16_get(rr);
                 if addr >= 0xFE00 && addr <= 0xFEFF {
-                    ctx.trigger_oam_glitch(OamCorruptionType::LDI);
+                    bus.trigger_oam_glitch(OamCorruptionType::LDI);
                 }
                 self.register16_set(rr, addr.wrapping_add(1));
-                ctx.memory_read(addr)
+                bus.memory_read(addr)
             }
             Operand::AddressDec(rr) => {
                 let addr = self.register16_get(rr);
                 if addr >= 0xFE00 && addr <= 0xFEFF {
-                    ctx.trigger_oam_glitch(OamCorruptionType::LDD);
+                    bus.trigger_oam_glitch(OamCorruptionType::LDD);
                 }
                 self.register16_set(rr, addr.wrapping_sub(1));
-                ctx.memory_read(addr)
+                bus.memory_read(addr)
             }
-            Operand::ImmediateAddress(addr) => ctx.memory_read(addr),
-            Operand::ImmediateAddressHigh(addr) => ctx.memory_read(0xFF00 + u16::from(addr)),
+            Operand::ImmediateAddress(addr) => bus.memory_read(addr),
+            Operand::ImmediateAddressHigh(addr) => bus.memory_read(0xFF00 + u16::from(addr)),
             Operand::AddressHigh(r) => {
                 let addr = 0xFF00 + u16::from(self.register_get(r));
-                ctx.memory_read(addr)
+                bus.memory_read(addr)
             }
         }
     }
 
     /// Saves provided 8-bit value into Operand destination.
-    pub fn operand_set<T: Bus>(&mut self, ctx: &mut T, o: Operand, v: u8) {
+    pub fn operand_set<T: Bus>(&mut self, bus: &mut T, o: Operand, v: u8) {
         match o {
             Operand::Register(r) => self.register_set(r, v),
             Operand::Immediate(_) => panic!("Attempted to write to immediate operand"),
             Operand::Address(rr) => {
                 let addr = self.register16_get(rr);
-                ctx.memory_write(addr, v)
+                bus.memory_write(addr, v)
             }
             Operand::AddressInc(rr) => {
                 let addr = self.register16_get(rr);
                 self.register16_set(rr, addr.wrapping_add(1));
-                ctx.memory_write(addr, v)
+                bus.memory_write(addr, v)
             }
             Operand::AddressDec(rr) => {
                 let addr = self.register16_get(rr);
                 self.register16_set(rr, addr.wrapping_sub(1));
-                ctx.memory_write(addr, v)
+                bus.memory_write(addr, v)
             }
-            Operand::ImmediateAddress(addr) => ctx.memory_write(addr, v),
-            Operand::ImmediateAddressHigh(addr) => ctx.memory_write(0xFF00 + u16::from(addr), v),
+            Operand::ImmediateAddress(addr) => bus.memory_write(addr, v),
+            Operand::ImmediateAddressHigh(addr) => bus.memory_write(0xFF00 + u16::from(addr), v),
             Operand::AddressHigh(r) => {
                 let addr = self.register_get(r);
-                ctx.memory_write(0xFF00 + u16::from(addr), v)
+                bus.memory_write(0xFF00 + u16::from(addr), v)
             }
         }
     }
 
     /// Resolves the value for a given 16-bit instruction operand.
-    fn operand_get16<T: Bus>(&mut self, ctx: &mut T, o: Operand16) -> u16 {
+    fn operand_get16<T: Bus>(&mut self, bus: &mut T, o: Operand16) -> u16 {
         match o {
             Operand16::Register(r) => self.register16_get(r),
             Operand16::Immediate(d) => d,
-            Operand16::ImmediateAddress(addr) => ctx.memory_read16(addr),
+            Operand16::ImmediateAddress(addr) => bus.memory_read16(addr),
         }
     }
 
     /// Writes a new value to the target of a 16-bit instruction operand.
-    fn operand_set16<T: Bus>(&mut self, ctx: &mut T, o: Operand16, v: u16) {
+    fn operand_set16<T: Bus>(&mut self, bus: &mut T, o: Operand16, v: u16) {
         match o {
             Operand16::Register(r) => self.register16_set(r, v),
             Operand16::Immediate(_) => panic!("Attempted to write to immediate operand"),
-            Operand16::ImmediateAddress(addr) => ctx.memory_write16(addr, v),
+            Operand16::ImmediateAddress(addr) => bus.memory_write16(addr, v),
         }
     }
 
     /// Runs the CPU for a single fetch-decode-execute step. The actual number of cycles this will take depends on which
     /// instruction is executed.
-    pub fn step<T: Bus>(&mut self, ctx: &mut T) {
+    pub fn step<T: Bus>(&mut self, bus: &mut T) {
         // If the CPU is currently halted, we need to pump a clock cycle of the other hardware, so that if there's a new
         // interrupt available, we can wake up from HALT and continue on.
         if self.halted {
-            ctx.clock();
+            bus.clock();
         }
 
         // Are there any pending interrupts to service?
-        if self.process_interrupts(ctx) {
+        if self.process_interrupts(bus) {
             // We processed an interrupt. We return now before decoding and executing the next instruction.
             // This gives debuggers a chance to examine the new PC location and handle any potential breakpoints.
             return;
@@ -343,75 +343,75 @@ impl Cpu {
 
         // Decode the next instruction from memory location pointed to by PC.
         let instruction = decode_instruction(|| {
-            let v = ctx.memory_read(self.pc);
+            let v = bus.memory_read(self.pc);
             self.pc = self.pc.wrapping_add(1);
             v
         });
 
         match instruction {
-            ADC(o) => self.add(ctx, o, true),
-            ADD(o) => self.add(ctx, o, false),
-            ADD16(rr) => self.add16(ctx, rr),
-            ADD_SP_r8(r8) => self.add_sp_r8(ctx, r8),
-            AND(o) => self.bitwise(ctx, BitwiseOp::AND, o),
-            BIT(b, o) => self.bit(ctx, b, o),
-            CALL(cc, addr) => self.call(ctx, cc, addr),
+            ADC(o) => self.add(bus, o, true),
+            ADD(o) => self.add(bus, o, false),
+            ADD16(rr) => self.add16(bus, rr),
+            ADD_SP_r8(r8) => self.add_sp_r8(bus, r8),
+            AND(o) => self.bitwise(bus, BitwiseOp::AND, o),
+            BIT(b, o) => self.bit(bus, b, o),
+            CALL(cc, addr) => self.call(bus, cc, addr),
             CCF => self.ccf(),
-            CP(o) => self.sub(ctx, o, false, false),
+            CP(o) => self.sub(bus, o, false, false),
             CPL => self.cpl(),
             DAA => self.daa(),
-            DEC(o) => self.dec(ctx, o),
-            DEC16(rr) => self.dec16(ctx, rr),
+            DEC(o) => self.dec(bus, o),
+            DEC16(rr) => self.dec16(bus, rr),
             DI => self.set_ime(false),
             EI => self.set_ime(true),
             HALT => self.halt(),
-            INC(o) => self.inc(ctx, o),
-            INC16(rr) => self.inc16(ctx, rr),
-            JP(cc, o) => self.jp(ctx, cc, o),
-            JR(cc, r8) => self.jr(ctx, cc, r8),
-            LD(lhs, rhs) => self.ld(ctx, lhs, rhs),
-            LD16(lhs @ Operand16::Register(SP), rhs @ Operand16::Register(HL)) => self.ld16(ctx, lhs, rhs, true),
-            LD16(lhs, rhs) => self.ld16(ctx, lhs, rhs, false),
-            LD_HL_SP(d) => self.ld_hl_sp(ctx, d),
+            INC(o) => self.inc(bus, o),
+            INC16(rr) => self.inc16(bus, rr),
+            JP(cc, o) => self.jp(bus, cc, o),
+            JR(cc, r8) => self.jr(bus, cc, r8),
+            LD(lhs, rhs) => self.ld(bus, lhs, rhs),
+            LD16(lhs @ Operand16::Register(SP), rhs @ Operand16::Register(HL)) => self.ld16(bus, lhs, rhs, true),
+            LD16(lhs, rhs) => self.ld16(bus, lhs, rhs, false),
+            LD_HL_SP(d) => self.ld_hl_sp(bus, d),
             NOP => {}
-            OR(o) => self.bitwise(ctx, BitwiseOp::OR, o),
-            POP(rr) => self.pop(ctx, rr),
-            PUSH(rr) => self.push(ctx, rr),
-            RES(b, o) => self.setbit(ctx, b, o, false),
-            RET(cc) => self.ret(ctx, cc, false),
-            RETI => self.ret(ctx, None, true),
-            RL(o) => self.rl(ctx, o, true, true),
-            RLA => self.rl(ctx, Operand::Register(A), false, true),
-            RLC(o) => self.rlc(ctx, o, true),
-            RLCA => self.rlc(ctx, Operand::Register(A), false),
-            RR(o) => self.rr(ctx, o, true),
-            RRA => self.rr(ctx, Operand::Register(A), false),
-            RRC(o) => self.rrc(ctx, o, true),
-            RRCA => self.rrc(ctx, Operand::Register(A), false),
-            RST(vec) => self.rst(ctx, vec),
-            SBC(o) => self.sub(ctx, o, true, true),
+            OR(o) => self.bitwise(bus, BitwiseOp::OR, o),
+            POP(rr) => self.pop(bus, rr),
+            PUSH(rr) => self.push(bus, rr),
+            RES(b, o) => self.setbit(bus, b, o, false),
+            RET(cc) => self.ret(bus, cc, false),
+            RETI => self.ret(bus, None, true),
+            RL(o) => self.rl(bus, o, true, true),
+            RLA => self.rl(bus, Operand::Register(A), false, true),
+            RLC(o) => self.rlc(bus, o, true),
+            RLCA => self.rlc(bus, Operand::Register(A), false),
+            RR(o) => self.rr(bus, o, true),
+            RRA => self.rr(bus, Operand::Register(A), false),
+            RRC(o) => self.rrc(bus, o, true),
+            RRCA => self.rrc(bus, Operand::Register(A), false),
+            RST(vec) => self.rst(bus, vec),
+            SBC(o) => self.sub(bus, o, true, true),
             SCF => self.scf(),
-            SET(b, o) => self.setbit(ctx, b, o, true),
-            SLA(o) => self.rl(ctx, o, true, false),
-            SRA(o) => self.shift_right(ctx, o, true),
-            SRL(o) => self.shift_right(ctx, o, false),
+            SET(b, o) => self.setbit(bus, b, o, true),
+            SLA(o) => self.rl(bus, o, true, false),
+            SRA(o) => self.shift_right(bus, o, true),
+            SRL(o) => self.shift_right(bus, o, false),
             STOP => self.stop(),
-            SUB(o) => self.sub(ctx, o, false, true),
-            SWAP(o) => self.swap(ctx, o),
-            XOR(o) => self.bitwise(ctx, BitwiseOp::XOR, o),
+            SUB(o) => self.sub(bus, o, false, true),
+            SWAP(o) => self.swap(bus, o),
+            XOR(o) => self.bitwise(bus, BitwiseOp::XOR, o),
             Invalid(_) => panic!("Unhandled instruction: {:?}", instruction),
         }
     }
 
     /// Process any pending interrupts. Called before the CPU fetches the next instruction to execute.
     /// Returns true if an interrupt was successfully serviced.
-    fn process_interrupts<T: Bus>(&mut self, ctx: &mut T) -> bool {
+    fn process_interrupts<T: Bus>(&mut self, bus: &mut T) -> bool {
         // We can bail quickly if there's no interrupts to process.
-        if !ctx.interrupt_controller().pending {
+        if !bus.interrupt_controller().pending {
             return false;
         }
 
-        let interrupt = ctx.interrupt_controller().next_interrupt();
+        let interrupt = bus.interrupt_controller().next_interrupt();
 
         // If there are interrupts to process, we clear HALT state, even if IME is disabled.
         self.halted = false;
@@ -422,9 +422,9 @@ impl Cpu {
         }
 
         // Interrupt handling needs 3 internal cycles to do interrupt-y stuff.
-        ctx.clock();
-        ctx.clock();
-        ctx.clock();
+        bus.clock();
+        bus.clock();
+        bus.clock();
 
         // Here's an interesting quirk. If the stack pointer was set to 0000 or 0001, then the push we just did
         // above would have overwritten IE. If the new IE value no longer matches the interrupt we were processing,
@@ -433,28 +433,28 @@ impl Cpu {
         let pc = self.pc;
         let mut sp = self.sp;
         sp = sp.wrapping_sub(1);
-        ctx.memory_write(sp, ((pc & 0xFF00) >> 8) as u8);
+        bus.memory_write(sp, ((pc & 0xFF00) >> 8) as u8);
         // This is where we capture what IE is after pushing the upper byte. Pushing the lower byte might
         // also overwrite IE, but in that case we ignore that occurring.
         let still_pending = {
-            let interrupts = ctx.interrupt_controller();
+            let interrupts = bus.interrupt_controller();
             interrupts.pending && interrupts.next_interrupt() == interrupt
         };
         sp = sp.wrapping_sub(1);
-        ctx.memory_write(sp, pc as u8);
+        bus.memory_write(sp, pc as u8);
         self.sp = self.sp.wrapping_sub(2);
 
         if !still_pending {
             self.pc = 0;
             // Okay so this interrupt didn't go so good. Let's see if there's another one.
-            let res = self.process_interrupts(ctx);
+            let res = self.process_interrupts(bus);
             // Regardless of what happens in the next try, IME needs to be disabled.
             self.ime = false;
             return res;
         }
 
         self.pc = interrupt.handler_addr();
-        ctx.interrupt_controller().clear(interrupt);
+        bus.interrupt_controller().clear(interrupt);
         self.ime = false;
         true
     }
@@ -479,45 +479,45 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(1);
     }
 
-    fn inc<T: Bus>(&mut self, ctx: &mut T, o: Operand) {
-        let v = self.operand_get(ctx, o).wrapping_add(1);
+    fn inc<T: Bus>(&mut self, bus: &mut T, o: Operand) {
+        let v = self.operand_get(bus, o).wrapping_add(1);
         self.f.z = v == 0;
         self.f.n = false;
         self.f.h = v.trailing_zeros() >= 4;
-        self.operand_set(ctx, o, v);
+        self.operand_set(bus, o, v);
     }
 
-    fn inc16<T: Bus>(&mut self, ctx: &mut T, reg: Register16) {
+    fn inc16<T: Bus>(&mut self, bus: &mut T, reg: Register16) {
         let v = self.register16_get(reg);
         if v >= 0xFE00 && v <= 0xFEFF {
-            ctx.trigger_oam_glitch(OamCorruptionType::READ);
+            bus.trigger_oam_glitch(OamCorruptionType::READ);
         }
         self.register16_set(reg, v.wrapping_add(1));
-        ctx.clock();
+        bus.clock();
     }
 
-    fn dec<T: Bus>(&mut self, ctx: &mut T, o: Operand) {
-        let v = self.operand_get(ctx, o).wrapping_sub(1);
+    fn dec<T: Bus>(&mut self, bus: &mut T, o: Operand) {
+        let v = self.operand_get(bus, o).wrapping_sub(1);
         self.f.z = v == 0;
         self.f.n = true;
         self.f.h = v & 0x0F == 0x0F;
-        self.operand_set(ctx, o, v);
+        self.operand_set(bus, o, v);
     }
 
-    fn dec16<T: Bus>(&mut self, ctx: &mut T, r: Register16) {
+    fn dec16<T: Bus>(&mut self, bus: &mut T, r: Register16) {
         let v = self.register16_get(r);
         if v >= 0xFE00 && v <= 0xFEFF {
-            ctx.trigger_oam_glitch(OamCorruptionType::READ);
+            bus.trigger_oam_glitch(OamCorruptionType::READ);
         }
         self.register16_set(r, v.wrapping_sub(1));
-        ctx.clock();
+        bus.clock();
     }
 
-    fn add<T: Bus>(&mut self, ctx: &mut T, o: Operand, carry: bool) {
+    fn add<T: Bus>(&mut self, bus: &mut T, o: Operand, carry: bool) {
         let carry = if carry && self.f.c { 1 } else { 0 };
 
         let old = self.a;
-        let v = self.operand_get(ctx, o);
+        let v = self.operand_get(bus, o);
         let new = old.wrapping_add(v).wrapping_add(carry);
         self.a = new;
         self.f.z = new == 0;
@@ -526,27 +526,27 @@ impl Cpu {
         self.f.c = u16::from(old) + u16::from(v) + u16::from(carry) > 0xFF;
     }
 
-    fn add16<T: Bus>(&mut self, ctx: &mut T, r: Register16) {
+    fn add16<T: Bus>(&mut self, bus: &mut T, r: Register16) {
         let hl = self.register16_get(HL);
         let v = self.register16_get(r);
         let (new_hl, overflow) = hl.overflowing_add(v);
         self.register16_set(HL, new_hl);
 
-        ctx.clock();
+        bus.clock();
 
         self.f.n = false;
         self.f.h = ((hl & 0xFFF) + (v & 0xFFF)) & 0x1000 > 0;
         self.f.c = overflow;
     }
 
-    fn add_sp_r8<T: Bus>(&mut self, ctx: &mut T, d: i8) {
+    fn add_sp_r8<T: Bus>(&mut self, bus: &mut T, d: i8) {
         let d = i16::from(d) as u16;
         let sp = self.sp;
 
         self.sp = sp.wrapping_add(d as i16 as u16);
 
-        ctx.clock();
-        ctx.clock();
+        bus.clock();
+        bus.clock();
 
         self.f.z = false;
         self.f.n = false;
@@ -554,11 +554,11 @@ impl Cpu {
         self.f.c = ((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0;
     }
 
-    fn sub<T: Bus>(&mut self, ctx: &mut T, o: Operand, carry: bool, store: bool) {
+    fn sub<T: Bus>(&mut self, bus: &mut T, o: Operand, carry: bool, store: bool) {
         let carry = if carry && self.f.c { 1 } else { 0 };
 
         let a = self.a;
-        let v = self.operand_get(ctx, o);
+        let v = self.operand_get(bus, o);
         let new_a = a.wrapping_sub(v).wrapping_sub(carry);
         if store {
             self.a = new_a;
@@ -570,23 +570,23 @@ impl Cpu {
         self.f.c = u16::from(a) < u16::from(v) + u16::from(carry);
     }
 
-    fn ld<T: Bus>(&mut self, ctx: &mut T, lhs: Operand, rhs: Operand) {
-        let v = self.operand_get(ctx, rhs);
-        self.operand_set(ctx, lhs, v);
+    fn ld<T: Bus>(&mut self, bus: &mut T, lhs: Operand, rhs: Operand) {
+        let v = self.operand_get(bus, rhs);
+        self.operand_set(bus, lhs, v);
     }
 
-    fn ld16<T: Bus>(&mut self, ctx: &mut T, lhs: Operand16, rhs: Operand16, extra_clock: bool) {
-        let v = self.operand_get16(ctx, rhs);
-        self.operand_set16(ctx, lhs, v);
+    fn ld16<T: Bus>(&mut self, bus: &mut T, lhs: Operand16, rhs: Operand16, extra_clock: bool) {
+        let v = self.operand_get16(bus, rhs);
+        self.operand_set16(bus, lhs, v);
 
         // In the specific case of loading a 16bit reg into another 16bit reg, this consumes another CPU cycle. I don't
         // really understand why, since in every other case the cost of reading/writing a 16bit reg appears to be free.
         if extra_clock {
-            ctx.clock();
+            bus.clock();
         }
     }
 
-    fn ld_hl_sp<T: Bus>(&mut self, ctx: &mut T, d: i8) {
+    fn ld_hl_sp<T: Bus>(&mut self, bus: &mut T, d: i8) {
         let sp = self.sp;
         let d = i16::from(d) as u16;
         let v = sp.wrapping_add(d);
@@ -594,7 +594,7 @@ impl Cpu {
         self.f.reset();
         self.f.h = ((sp & 0xF) + (d & 0xF)) & 0x10 > 0;
         self.f.c = ((sp & 0xFF) + (d & 0xFF)) & 0x100 > 0;
-        ctx.clock();
+        bus.clock();
     }
 
     // TODO: clean this dumpster fire up.
@@ -639,9 +639,9 @@ impl Cpu {
         self.f.c = true;
     }
 
-    fn bitwise<T: Bus>(&mut self, ctx: &mut T, op: BitwiseOp, o: Operand) {
+    fn bitwise<T: Bus>(&mut self, bus: &mut T, op: BitwiseOp, o: Operand) {
         let a = self.a;
-        let v = self.operand_get(ctx, o);
+        let v = self.operand_get(bus, o);
         let mut hc = false;
         self.a = match op {
             BitwiseOp::AND => {
@@ -657,111 +657,111 @@ impl Cpu {
         self.f.h = hc;
     }
 
-    fn bit<T: Bus>(&mut self, ctx: &mut T, b: u8, o: Operand) {
-        let v = self.operand_get(ctx, o) & (1 << b);
+    fn bit<T: Bus>(&mut self, bus: &mut T, b: u8, o: Operand) {
+        let v = self.operand_get(bus, o) & (1 << b);
         self.f.z = v == 0;
         self.f.n = false;
         self.f.h = true;
     }
 
-    fn setbit<T: Bus>(&mut self, ctx: &mut T, b: u8, o: Operand, on: bool) {
-        let v = self.operand_get(ctx, o);
-        self.operand_set(ctx, o, if on { v | 1 << b } else { v & !(1 << b) });
+    fn setbit<T: Bus>(&mut self, bus: &mut T, b: u8, o: Operand, on: bool) {
+        let v = self.operand_get(bus, o);
+        self.operand_set(bus, o, if on { v | 1 << b } else { v & !(1 << b) });
     }
 
-    fn rl<T: Bus>(&mut self, ctx: &mut T, o: Operand, set_zero: bool, preserve_lsb: bool) {
-        let v = self.operand_get(ctx, o);
+    fn rl<T: Bus>(&mut self, bus: &mut T, o: Operand, set_zero: bool, preserve_lsb: bool) {
+        let v = self.operand_get(bus, o);
         let lsb = if preserve_lsb && self.f.c { 1 } else { 0 };
         let carry = v & 0x80 > 0;
         let v = v << 1 | lsb;
-        self.operand_set(ctx, o, v);
+        self.operand_set(bus, o, v);
         self.f.reset();
         self.f.z = set_zero && v == 0;
         self.f.c = carry;
     }
 
-    fn rlc<T: Bus>(&mut self, ctx: &mut T, o: Operand, extended: bool) {
-        let v = self.operand_get(ctx, o);
+    fn rlc<T: Bus>(&mut self, bus: &mut T, o: Operand, extended: bool) {
+        let v = self.operand_get(bus, o);
         let carry = v & 0x80 > 0;
         let lsb = if carry { 1 } else { 0 };
         let v = v << 1 | lsb;
-        self.operand_set(ctx, o, v);
+        self.operand_set(bus, o, v);
         self.f.reset();
         self.f.z = extended && v == 0;
         self.f.c = carry;
     }
 
-    fn rr<T: Bus>(&mut self, ctx: &mut T, o: Operand, extended: bool) {
-        let v = self.operand_get(ctx, o);
+    fn rr<T: Bus>(&mut self, bus: &mut T, o: Operand, extended: bool) {
+        let v = self.operand_get(bus, o);
         let msb = if self.f.c { 0x80 } else { 0 };
         let carry = v & 0x1 > 0;
         let v = v >> 1 | msb;
-        self.operand_set(ctx, o, v);
+        self.operand_set(bus, o, v);
         self.f.reset();
         self.f.z = extended && v == 0;
         self.f.c = carry;
     }
 
-    fn rrc<T: Bus>(&mut self, ctx: &mut T, o: Operand, extended: bool) {
-        let v = self.operand_get(ctx, o);
+    fn rrc<T: Bus>(&mut self, bus: &mut T, o: Operand, extended: bool) {
+        let v = self.operand_get(bus, o);
         let carry = v & 0x1 > 0;
         let msb = if carry { 0x80 } else { 0 };
         let v = v >> 1 | msb;
-        self.operand_set(ctx, o, v);
+        self.operand_set(bus, o, v);
         self.f.reset();
         self.f.z = extended && v == 0;
         self.f.c = carry;
     }
 
-    fn shift_right<T: Bus>(&mut self, ctx: &mut T, o: Operand, preserve_msb: bool) {
-        let v = self.operand_get(ctx, o);
+    fn shift_right<T: Bus>(&mut self, bus: &mut T, o: Operand, preserve_msb: bool) {
+        let v = self.operand_get(bus, o);
         let carry = v & 0x01 > 0;
         let preserve = if preserve_msb { v & 0x80 } else { 0 };
         let v = v >> 1 | preserve;
-        self.operand_set(ctx, o, v);
+        self.operand_set(bus, o, v);
         self.f.reset();
         self.f.z = v == 0;
         self.f.c = carry;
     }
 
-    fn swap<T: Bus>(&mut self, ctx: &mut T, o: Operand) {
-        let v = self.operand_get(ctx, o);
+    fn swap<T: Bus>(&mut self, bus: &mut T, o: Operand) {
+        let v = self.operand_get(bus, o);
         let v = ((v & 0xF) << 4) | ((v & 0xF0) >> 4);
-        self.operand_set(ctx, o, v);
+        self.operand_set(bus, o, v);
         self.f.reset();
         self.f.z = v == 0;
     }
 
-    fn stack_push<T: Bus>(&mut self, ctx: &mut T, v: u16) {
+    fn stack_push<T: Bus>(&mut self, bus: &mut T, v: u16) {
         if self.sp >= 0xFE00 && self.sp <= 0xFEFF {
-            ctx.trigger_oam_glitch(OamCorruptionType::PUSH);
+            bus.trigger_oam_glitch(OamCorruptionType::PUSH);
         }
 
         self.sp = self.sp.wrapping_sub(2);
         let sp = self.sp;
-        ctx.memory_write16(sp, v);
+        bus.memory_write16(sp, v);
     }
 
-    fn stack_pop<T: Bus>(&mut self, ctx: &mut T) -> u16 {
+    fn stack_pop<T: Bus>(&mut self, bus: &mut T) -> u16 {
         if self.sp >= 0xFDFF && self.sp <= 0xFEFE {
-            ctx.trigger_oam_glitch(OamCorruptionType::POP);
+            bus.trigger_oam_glitch(OamCorruptionType::POP);
         }
 
         let addr = self.sp;
-        let v = ctx.memory_read16(addr);
+        let v = bus.memory_read16(addr);
         self.sp = self.sp.wrapping_add(2);
 
         v
     }
 
-    fn push<T: Bus>(&mut self, ctx: &mut T, r: Register16) {
+    fn push<T: Bus>(&mut self, bus: &mut T, r: Register16) {
         let v = self.register16_get(r);
-        ctx.clock();
-        self.stack_push(ctx, v);
+        bus.clock();
+        self.stack_push(bus, v);
     }
 
-    fn pop<T: Bus>(&mut self, ctx: &mut T, r: Register16) {
-        let mut v = self.stack_pop(ctx);
+    fn pop<T: Bus>(&mut self, bus: &mut T, r: Register16) {
+        let mut v = self.stack_pop(bus);
         if let AF = r {
             // Reset bits 0-3 in F.
             v &= 0xFFF0;
@@ -769,63 +769,63 @@ impl Cpu {
         self.register16_set(r, v);
     }
 
-    fn push_and_jump<T: Bus>(&mut self, ctx: &mut T, addr: u16) {
+    fn push_and_jump<T: Bus>(&mut self, bus: &mut T, addr: u16) {
         let pc = self.pc;
-        self.stack_push(ctx, pc);
+        self.stack_push(bus, pc);
         self.pc = addr;
     }
 
-    fn call<T: Bus>(&mut self, ctx: &mut T, cc: Option<FlagCondition>, addr: u16) {
+    fn call<T: Bus>(&mut self, bus: &mut T, cc: Option<FlagCondition>, addr: u16) {
         if !self.f.check_jmp_condition(cc) {
             return;
         }
-        ctx.clock();
-        self.push_and_jump(ctx, addr);
+        bus.clock();
+        self.push_and_jump(bus, addr);
     }
 
-    fn jp<T: Bus>(&mut self, ctx: &mut T, cc: Option<FlagCondition>, o: Operand16) {
+    fn jp<T: Bus>(&mut self, bus: &mut T, cc: Option<FlagCondition>, o: Operand16) {
         if !self.f.check_jmp_condition(cc) {
             return;
         }
 
-        let addr = self.operand_get16(ctx, o);
+        let addr = self.operand_get16(bus, o);
         self.pc = addr;
 
         if let Operand16::Register(HL) = o {
             // For some reason, JP (HL) doesn't cause an extra clock cycle. Very mysterious.
         } else {
-            ctx.clock();
+            bus.clock();
         }
     }
 
-    fn jr<T: Bus>(&mut self, ctx: &mut T, cc: Option<FlagCondition>, n: u8) {
+    fn jr<T: Bus>(&mut self, bus: &mut T, cc: Option<FlagCondition>, n: u8) {
         if !self.f.check_jmp_condition(cc) {
             return;
         }
-        ctx.clock();
+        bus.clock();
         self.pc = self.pc.wrapping_add(i16::from(n as i8) as u16);
     }
 
-    fn ret<T: Bus>(&mut self, ctx: &mut T, cc: Option<FlagCondition>, ei: bool) {
+    fn ret<T: Bus>(&mut self, bus: &mut T, cc: Option<FlagCondition>, ei: bool) {
         if !self.f.check_jmp_condition(cc) {
-            ctx.clock();
+            bus.clock();
             return;
         }
         if cc.is_some() {
-            ctx.clock();
+            bus.clock();
         }
         if ei {
             // RETI immediately enables IME, it's not deferred like eith an EI or DI call.
             self.ime = true;
         }
-        let pc = self.stack_pop(ctx);
-        ctx.clock();
+        let pc = self.stack_pop(bus);
+        bus.clock();
         self.pc = pc;
     }
 
-    fn rst<T: Bus>(&mut self, ctx: &mut T, a: u8) {
-        ctx.clock();
-        self.push_and_jump(ctx, u16::from(a));
+    fn rst<T: Bus>(&mut self, bus: &mut T, a: u8) {
+        bus.clock();
+        self.push_and_jump(bus, u16::from(a));
     }
 }
 

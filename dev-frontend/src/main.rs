@@ -27,7 +27,7 @@ fn main() -> Result<()> {
         "MGB" => Model::MGB,
         _ => Model::DMG0,
     };
-    let run_bootrom = env::var("RUN_BOOTROM").ok().unwrap_or_else(|| String::from("0")) != "1";
+    let run_bootrom = env::var("RUN_BOOTROM").ok().unwrap_or_else(|| String::from("0")) == "1";
 
     let rom = Rom::new(rom.into()).expect("Loading ROM failed");
     let mut gb = Gameboy::new(model, &rom, run_bootrom);
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
         audio_device.resume();
     }
 
-    let mut save_state: Vec<u8> = Vec::new();
+    let mut state: Vec<u8> = Vec::new();
     let mut limit = false;
     let mut paused = false;
     let print_fps = env::var("PRINT_FPS").ok().unwrap_or_else(|| String::from("0")) == "1";
@@ -82,9 +82,16 @@ fn main() -> Result<()> {
             })
             .unwrap();
 
-        canvas.clear();
         canvas.copy(&texture, None, Some(Rect::new(0, 0, 320, 288))).unwrap();
         canvas.present();
+    };
+
+    let queue_samples = |gb_context: &mut Context| {
+        gb_context.drain_audio_samples(|samples| {
+            if audio_device.status() == AudioStatus::Playing {
+                audio_device.queue(samples);
+            }
+        });
     };
 
     let mut frames = 0;
@@ -134,17 +141,18 @@ fn main() -> Result<()> {
                     Keycode::Return => gb.joypad.start = true,
                     Keycode::RShift => gb.joypad.select = true,
 
-                    // TODO:
-                    // Keycode::F7 => {
-                    //     save_state.clear();
-                    //     gb.save_state(&mut save_state);
-                    // }
-                    // Keycode::F8 => {
-                    //     if !save_state.is_empty() {
-                    //         gb.load_state(&save_state);
-                    //         audio_device.clear();
-                    //     }
-                    // }
+                    Keycode::F7 => {
+                        state.clear();
+                        save_state(&gb, &gb_context, &mut state).unwrap();
+                    }
+                    Keycode::F8 => {
+                        if !state.is_empty() {
+                            load_state(&mut gb, &mut gb_context, &state[..]).unwrap();
+                            audio_device.clear();
+                            queue_samples(&mut gb_context);
+                            update_fb(&gb_context.current_framebuffer);
+                        }
+                    }
                     Keycode::L => {
                         limit = !limit;
                         audio_device.clear();
@@ -184,25 +192,18 @@ fn main() -> Result<()> {
             //     }
             // }
 
-            gb_context.drain_audio_samples(|samples| {
-                if audio_device.status() == AudioStatus::Playing {
-                    if !limit {
-                        audio_device.clear();
-                    }
-                    audio_device.queue(samples);
-                }
-            });
+            queue_samples(&mut gb_context);
         }
 
         if limit {
-            update_fb(gb_context.current_framebuffer());
+            update_fb(&gb_context.current_framebuffer);
             let elapsed = start.elapsed();
             if elapsed < next_frame {
                 std::thread::sleep(next_frame - elapsed);
             }
             next_frame += FRAME_TIME;
         } else if start.elapsed() >= next_frame {
-            update_fb(gb_context.current_framebuffer());
+            update_fb(&gb_context.current_framebuffer);
             next_frame += FRAME_TIME;
         }
 
