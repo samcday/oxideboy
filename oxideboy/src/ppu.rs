@@ -889,7 +889,7 @@ impl Ppu {
 
 impl Default for Mode {
     fn default() -> Mode {
-        Mode::Mode0(51)
+        Mode::Mode2
     }
 }
 

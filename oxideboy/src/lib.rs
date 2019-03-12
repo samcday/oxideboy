@@ -38,11 +38,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 
+/// Number of frames to keep the Nintendo boot logo visible before starting actual emulation. Only used when skipping
+/// emulation of the real bootrom.
+pub const BOOT_LOGO_DURATION: u64 = 30;
+
+pub const CYCLES_PER_MICRO: f32 = 1_048_576.0 / 1_000_000.0;
+
+const TRADEMARK_ICON: [u8; 8] = [0x3c, 0x42, 0xb9, 0xa5, 0xb9, 0xa5, 0x42, 0x3c];
 static DMG0_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg0.rom");
 static DMG_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg.rom");
 static MGB_BOOTROM: &[u8; 256] = include_bytes!("bootroms/mgb.rom");
-
-pub const CYCLES_PER_MICRO: f32 = 1_048_576.0 / 1_000_000.0;
 
 /// Context holds external state that is related to, but not a core part of, the Gameboy struct. Rendered frames,
 /// audio samples are kept in here for example. The distinction is made because of the nature of save/load states and
@@ -90,6 +95,7 @@ memory_segment! { HRam; u8; 0x7F }
 pub struct Gameboy {
     pub model: Model,
     pub bootrom_enabled: bool,
+    pub bootrom_countdown: u64,
     pub cycle_count: u64, // The total number of M-cycles that have elapsed since emulation began
     pub frame_count: u64, // The total number of frames we've rendered since emulation began
 
@@ -178,6 +184,7 @@ impl Gameboy {
         let mut gameboy = Gameboy {
             model,
             bootrom_enabled: true,
+            bootrom_countdown: 0,
             cycle_count: 0,
             frame_count: 0,
 
@@ -227,8 +234,20 @@ impl Gameboy {
     }
 
     pub fn run_instruction(&mut self, ctx: &mut Context) {
-        let (cpu, mut bus) = self.bus(ctx);
+        if self.bootrom_countdown > 0 {
+            // We skipped the real bootrom phase but we're emulating a few cycles of NOP activity to show the logo on
+            // the screen for a brief period.
+            self.bootrom_countdown -= 1;
+            if self.bootrom_countdown == 0 {
+                self.finish_bootrom_skip();
+            } else {
+                let (_, mut bus) = self.bus(ctx);
+                bus.clock();
+            }
+            return;
+        }
 
+        let (cpu, mut bus) = self.bus(ctx);
         cpu.step(&mut bus);
     }
 
@@ -236,57 +255,15 @@ impl Gameboy {
     /// to a lot of people that just want to pet their Pikachu and don't get the nostalgia from the distinctive startup
     /// chime. Emulating the bootrom also takes a few million CPU cycles, so skipping it in tests is a big speedup.
     pub fn skip_bootrom(&mut self, rom: &Rom) {
-        self.cpu.pc = 0x100;
-        self.cpu.sp = 0xFFFE;
-
-        self.cpu.a = 0x01;
-        self.cpu.d = 0x00;
-        self.cpu.c = 0x13;
-        match self.model {
-            Model::DMG0 => {
-                self.cpu.b = 0xFF;
-                self.cpu.e = 0xC1;
-                self.cpu.h = 0x84;
-                self.cpu.l = 0x03;
-            }
-            // DMGABC and MGB are very similar. MGB just differs in A register being 0xFF.
-            Model::DMGABC | Model::MGB => {
-                self.cpu.b = 0x00;
-                self.cpu.h = 0x01;
-                self.cpu.f.unpack(0xB0);
-                self.cpu.e = 0xD8;
-                self.cpu.l = 0x4D;
-
-                if self.model == Model::MGB {
-                    self.cpu.a = 0xFF;
-                }
-            }
-        }
-
-        self.timer.div = match self.model {
-            Model::DMG0 => 0x182C,
-            Model::DMGABC | Model::MGB => 0xABC8,
-        };
-        self.interrupts.request = 0x1;
+        // Start the bootrom countdown. The idea here is to emulate noops for a bunch of cycles to keep the Nintendo
+        // logo on the screen for half a second.
+        self.ppu.dirty = true;
+        self.bootrom_countdown = 17_556 * BOOT_LOGO_DURATION; // 17556 clocks in a frame * number of frames
 
         // Ensure PPU has correct state (enabled, BG enabled, etc)
         self.ppu.enabled = true;
         self.ppu.bg_enabled = true;
         self.ppu.bg_tile_area_lo = true;
-
-        // PPU should be in the middle of a VBlank.
-        // Where the PPU is at in terms of mode + cycles depends on which bootrom was run.
-        self.ppu.mode = ppu::Mode::Mode1;
-        match self.model {
-            Model::DMG0 => {
-                self.ppu.ly = 145;
-                self.ppu.mode_cycles = 24;
-            }
-            Model::DMGABC | Model::MGB => {
-                self.ppu.ly = 153;
-                self.ppu.mode_cycles = 100;
-            }
-        }
 
         // Setup Nintendo logo in tilemap.
         let mut tilemap_addr = 0x104;
@@ -295,8 +272,9 @@ impl Gameboy {
             tilemap_addr += 1;
         }
 
-        if self.model == Model::DMGABC {
-            self.ppu.tilemap[tilemap_addr] = 0x19;
+        // Add trademark icon to VRAM
+        if self.model == Model::DMGABC || self.model == Model::MGB {
+            self.ppu.tilemap[0x110] = 0x19;
         }
 
         tilemap_addr = 0x124;
@@ -332,15 +310,61 @@ impl Gameboy {
 
         match self.model {
             Model::DMGABC | Model::MGB => {
-                let mut src_addr = 0xD8;
-                for _ in 0..8 {
-                    let v = rom.data[src_addr];
-                    self.ppu.tiles[vram_addr] = v;
-                    src_addr += 1;
+                for v in &TRADEMARK_ICON {
+                    self.ppu.tiles[vram_addr] = *v;
                     vram_addr += 2;
                 }
             }
             _ => {}
+        }
+    }
+
+    pub fn finish_bootrom_skip(&mut self) {
+        self.cpu.pc = 0x100;
+        self.cpu.sp = 0xFFFE;
+
+        self.cpu.a = 0x01;
+        self.cpu.d = 0x00;
+        self.cpu.c = 0x13;
+        match self.model {
+            Model::DMG0 => {
+                self.cpu.b = 0xFF;
+                self.cpu.e = 0xC1;
+                self.cpu.h = 0x84;
+                self.cpu.l = 0x03;
+            }
+            // DMGABC and MGB are very similar. MGB just differs in A register being 0xFF.
+            Model::DMGABC | Model::MGB => {
+                self.cpu.b = 0x00;
+                self.cpu.h = 0x01;
+                self.cpu.f.unpack(0xB0);
+                self.cpu.e = 0xD8;
+                self.cpu.l = 0x4D;
+
+                if self.model == Model::MGB {
+                    self.cpu.a = 0xFF;
+                }
+            }
+        }
+
+        self.timer.div = match self.model {
+            Model::DMG0 => 0x182C,
+            Model::DMGABC | Model::MGB => 0xABC8,
+        };
+        self.interrupts.request = 0x1;
+
+        // PPU should be in the middle of a VBlank.
+        // Where the PPU is at in terms of mode + cycles depends on which bootrom was run.
+        self.ppu.mode = ppu::Mode::Mode1;
+        match self.model {
+            Model::DMG0 => {
+                self.ppu.ly = 145;
+                self.ppu.mode_cycles = 24;
+            }
+            Model::DMGABC | Model::MGB => {
+                self.ppu.ly = 153;
+                self.ppu.mode_cycles = 100;
+            }
         }
 
         // After bootrom is finished, sound1 is still enabled but muted.
@@ -356,10 +380,11 @@ impl Gameboy {
         self.apu.reg_nr50_write(0x77);
         self.apu.reg_nr51_write(0xF3);
 
-        // TODO: not 100% sure on this magic number.
-        // Basically, even when the serial port isn't active, it's clocking in order to shift out a bit.
+        // Even when the serial port isn't active, it's clocking in order to shift out a bit.
         // It's tied to the main clock cycle count, and not dependent on when SC/SB is changed. This magic number
         // ensures that mooneye serial/boot_sclk_align test passes.
+        // TODO: the thing is, this makes the serial/boot_sclk_align test pass on skipped bootrom. But on real bootrom
+        // it's off by a bit. I have a feeling it's somehow related to the DIV quirk. Investigate more soon.
         self.serial.transfer_clock = 124;
 
         self.bootrom_enabled = false;
