@@ -1,3 +1,4 @@
+use oxideboy::rewind::*;
 use oxideboy::rom::Rom;
 use oxideboy::*;
 use sdl2::audio::{AudioSpecDesired, AudioStatus};
@@ -32,6 +33,7 @@ fn main() -> Result<()> {
     let rom = Rom::new(rom.into()).expect("Loading ROM failed");
     let mut gb = Gameboy::new(model, &rom, run_bootrom);
     let mut gb_context = Context::new(rom);
+    let mut rewind_manager = RewindManager::new(MemoryStorageAdapter::new());
 
     println!("Loaded ROM {:?}", gb_context.rom.title);
 
@@ -69,6 +71,7 @@ fn main() -> Result<()> {
     let mut state: Vec<u8> = Vec::new();
     let mut limit = false;
     let mut paused = false;
+    let mut rewinding = false;
     let print_fps = env::var("PRINT_FPS").ok().unwrap_or_else(|| String::from("0")) == "1";
 
     let start = Instant::now();
@@ -94,6 +97,7 @@ fn main() -> Result<()> {
         });
     };
 
+    let mut frame_count = 0;
     let mut frames = 0;
     let mut fps_timer = Instant::now();
     let sec = Duration::from_secs(1);
@@ -125,6 +129,20 @@ fn main() -> Result<()> {
                     Keycode::S => gb.joypad.b = false,
                     Keycode::Return => gb.joypad.start = false,
                     Keycode::RShift => gb.joypad.select = false,
+                    Keycode::LCtrl => {
+                        // When we stop rewinding we need to reset all joypad buttons to unpressed.
+                        // Otherwise, whatever was pressed at the time of the frame we rewinded (rewound?) to will still
+                        // be pressed.
+                        gb.joypad.up = false;
+                        gb.joypad.down = false;
+                        gb.joypad.right = false;
+                        gb.joypad.left = false;
+                        gb.joypad.a = false;
+                        gb.joypad.b = false;
+                        gb.joypad.start = false;
+                        gb.joypad.select = false;
+                        rewinding = false;
+                    }
                     _ => {}
                 },
 
@@ -140,6 +158,7 @@ fn main() -> Result<()> {
                     Keycode::S => gb.joypad.b = true,
                     Keycode::Return => gb.joypad.start = true,
                     Keycode::RShift => gb.joypad.select = true,
+                    Keycode::LCtrl => rewinding = true,
 
                     Keycode::F7 => {
                         state.clear();
@@ -175,8 +194,18 @@ fn main() -> Result<()> {
         }
 
         if !paused {
-            for _ in 0..17556 {
-                gb.run_instruction(&mut gb_context);
+            if rewinding {
+                rewind_manager.rewind_frame(&mut gb, &mut gb_context);
+                frame_count = gb.frame_count;
+            } else {
+                for _ in 0..17556 {
+                    gb.run_instruction(&mut gb_context);
+
+                    if gb.frame_count > frame_count {
+                        frame_count = gb.frame_count;
+                        rewind_manager.notify_frame(&mut gb);
+                    }
+                }
             }
 
             // if throwaway_samples {

@@ -5,10 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Copy, Clone, Default, Deserialize, Serialize)]
 pub struct Joypad {
-    btn: bool,
-    dir: bool,
+    select_btn: bool,
+    select_dir: bool,
 
     pub up: bool,
     pub down: bool,
@@ -25,7 +25,7 @@ impl Joypad {
     pub fn reg_p1_read(&self) -> u8 {
         let mut v = 0xCF;
 
-        if self.btn {
+        if self.select_btn {
             v ^= 0x20;
             if self.a {
                 v ^= 1
@@ -39,7 +39,7 @@ impl Joypad {
             if self.start {
                 v ^= 8
             }
-        } else if self.dir {
+        } else if self.select_dir {
             v ^= 0x10;
             if self.right {
                 v ^= 1
@@ -60,7 +60,7 @@ impl Joypad {
 
     /// Write to the 0xFF00 P1 register
     pub fn reg_p1_write(&mut self, v: u8) {
-        self.btn = v & 0x20 == 0;
-        self.dir = v & 0x10 == 0;
+        self.select_btn = v & 0x20 == 0;
+        self.select_dir = v & 0x10 == 0;
     }
 }

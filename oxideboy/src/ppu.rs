@@ -852,8 +852,6 @@ impl Ppu {
 
     /// Write to the 0xFF45 LYC register.
     pub fn reg_lyc_write(&mut self, v: u8, interrupts: &mut InterruptController) {
-        // TODO: mark dirty here? Pretty sure we would need to.
-
         // LYC can be set any time ...
         self.lyc = v;
 

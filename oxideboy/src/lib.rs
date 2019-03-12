@@ -5,6 +5,7 @@ pub mod dma;
 pub mod interrupt;
 pub mod joypad;
 pub mod ppu;
+pub mod rewind;
 pub mod rom;
 pub mod serial;
 pub mod simple_diff;

@@ -1,7 +1,8 @@
 #![allow(unused)]
 
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
-use oxideboy::{Gameboy, Model};
+use oxideboy::rom::Rom;
+use oxideboy::{Context, Gameboy, Model};
 use snap;
 use std::fs::File;
 use std::io::prelude::*;
@@ -14,34 +15,32 @@ fn main() -> Result<()> {
     let mut rom = Vec::new();
     f.read_to_end(&mut rom)?;
 
-    let mut gb = Gameboy::new(Model::DMG0, rom);
-    gb.skip_bootrom();
+    let rom = Rom::new(rom.into()).unwrap();
+    let mut gb = Gameboy::new(Model::DMG0, &rom, false);
+    let mut gb_ctx = Context::new(rom);
 
     let mut base_state = Vec::new();
     let mut new_state = Vec::new();
 
-    gb.save_state(&mut new_state);
+    bincode::serialize_into(&mut new_state, &gb);
 
     let mut diff = vec![];
 
     let mut compress_out = [0; 200000];
     let mut encoder = snap::Encoder::new();
 
-    let mut seconds = 0;
     let mut total_size = 0;
 
+    let mut next_frame_snapshot = 0;
     loop {
-        for _ in 0..120 {
-            while !gb.new_frame {
-                gb.run_instruction();
-            }
-            gb.run_instruction();
+        next_frame_snapshot += 5;
+        while gb.frame_count < next_frame_snapshot {
+            gb.run_instruction(&mut gb_ctx);
         }
-        seconds += 2;
 
         std::mem::swap(&mut base_state, &mut new_state);
         new_state.clear();
-        gb.save_state(&mut new_state);
+        bincode::serialize_into(&mut new_state, &gb);
 
         // Every 60 seconds we save a base state.
         // if seconds % 60 == 0 {
@@ -62,7 +61,8 @@ fn main() -> Result<()> {
         total_size += diff_compressed_size;
         // apply_diff(&base_state, &new_state, &diff);
 
-        if seconds % 60 == 0 {
+        let seconds = (next_frame_snapshot / 60);
+        if next_frame_snapshot % 60 == 0 {
             println!(
                 "{} seconds. Total state size so far: {}. {}kb per minute, {}kb per hour.",
                 seconds,
