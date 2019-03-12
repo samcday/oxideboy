@@ -1,3 +1,11 @@
+#![deny(
+    trivial_numeric_casts,
+    unstable_features,
+    unused_import_braces,
+    unused_extern_crates,
+    variant_size_differences
+)]
+
 pub mod apu;
 pub mod cartridge;
 pub mod cpu;
@@ -418,8 +426,8 @@ impl<'a> GameboyBus<'a> {
             0xFF47 => self.ppu.bgp.pack(),
             0xFF48 => self.ppu.obp0.pack(),
             0xFF49 => self.ppu.obp1.pack(),
-            0xFF4A => self.ppu.wy as u8,
-            0xFF4B => self.ppu.wx as u8,
+            0xFF4A => self.ppu.wy,
+            0xFF4B => self.ppu.wx,
             0xFF80...0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.interrupts.enable,
 

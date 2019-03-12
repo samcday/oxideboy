@@ -1,8 +1,9 @@
 //! Functionality to rewind/fast-forward the emulator state by frame or instruction cycle.
 //! This is achieved by taking regular snapshots (read: save states) of the emulator. "Rewinding" is simply restoring
 //! a previous snapshot state, then running the emulator up to the desired point, while replaying any input events that
-//! occurred during the replayed period. Because the Gameboy architecture is so simple - it's completely deterministic
-//! outside of the input events received from the joypad.
+//! occurred during the replayed period. This is possible because the Gameboy architecture is so simple - it's
+//! completely deterministic outside of the input events received from the joypad.
+
 use crate::joypad::Joypad;
 use crate::simple_diff;
 use crate::{Context, Gameboy};

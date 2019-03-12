@@ -69,7 +69,7 @@ fn main() -> Result<()> {
     }
 
     let mut state: Vec<u8> = Vec::new();
-    let mut limit = false;
+    let mut limit = env::var("LIMIT").ok().unwrap_or_else(|| String::from("0")) == "1";
     let mut paused = false;
     let mut rewinding = false;
     let print_fps = env::var("PRINT_FPS").ok().unwrap_or_else(|| String::from("0")) == "1";
