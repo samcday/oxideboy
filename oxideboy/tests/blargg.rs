@@ -7,6 +7,8 @@ fn run_blargg_serial_test(rom: &[u8]) {
     let rom = Rom::new(rom.into()).unwrap();
     let mut gb = Gameboy::new(Model::DMGABC, &rom, false);
     let mut gb_ctx = Context::new(rom);
+    gb_ctx.enable_graphics = false;
+    gb_ctx.enable_sound = false;
 
     let mut serial_output = String::new();
 
@@ -38,6 +40,8 @@ fn run_blargg_harness_test(rom: &[u8]) {
     let rom = Rom::new(rom.into()).unwrap();
     let mut gb = Gameboy::new(Model::DMGABC, &rom, false);
     let mut gb_ctx = Context::new(rom);
+    gb_ctx.enable_graphics = false;
+    gb_ctx.enable_sound = false;
 
     // The test runner writes the magic value to RAM before specifying that tests are in progress.
     // Which is kinda dumb. Anyway, we force that value now so we know when tests are *actually* done.

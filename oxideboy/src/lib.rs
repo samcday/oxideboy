@@ -57,8 +57,17 @@ static MGB_BOOTROM: &[u8; 256] = include_bytes!("bootroms/mgb.rom");
 memory_segment! { Framebuffer; u16; SCREEN_SIZE }
 pub struct Context {
     pub rom: Rom,
+
+    /// If false, the PPU will not draw pixels to the framebuffer while it is running. This is useful for minimizing
+    /// work while emulating. For example headless tests can disable graphics, or if the emulator knows it's not visible
+    /// but expected to run in the background.
+    pub enable_graphics: bool,
     pub current_framebuffer: Framebuffer,
     pub next_framebuffer: Framebuffer,
+
+    /// Similar to enable_graphics. The APU will keep running, but not write any samples to the queue. useful if sound
+    /// is muted - no point spending time generating samples.
+    pub enable_sound: bool,
     audio_samples: VecDeque<f32>,
 }
 
@@ -155,8 +164,11 @@ impl Context {
     pub fn new(rom: Rom) -> Context {
         Context {
             rom,
+            enable_graphics: true,
             current_framebuffer: Default::default(),
             next_framebuffer: Default::default(),
+
+            enable_sound: true,
             audio_samples: VecDeque::new(),
         }
     }
@@ -575,7 +587,7 @@ impl<'a> Bus for GameboyBus<'a> {
         if self.ppu.clock(&mut self.context, &mut self.interrupts) {
             *self.frame_count += 1;
         }
-        self.apu.clock(&mut self.context.audio_samples);
+        self.apu.clock(&mut self.context);
     }
 
     fn interrupt_controller(&mut self) -> &mut InterruptController {

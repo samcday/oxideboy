@@ -10,6 +10,8 @@ fn run_mooneye_test(rom: &[u8], model: Model, enable_bootrom: bool) {
     let rom = Rom::new(rom.into()).unwrap();
     let mut gb = Gameboy::new(model, &rom, enable_bootrom);
     let mut gb_ctx = Context::new(rom);
+    gb_ctx.enable_graphics = false;
+    gb_ctx.enable_sound = false;
 
     let start = Instant::now();
     loop {

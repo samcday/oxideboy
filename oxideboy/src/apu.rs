@@ -1,8 +1,8 @@
 //! Implementation of the Gameboy APU.
 //! TODO: more overview info here.
 
+use crate::Context;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
 
 const SAMPLE_RATE: f64 = 44100.0;
 const DUTY_CYCLES: [[f32; 8]; 4] = [
@@ -271,7 +271,7 @@ impl Apu {
     }
 
     /// Advances the APU by a single CPU clock step.
-    pub fn clock(&mut self, sample_queue: &mut VecDeque<f32>) {
+    pub fn clock(&mut self, ctx: &mut Context) {
         if !self.enabled {
             return;
         }
@@ -348,10 +348,10 @@ impl Apu {
             self.sample_cycles -= cycles_per_sample;
 
             // TODO: check we don't exceed max sample capacity (what is that?)
-            if !cfg!(test) {
+            if ctx.enable_sound {
                 let (l, r) = self.generate_sample();
-                sample_queue.push_back(l);
-                sample_queue.push_back(r);
+                ctx.audio_samples.push_back(l);
+                ctx.audio_samples.push_back(r);
             }
         }
     }

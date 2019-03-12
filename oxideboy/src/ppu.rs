@@ -180,7 +180,7 @@ impl Ppu {
             Mode::FirstMode0 => self.first_mode_0_hblank(),
             Mode::Mode1 => self.mode_1_vblank(interrupts, &mut new_frame),
             Mode::Mode2 => self.mode_2_oam_search(interrupts),
-            Mode::Mode3 => self.mode_3_pixel_transfer(&mut context.next_framebuffer),
+            Mode::Mode3 => self.mode_3_pixel_transfer(context),
         }
 
         if new_frame {
@@ -347,7 +347,7 @@ impl Ppu {
         }
     }
 
-    pub fn mode_3_pixel_transfer(&mut self, framebuffer: &mut [u16]) {
+    pub fn mode_3_pixel_transfer(&mut self, context: &mut Context) {
         if self.mode_cycles == 1 {
             self.reported_mode = 3;
             self.oam_allow_read = false;
@@ -358,7 +358,11 @@ impl Ppu {
             self.update_stat_interrupt(None, |state| state.oam_active = false);
 
             self.calculate_line_overhead();
-            self.draw_line(framebuffer);
+
+            // If graphics aren't enabled, no need to draw the line.
+            if context.enable_graphics {
+                self.draw_line(&mut context.next_framebuffer);
+            }
         }
 
         if self.mode_cycles == 2 {
