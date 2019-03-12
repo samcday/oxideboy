@@ -52,16 +52,30 @@ pub trait StorageAdapter {
 }
 
 impl<T: StorageAdapter> RewindManager<T> {
-    pub fn new(adapter: T) -> RewindManager<T> {
-        RewindManager {
+    pub fn new(gb: &Gameboy, adapter: T) -> Result<RewindManager<T>, String> {
+        // RewindManager needs to be setup before the Gameboy has been used.
+        if gb.cycle_count > 0 {
+            return Err(format!(
+                "Gameboy has already emulated {} cycles, RewindManager::new must be called on a pristine \
+                 emulation session",
+                gb.cycle_count
+            ));
+        }
+
+        let snapshot_size = bincode::serialized_size(&gb).unwrap() as usize;
+
+        let mut rewind_manager = RewindManager {
             adapter,
-            last_snapshot: Vec::new(),
-            current_snapshot: Vec::new(),
-            delta_scratch: Vec::new(),
+            last_snapshot: Vec::with_capacity(snapshot_size),
+            current_snapshot: Vec::with_capacity(snapshot_size),
+            delta_scratch: Vec::with_capacity(snapshot_size),
             delta_size: 0,
             last_snapshot_cycle: 0,
             next_snapshot_in: SNAPSHOT_FREQ,
-        }
+        };
+        // rewind_manager.notify_frame();
+
+        Ok(rewind_manager)
     }
 
     /// Notify the RewindManager that another frame has completed in the given Gameboy.
@@ -124,9 +138,13 @@ impl<T: StorageAdapter> RewindManager<T> {
             .snapshot_for_frame(desired_frame - 1, &mut snapshot, &mut input);
 
         // Load the new state in, then run the emulation until we get to the desired frame.
+        *gb = bincode::deserialize_from(&snapshot[..]).unwrap();
+        while gb.frame_count < desired_frame - 1 {
+            gb.run_instruction(context);
+        }
+        // Make sure the PPU renders this frame fully.
         gb.ppu.dirty = true;
         gb.ppu.next_dirty = true;
-        *gb = bincode::deserialize_from(&snapshot[..]).unwrap();
         while gb.frame_count < desired_frame {
             gb.run_instruction(context);
         }

@@ -1,6 +1,10 @@
 //! Implements the serial (link cable) port for the Gameboy.
 //! http://gbdev.gg8.se/wiki/articles/Serial_Data_Transfer_(Link_Cable)
 
+// BIG FUCKING TODO: refactor this to not use Options.
+// Options screw our rewinding up because we assume state snapshot is always the same size. But a None serializes as,
+// I assume, 0 bytes with bincode, whereas a Some(u8) serializes as a byte.
+
 use crate::interrupt::{Interrupt, InterruptController};
 use serde::{Deserialize, Serialize};
 

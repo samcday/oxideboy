@@ -33,7 +33,7 @@ fn main() -> Result<()> {
     let rom = Rom::new(rom.into()).expect("Loading ROM failed");
     let mut gb = Gameboy::new(model, &rom, run_bootrom);
     let mut gb_context = Context::new(rom);
-    let mut rewind_manager = RewindManager::new(MemoryStorageAdapter::new());
+    let mut rewind_manager = RewindManager::new(&gb, MemoryStorageAdapter::new()).unwrap();
 
     println!("Loaded ROM {:?}", gb_context.rom.title);
 
