@@ -61,13 +61,13 @@ pub struct Context {
     /// If false, the PPU will not draw pixels to the framebuffer while it is running. This is useful for minimizing
     /// work while emulating. For example headless tests can disable graphics, or if the emulator knows it's not visible
     /// but expected to run in the background.
-    pub enable_graphics: bool,
+    pub enable_video: bool,
     pub current_framebuffer: Framebuffer,
     pub next_framebuffer: Framebuffer,
 
-    /// Similar to enable_graphics. The APU will keep running, but not write any samples to the queue. useful if sound
+    /// Similar to enable_video. The APU will keep running, but not write any samples to the queue. useful if sound
     /// is muted - no point spending time generating samples.
-    pub enable_sound: bool,
+    pub enable_audio: bool,
     audio_samples: VecDeque<f32>,
 }
 
@@ -164,11 +164,11 @@ impl Context {
     pub fn new(rom: Rom) -> Context {
         Context {
             rom,
-            enable_graphics: true,
+            enable_video: true,
             current_framebuffer: Default::default(),
             next_framebuffer: Default::default(),
 
-            enable_sound: true,
+            enable_audio: true,
             audio_samples: VecDeque::new(),
         }
     }

@@ -8,7 +8,7 @@ use crate::joypad::Joypad;
 use crate::simple_diff;
 use crate::{Context, Gameboy};
 use bincode;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::ops::Range;
 
 // TODO: compression
@@ -45,8 +45,8 @@ pub enum SnapshotType {
 pub trait StorageAdapter {
     fn record_snapshot(&mut self, cycle: u64, frame: u64, snapshot: &[u8], snapshot_type: SnapshotType);
     fn record_input(&mut self, cycle: u64, joypad: Joypad);
-    fn snapshot_for_frame(&mut self, frame: u64, snapshot: &mut Vec<u8>, input: &mut Vec<Joypad>);
-    fn snapshot_for_cycle(&mut self, cycle: u64, snapshot: &mut Vec<u8>, input: &mut Vec<Joypad>);
+    fn snapshot_for_frame(&mut self, frame: u64, snapshot: &mut Vec<u8>, input: &mut VecDeque<(u64, Joypad)>);
+    fn snapshot_for_cycle(&mut self, cycle: u64, snapshot: &mut Vec<u8>, input: &mut VecDeque<(u64, Joypad)>);
     /// Drop all snapshots and recorded input after the given cycle+frame boundary.
     fn truncate(&mut self, cycle: u64);
 }
@@ -122,7 +122,7 @@ impl<T: StorageAdapter> RewindManager<T> {
     }
 
     /// Rewind by a single frame.
-    pub fn rewind_frame(&mut self, gb: &mut Gameboy, context: &mut Context) {
+    pub fn rewind_frame(&mut self, gb: &mut Gameboy, ctx: &mut Context) {
         if gb.frame_count < 2 {
             // TODO: how do we signal this? Return a Result or an Option maybe?
             return;
@@ -133,21 +133,39 @@ impl<T: StorageAdapter> RewindManager<T> {
         // In order to rewind backwards 1 frame, we need to get a snapshot for 2 frames back. This is so we can start
         // from two frames back and run forward, building a complete framebuffer that can be drawn.
         let mut snapshot = Vec::new();
-        let mut input = Vec::new();
+        let mut input = VecDeque::new();
         self.adapter
             .snapshot_for_frame(desired_frame - 1, &mut snapshot, &mut input);
 
         // Load the new state in, then run the emulation until we get to the desired frame.
         *gb = bincode::deserialize_from(&snapshot[..]).unwrap();
-        while gb.frame_count < desired_frame - 1 {
-            gb.run_instruction(context);
+
+        fn run_emulation(gb: &mut Gameboy, ctx: &mut Context, input: &mut VecDeque<(u64, Joypad)>, desired_frame: u64) {
+            let mut next_input = input.pop_front();
+
+            while gb.frame_count < desired_frame {
+                if next_input.is_some() && next_input.unwrap().0 == gb.cycle_count {
+                    gb.joypad = next_input.unwrap().1;
+                    next_input = input.pop_front();
+                }
+                gb.run_instruction(ctx);
+            }
         }
+
+        // We don't need to render frames or audio samples while we're emulating up to the previous frame.
+        let prev_enable_video = ctx.enable_video;
+        let prev_enable_audio = ctx.enable_audio;
+        ctx.enable_video = false;
+        ctx.enable_audio = false;
+        run_emulation(gb, ctx, &mut input, desired_frame - 1);
+        ctx.enable_video = prev_enable_video;
+        ctx.enable_audio = prev_enable_audio;
+
         // Make sure the PPU renders this frame fully.
         gb.ppu.dirty = true;
         gb.ppu.next_dirty = true;
-        while gb.frame_count < desired_frame {
-            gb.run_instruction(context);
-        }
+
+        run_emulation(gb, ctx, &mut input, desired_frame);
     }
 }
 
@@ -189,7 +207,7 @@ impl StorageAdapter for MemoryStorageAdapter {
         self.input_events.insert(cycle, joypad);
     }
 
-    fn snapshot_for_cycle(&mut self, cycle: u64, mut snapshot: &mut Vec<u8>, input: &mut Vec<Joypad>) {
+    fn snapshot_for_cycle(&mut self, cycle: u64, mut snapshot: &mut Vec<u8>, input: &mut VecDeque<(u64, Joypad)>) {
         // First we need to find the closest full snapshot to the desired cycle.
         // TODO: how do we handle not finding anything?
         let (base_cycle, base_range) = self.full_snapshots.range(0..=cycle).rev().next().unwrap();
@@ -210,11 +228,11 @@ impl StorageAdapter for MemoryStorageAdapter {
         input.extend(
             self.input_events
                 .range(last_delta_cycle..=cycle)
-                .map(|(_, joypad)| joypad),
+                .map(|(cycle, joypad)| (*cycle, *joypad)),
         );
     }
 
-    fn snapshot_for_frame(&mut self, frame: u64, snapshot: &mut Vec<u8>, input: &mut Vec<Joypad>) {
+    fn snapshot_for_frame(&mut self, frame: u64, snapshot: &mut Vec<u8>, input: &mut VecDeque<(u64, Joypad)>) {
         // Finding the snapshot for a frame is simply looking up the closest cycle for that frame and calling
         // snapshot_for_cycle.
         self.snapshot_for_cycle(

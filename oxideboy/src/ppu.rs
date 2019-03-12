@@ -360,7 +360,7 @@ impl Ppu {
             self.calculate_line_overhead();
 
             // If graphics aren't enabled, no need to draw the line.
-            if context.enable_graphics {
+            if context.enable_video {
                 self.draw_line(&mut context.next_framebuffer);
             }
         }

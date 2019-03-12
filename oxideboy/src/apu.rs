@@ -348,7 +348,7 @@ impl Apu {
             self.sample_cycles -= cycles_per_sample;
 
             // TODO: check we don't exceed max sample capacity (what is that?)
-            if ctx.enable_sound {
+            if ctx.enable_audio {
                 let (l, r) = self.generate_sample();
                 ctx.audio_samples.push_back(l);
                 ctx.audio_samples.push_back(r);
