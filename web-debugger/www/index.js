@@ -130,15 +130,11 @@ class App extends React.Component {
         return;
       }
       if(ev.key == "[") {
-        performance.mark("snapshot-start");
-        this.emulator.snapshot();
-        performance.mark("snapshot-end");
-        performance.measure(
-          "snapshot",
-          "snapshot-start",
-          "snapshot-end"
-        );
-        return;
+        this.emulator.save_state();
+      }
+      if (ev.key == "]") {
+        this.emulator.load_state();
+        this.update();
       }
       this.emulator.set_joypad_state(ev.key, true);
     });

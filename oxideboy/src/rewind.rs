@@ -294,10 +294,7 @@ impl StorageAdapter for MemoryStorageAdapter {
         // Now we clear out all full/delta snapshots that came after the cycle boundary.
         // We take note of the earliest position in the data blob that was encountered.
         fn purge_snapshots(cycle: u64, snapshots: &mut BTreeMap<u64, Range<usize>>) -> Option<usize> {
-            let purge = snapshots
-                .range(cycle + 1..)
-                .map(|(cycle, _)| *cycle)
-                .collect::<Vec<u64>>();
+            let purge = snapshots.range(cycle..).map(|(cycle, _)| *cycle).collect::<Vec<u64>>();
             let data_idx = if purge.is_empty() {
                 None
             } else {
@@ -322,7 +319,7 @@ impl StorageAdapter for MemoryStorageAdapter {
         // Finally, we clear out input events that came after the cycle boundary.
         let purge = self
             .input_events
-            .range(cycle + 1..)
+            .range(cycle..)
             .map(|(cycle, _)| *cycle)
             .collect::<Vec<u64>>();
         for key in purge {

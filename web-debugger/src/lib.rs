@@ -5,9 +5,10 @@ mod utils;
 
 use cfg_if::cfg_if;
 use js_sys::{Function, Uint16Array};
+use oxideboy::joypad::Button;
+use oxideboy::rom::Rom;
 use oxideboy::*;
 use serde::{Deserialize, Serialize};
-use snap;
 use std::collections::HashSet;
 use std::slice;
 use wasm_bindgen::prelude::*;
@@ -31,11 +32,14 @@ cfg_if! {
 #[wasm_bindgen]
 pub struct WebEmu {
     gb: Gameboy,
+    gb_ctx: Context,
     rom_title: String,
     rom_hash: String,
     breakpoint_cb: Function,
+    frame_count: u64,
     frame_cb: Function,
     pc_breakpoints: HashSet<u16>,
+    save_state: Vec<u8>,
 }
 
 #[derive(Serialize)]
@@ -62,19 +66,24 @@ impl WebEmu {
     pub fn new(rom: &[u8], frame_cb: Function, breakpoint_cb: Function) -> WebEmu {
         utils::set_panic_hook();
 
-        let mut gb = Gameboy::new(Model::DMG0, rom.to_vec());
-        gb.skip_bootrom();
+        let rom = Rom::new(rom.to_vec().into()).unwrap();
+        let rom_hash = format!("{:x}", md5::compute(&rom.data));
+        let rom_title = rom.title.clone();
 
-        let rom_title = String::from(gb.cart.rom_title());
-        let rom_hash = format!("{:x}", md5::compute(&gb.cart.rom));
+        let gb = Gameboy::new(Model::DMG0, &rom, false);
+        let mut gb_ctx = Context::new(rom);
+        gb_ctx.enable_audio = false;
 
         WebEmu {
             gb,
+            gb_ctx,
             pc_breakpoints: HashSet::new(),
             breakpoint_cb,
             frame_cb,
             rom_hash,
             rom_title,
+            frame_count: 0,
+            save_state: vec![],
         }
     }
 
@@ -90,14 +99,16 @@ impl WebEmu {
         self.pc_breakpoints = val.into_serde().unwrap();
     }
 
-    pub fn snapshot(&self) {
-        let mut state = Vec::new();
-        self.gb.save_state(&mut state);
-        let mut encoder = snap::Encoder::new();
-
-        let mut output = vec![0; snap::max_compress_len(state.len())];
-        let size = encoder.compress(&state, &mut output).unwrap();
-        log!("Save state size={} compressed={}", state.len(), size);
+    pub fn save_state(&mut self) {
+        self.save_state.clear();
+        save_state(&self.gb, &self.gb_ctx, &mut self.save_state).unwrap();
+    }
+    pub fn load_state(&mut self) {
+        if self.save_state.is_empty() {
+            return;
+        }
+        oxideboy::load_state(&mut self.gb, &mut self.gb_ctx, &self.save_state[..]).unwrap();
+        self.update_frame();
     }
 
     pub fn run(&mut self, microseconds: f32) {
@@ -108,7 +119,8 @@ impl WebEmu {
         while self.gb.cycle_count < desired_cycles {
             self.step();
 
-            let breakpoint = self.pc_breakpoints.contains(&self.gb.cpu.pc) || self.gb.mem_get(self.gb.cpu.pc) == 0x40;
+            let (cpu, bus) = self.gb.bus(&mut self.gb_ctx);
+            let breakpoint = self.pc_breakpoints.contains(&cpu.pc) || bus.memory_get(cpu.pc) == 0x40;
 
             if breakpoint {
                 let _ = self.breakpoint_cb.call0(&JsValue::NULL);
@@ -117,39 +129,48 @@ impl WebEmu {
         }
     }
 
-    pub fn step(&mut self) {
-        self.gb.apu.sample_queue.clear();
+    fn update_frame(&mut self) {
+        self.frame_count = self.gb.frame_count;
+        let buf = unsafe {
+            Uint16Array::view(slice::from_raw_parts(
+                self.gb_ctx.current_framebuffer.as_ptr() as *const u16,
+                160 * 144,
+            ))
+        };
 
-        self.gb.run_instruction();
+        let _ = self.frame_cb.call1(&JsValue::NULL, &buf);
+    }
 
-        if self.gb.new_frame {
-            let buf = unsafe {
-                Uint16Array::view(slice::from_raw_parts(
-                    (self.gb.ppu.framebuffer).as_ptr() as *const u16,
-                    160 * 144,
-                ))
-            };
+    pub fn step(&mut self) -> bool {
+        self.gb.run_instruction(&mut self.gb_ctx);
 
-            let _ = self.frame_cb.call1(&JsValue::NULL, &buf);
+        if self.gb.frame_count > self.frame_count {
+            self.update_frame();
+            true
+        } else {
+            false
         }
     }
 
     pub fn step_frame(&mut self) {
-        while !self.gb.new_frame {
-            self.step();
+        loop {
+            if self.step() {
+                break;
+            }
         }
     }
 
     /// Decodes n number of instructions starting from given address.
-    pub fn current_instructions(&self, addr: u16, n: usize) -> JsValue {
+    pub fn current_instructions(&mut self, addr: u16, n: usize) -> JsValue {
         let mut instrs = Vec::new();
 
         let mut loc = addr;
 
         while instrs.len() < n {
             let inst_loc = loc;
+            let (_, bus) = self.gb.bus(&mut self.gb_ctx);
             let inst = cpu::decode_instruction(|| {
-                let b = self.gb.mem_get(loc);
+                let b = bus.memory_get(loc);
                 loc = loc.wrapping_add(1);
                 b
             });
@@ -163,12 +184,14 @@ impl WebEmu {
         JsValue::from_serde(&instrs).unwrap()
     }
 
-    pub fn mem_read(&self, addr: u16) -> u8 {
-        self.gb.mem_get(addr)
+    pub fn mem_read(&mut self, addr: u16) -> u8 {
+        let (_, bus) = self.gb.bus(&mut self.gb_ctx);
+        bus.memory_get(addr)
     }
 
     pub fn mem_write(&mut self, addr: u16, v: u8) {
-        self.gb.mem_set(addr, v)
+        let (_, mut bus) = self.gb.bus(&mut self.gb_ctx);
+        bus.memory_set(addr, v)
     }
 
     pub fn cpu_state(&self) -> JsValue {
@@ -205,16 +228,20 @@ impl WebEmu {
     }
 
     pub fn set_joypad_state(&mut self, key: &str, pressed: bool) {
-        match key {
-            "ArrowUp" | "Up" => self.gb.joypad.up = pressed,
-            "ArrowDown" | "Down" => self.gb.joypad.down = pressed,
-            "ArrowLeft" | "Left" => self.gb.joypad.left = pressed,
-            "ArrowRight" | "Right" => self.gb.joypad.right = pressed,
-            "Enter" => self.gb.joypad.start = pressed,
-            "Shift" => self.gb.joypad.select = pressed,
-            "a" => self.gb.joypad.a = pressed,
-            "s" => self.gb.joypad.b = pressed,
-            _ => {}
+        let button = match key {
+            "ArrowUp" | "Up" => Some(Button::Up),
+            "ArrowDown" | "Down" => Some(Button::Down),
+            "ArrowLeft" | "Left" => Some(Button::Left),
+            "ArrowRight" | "Right" => Some(Button::Right),
+            "Enter" => Some(Button::Start),
+            "Shift" => Some(Button::Select),
+            "a" => Some(Button::A),
+            "s" => Some(Button::B),
+            _ => None,
+        };
+
+        if let Some(button) = button {
+            self.gb.set_joypad_button(button, pressed);
         }
     }
 }
