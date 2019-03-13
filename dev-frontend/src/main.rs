@@ -1,3 +1,4 @@
+use oxideboy::joypad::*;
 use oxideboy::rewind::*;
 use oxideboy::rom::Rom;
 use oxideboy::*;
@@ -97,6 +98,20 @@ fn main() -> Result<()> {
         });
     };
 
+    fn map_keycode_to_joypad(keycode: Option<sdl2::keyboard::Keycode>) -> Option<Button> {
+        match keycode {
+            Some(Keycode::Up) => Some(Button::Up),
+            Some(Keycode::Down) => Some(Button::Down),
+            Some(Keycode::Right) => Some(Button::Right),
+            Some(Keycode::Left) => Some(Button::Left),
+            Some(Keycode::A) => Some(Button::A),
+            Some(Keycode::S) => Some(Button::B),
+            Some(Keycode::Return) => Some(Button::Start),
+            Some(Keycode::RShift) => Some(Button::Select),
+            _ => None,
+        }
+    }
+
     let mut frame_count = 0;
     let mut frames = 0;
     let mut fps_timer = Instant::now();
@@ -118,47 +133,34 @@ fn main() -> Result<()> {
                     ..
                 } => break 'running,
 
+                Event::KeyUp { keycode, .. } | Event::KeyDown { keycode, .. }
+                    if map_keycode_to_joypad(keycode).is_some() =>
+                {
+                    let pressed = if let Event::KeyDown { .. } = event { true } else { false };
+                    gb.joypad
+                        .state
+                        .set_button(map_keycode_to_joypad(keycode).unwrap(), pressed);
+                    rewind_manager.notify_input(&gb);
+                }
+
                 Event::KeyUp {
-                    keycode: Some(keycode), ..
-                } => match keycode {
-                    Keycode::Up => gb.joypad.up = false,
-                    Keycode::Down => gb.joypad.down = false,
-                    Keycode::Right => gb.joypad.right = false,
-                    Keycode::Left => gb.joypad.left = false,
-                    Keycode::A => gb.joypad.a = false,
-                    Keycode::S => gb.joypad.b = false,
-                    Keycode::Return => gb.joypad.start = false,
-                    Keycode::RShift => gb.joypad.select = false,
-                    Keycode::LCtrl => {
-                        // When we stop rewinding we need to reset all joypad buttons to unpressed.
-                        // Otherwise, whatever was pressed at the time of the frame we rewinded (rewound?) to will still
-                        // be pressed.
-                        gb.joypad.up = false;
-                        gb.joypad.down = false;
-                        gb.joypad.right = false;
-                        gb.joypad.left = false;
-                        gb.joypad.a = false;
-                        gb.joypad.b = false;
-                        gb.joypad.start = false;
-                        gb.joypad.select = false;
-                        rewinding = false;
-                    }
-                    _ => {}
-                },
+                    keycode: Some(Keycode::LCtrl),
+                    ..
+                } => {
+                    // When we stop rewinding we need to reset all joypad buttons to unpressed.
+                    // Otherwise, whatever was pressed at the time of the frame we rewinded (rewound?) to will still
+                    // be pressed.
+                    gb.joypad.state.clear();
+                    rewinding = false;
+                }
 
                 Event::KeyDown {
                     keycode: Some(keycode), ..
                 } => match keycode {
-                    Keycode::Escape => break 'running,
-                    Keycode::Up => gb.joypad.up = true,
-                    Keycode::Down => gb.joypad.down = true,
-                    Keycode::Right => gb.joypad.right = true,
-                    Keycode::Left => gb.joypad.left = true,
-                    Keycode::A => gb.joypad.a = true,
-                    Keycode::S => gb.joypad.b = true,
-                    Keycode::Return => gb.joypad.start = true,
-                    Keycode::RShift => gb.joypad.select = true,
                     Keycode::LCtrl => rewinding = true,
+                    Keycode::P => paused = !paused,
+                    Keycode::L => limit = !limit,
+                    Keycode::M => gb_context.enable_audio = !gb_context.enable_audio,
 
                     Keycode::F7 => {
                         state.clear();
@@ -172,21 +174,7 @@ fn main() -> Result<()> {
                             update_fb(&gb_context.current_framebuffer);
                         }
                     }
-                    Keycode::L => {
-                        limit = !limit;
-                        audio_device.clear();
-                    }
-                    Keycode::P => {
-                        paused = !paused;
-                    }
-                    Keycode::M => {
-                        if audio_device.status() == AudioStatus::Playing {
-                            audio_device.clear();
-                            audio_device.pause();
-                        } else {
-                            audio_device.resume();
-                        }
-                    }
+
                     _ => {}
                 },
                 _ => {}

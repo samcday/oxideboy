@@ -6,8 +6,11 @@ use oxideboy::{Context, Gameboy, Model};
 use snap;
 use std::fs::File;
 use std::io::prelude::*;
+use zstd;
 
 type Result<T> = std::result::Result<T, Box<std::error::Error>>;
+
+static mut COMPRESS_OUT: [u8; 1000000] = [0; 1000000];
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -18,29 +21,59 @@ fn main() -> Result<()> {
     let rom = Rom::new(rom.into()).unwrap();
     let mut gb = Gameboy::new(Model::DMG0, &rom, false);
     let mut gb_ctx = Context::new(rom);
+    gb_ctx.enable_video = false;
+    gb_ctx.enable_audio = false;
 
     let mut base_state = Vec::new();
     let mut new_state = Vec::new();
 
-    bincode::serialize_into(&mut new_state, &gb);
-
-    let mut diff = vec![];
-
-    let mut compress_out = [0; 200000];
-    let mut encoder = snap::Encoder::new();
-
     let mut total_size = 0;
-
+    let mut diff = vec![];
+    let mut batch_diffs = vec![];
+    let mut batch_size = 0;
     let mut next_frame_snapshot = 0;
+
+    let base_snapshot_every = 3600;
+
+    // Snappy
+    fn compress(data: &[u8]) -> usize {
+        let mut encoder = snap::Encoder::new();
+        unsafe { encoder.compress(&data, &mut COMPRESS_OUT).unwrap() }
+    }
+
+    // Zstd
+    // fn compress(data: &[u8]) -> usize {
+    //     unsafe { zstd::block::compress_to_buffer(&data, &mut COMPRESS_OUT, 0).unwrap() }
+    // }
+
+    bincode::serialize_into(&mut new_state, &gb);
+    total_size += compress(&new_state);
+
     loop {
-        next_frame_snapshot += 5;
+        next_frame_snapshot += 60;
         while gb.frame_count < next_frame_snapshot {
             gb.run_instruction(&mut gb_ctx);
+        }
+
+        if next_frame_snapshot % 3600 == 0 {
+            let seconds = (next_frame_snapshot / 60);
+            println!(
+                "{} seconds. Total state size so far: {}. {}kb per minute, {}kb per hour.",
+                seconds,
+                total_size,
+                (total_size as f32) / (seconds as f32 / 60.0) / 1000.0,
+                (total_size as f32) / (seconds as f32 / 60.0) * 60.0 / 1000.0
+            );
         }
 
         std::mem::swap(&mut base_state, &mut new_state);
         new_state.clear();
         bincode::serialize_into(&mut new_state, &gb);
+
+        if next_frame_snapshot % base_snapshot_every == 0 {
+            total_size += compress(&new_state);
+            continue;
+        }
 
         // Every 60 seconds we save a base state.
         // if seconds % 60 == 0 {
@@ -55,30 +88,44 @@ fn main() -> Result<()> {
         //     }
         // }
 
+        let base_compressed_size = compress(&new_state);
+
         diff.clear();
         let diff_size = oxideboy::simple_diff::generate(&base_state, &new_state, &mut diff).unwrap();
-        let diff_compressed_size = encoder.compress(&diff, &mut compress_out).unwrap();
-        total_size += diff_compressed_size;
-        // apply_diff(&base_state, &new_state, &diff);
+        let diff_compressed_size = compress(&diff);
 
-        let seconds = (next_frame_snapshot / 60);
-        if next_frame_snapshot % 60 == 0 {
-            println!(
-                "{} seconds. Total state size so far: {}. {}kb per minute, {}kb per hour.",
-                seconds,
-                total_size,
-                (total_size as f32) / (seconds as f32 / 60.0) / 1000.0,
-                (total_size as f32) / (seconds as f32 / 60.0) * 60.0 / 1000.0
-            );
+        batch_size += diff_compressed_size;
+        batch_diffs.extend(&diff);
+
+        if true {
+            total_size += diff_compressed_size;
+        } else {
+            if next_frame_snapshot % 1000 == 0 {
+                let compressed_size = compress(&batch_diffs);
+                total_size += compressed_size;
+
+                println!(
+                    "last 20 diffs: {}. compressed individually: {}. compressed together: {}",
+                    batch_diffs.len(),
+                    batch_size,
+                    compressed_size
+                );
+                batch_size = 0;
+                batch_diffs.clear();
+            }
         }
 
-        println!(
-            "State size={} Diff size={} snap={} Compression={}% (base state compressed: {})",
-            base_state.len(),
-            diff_size,
-            diff_compressed_size,
-            (1.0 - ((diff_compressed_size as f32) / (base_state.len() as f32))) * 100.0,
-            encoder.compress(&new_state, &mut compress_out).unwrap(),
-        );
+        // println!(
+        //     "State size={} Diff size={} diff compressed={} Compression={}% (base state compressed: {})",
+        //     base_state.len(),
+        //     diff_size,
+        //     diff_compressed_size,
+        //     (1.0 - ((diff_compressed_size as f32) / (base_state.len() as f32))) * 100.0,
+        //     base_compressed_size,
+        // );
+
+        // if base_compressed_size < diff_compressed_size {
+        //     panic!("Diff ended up larger than base size, wtfux mang");
+        // }
     }
 }

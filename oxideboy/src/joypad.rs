@@ -5,62 +5,75 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Copy, Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
 pub struct Joypad {
     select_btn: bool,
     select_dir: bool,
 
-    pub up: bool,
-    pub down: bool,
-    pub left: bool,
-    pub right: bool,
-    pub a: bool,
-    pub b: bool,
-    pub select: bool,
-    pub start: bool,
+    pub state: JoypadState,
+}
+
+/// there's only 8 buttons on the joypad, so we can encode the state of all of them in a single u8.
+/// The Gameboy treats a set bit as unpressed, and a cleared bit as pressed, so we store it like that too.
+#[derive(Clone, Copy, Deserialize, Serialize)]
+pub struct JoypadState(u8);
+
+pub enum Button {
+    Down = 0b1000_0000,
+    Up = 0b0100_0000,
+    Left = 0b0010_0000,
+    Right = 0b0001_0000,
+    Start = 0b0000_1000,
+    Select = 0b0000_0100,
+    B = 0b0000_0010,
+    A = 0b0000_0001,
 }
 
 impl Joypad {
     /// Read from the 0xFF00 P1 register
     pub fn reg_p1_read(&self) -> u8 {
-        let mut v = 0xCF;
-
-        if self.select_btn {
-            v ^= 0x20;
-            if self.a {
-                v ^= 1
-            }
-            if self.b {
-                v ^= 2
-            }
-            if self.select {
-                v ^= 4
-            }
-            if self.start {
-                v ^= 8
-            }
+        0xC0 | if self.select_btn {
+            0x20 | self.state.btn()
         } else if self.select_dir {
-            v ^= 0x10;
-            if self.right {
-                v ^= 1
-            }
-            if self.left {
-                v ^= 2
-            }
-            if self.up {
-                v ^= 4
-            }
-            if self.down {
-                v ^= 8
-            }
+            0x10 | self.state.dir()
+        } else {
+            0xF
         }
-
-        v
     }
 
     /// Write to the 0xFF00 P1 register
     pub fn reg_p1_write(&mut self, v: u8) {
         self.select_btn = v & 0x20 == 0;
         self.select_dir = v & 0x10 == 0;
+    }
+}
+
+impl Default for JoypadState {
+    fn default() -> JoypadState {
+        // By default all buttons are unpressed, which means all bits are set.
+        JoypadState(0xFF)
+    }
+}
+
+impl JoypadState {
+    pub fn set_button(&mut self, key: Button, pressed: bool) {
+        if pressed {
+            self.0 ^= key as u8;
+        } else {
+            // Note that if a button bit is set it means it's *not* pressed, because Gameboy logic.
+            self.0 |= key as u8;
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.0 = 0xFF;
+    }
+
+    fn dir(&self) -> u8 {
+        self.0 >> 4
+    }
+
+    fn btn(&self) -> u8 {
+        self.0 & 0b1111
     }
 }

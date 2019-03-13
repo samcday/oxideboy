@@ -3,61 +3,61 @@ extern crate bencher;
 
 use bencher::Bencher;
 use lazy_static::lazy_static;
-use oxideboy::{interrupt, ppu, simple_diff, Gameboy, Model};
+use oxideboy::rom::Rom;
+use oxideboy::{interrupt, ppu, simple_diff, Context, Gameboy, Model};
 use snap;
 
 fn save_state(bench: &mut Bencher) {
-    let rom = include_bytes!("../tests/blargg/mem_timing.gb").to_vec();
-    let mut gb = Gameboy::new(Model::DMG0, rom);
-    gb.skip_bootrom();
+    let rom = Rom::new(include_bytes!("../tests/blargg/mem_timing.gb").to_vec().into()).unwrap();
+    let mut gb = Gameboy::new(Model::DMG0, &rom, false);
+    let mut gb_ctx = Context::new(rom);
     for _ in 0..50000 {
-        gb.run_instruction();
+        gb.run_instruction(&mut gb_ctx);
     }
 
     let mut vec = Vec::new();
-    gb.save_state(&mut vec);
+    oxideboy::save_state(&gb, &gb_ctx, &mut vec).unwrap();
 
     let size = vec.len();
 
     bench.iter(|| {
         vec.clear();
-        gb.save_state(&mut vec);
+        oxideboy::save_state(&gb, &gb_ctx, &mut vec).unwrap();
         assert_eq!(vec.len(), size);
     });
 }
 
 fn load_state(bench: &mut Bencher) {
-    let rom = include_bytes!("../tests/blargg/mem_timing.gb").to_vec();
-    let mut gb = Gameboy::new(Model::DMG0, rom);
-    gb.skip_bootrom();
+    let rom = Rom::new(include_bytes!("../tests/blargg/mem_timing.gb").to_vec().into()).unwrap();
+    let mut gb = Gameboy::new(Model::DMG0, &rom, false);
+    let mut gb_ctx = Context::new(rom);
     for _ in 0..50000 {
-        gb.run_instruction();
+        gb.run_instruction(&mut gb_ctx);
     }
 
     let mut vec = Vec::new();
-    gb.save_state(&mut vec);
-    gb.run_instruction();
+    oxideboy::save_state(&gb, &gb_ctx, &mut vec).unwrap();
+
+    gb.run_instruction(&mut gb_ctx);
     let cycle_count = gb.cycle_count;
 
     bench.iter(|| {
-        gb.load_state(&vec);
+        oxideboy::load_state(&mut gb, &mut gb_ctx, &vec[..]).unwrap();
         assert!(gb.cycle_count < cycle_count);
     });
 }
 
 fn state_snap(bench: &mut Bencher) {
-    let rom = include_bytes!("../tests/blargg/mem_timing.gb").to_vec();
-    let mut gb = Gameboy::new(Model::DMG, rom);
-    gb.skip_bootrom();
-    for _ in 0..60 {
-        while !gb.new_frame {
-            gb.run_instruction();
-        }
-        gb.run_instruction();
+    let rom = Rom::new(include_bytes!("../tests/blargg/mem_timing.gb").to_vec().into()).unwrap();
+    let mut gb = Gameboy::new(Model::DMG0, &rom, false);
+    let mut gb_ctx = Context::new(rom);
+    gb_ctx.enable_audio = false;
+    while gb.frame_count < 60 {
+        gb.run_instruction(&mut gb_ctx);
     }
 
     let mut state = Vec::new();
-    gb.save_state(&mut state);
+    bincode::serialize_into(&mut state, &gb).unwrap();
 
     let mut output = [0; 100000];
     let mut encoder = snap::Encoder::new();
@@ -72,26 +72,22 @@ fn state_snap(bench: &mut Bencher) {
 
 lazy_static! {
     static ref DIFF_STATES: (Vec<u8>, Vec<u8>) = {
-        let rom = include_bytes!("../tests/blargg/mem_timing.gb").to_vec();
-        let mut gb = Gameboy::new(Model::DMG, rom);
+        let rom = Rom::new(include_bytes!("../tests/blargg/mem_timing.gb").to_vec().into()).unwrap();
+        let mut gb = Gameboy::new(Model::DMG0, &rom, false);
+        let mut gb_ctx = Context::new(rom);
 
         let mut base_state = Vec::new();
         let mut new_state = Vec::new();
 
-        for _ in 0..60 {
-            while !gb.new_frame {
-                gb.run_instruction();
-            }
-            gb.run_instruction();
+        while gb.frame_count < 60 {
+            gb.run_instruction(&mut gb_ctx);
         }
-        gb.save_state(&mut base_state);
-        for _ in 0..60 {
-            while !gb.new_frame {
-                gb.run_instruction();
-            }
-            gb.run_instruction();
+        bincode::serialize_into(&mut base_state, &gb).unwrap();
+
+        while gb.frame_count < 120 {
+            gb.run_instruction(&mut gb_ctx);
         }
-        gb.save_state(&mut new_state);
+        bincode::serialize_into(&mut new_state, &gb).unwrap();
 
         (base_state, new_state)
     };
@@ -128,16 +124,18 @@ fn diff_small_apply(bench: &mut Bencher) {
 
 fn ppu_drawline(bench: &mut Bencher) {
     let mut ppu = ppu::Ppu::new();
+    let mut framebuffer = [0; ppu::SCREEN_SIZE];
 
     ppu.dirty = true;
 
     bench.iter(|| {
-        ppu.draw_line();
+        ppu.draw_line(&mut framebuffer);
     });
 }
 
 fn ppu_drawline_sprites(bench: &mut Bencher) {
     let mut ppu = ppu::Ppu::new();
+    let mut framebuffer = [0; ppu::SCREEN_SIZE];
     let mut interrupts = interrupt::InterruptController::new();
 
     ppu.dirty = true;
@@ -151,7 +149,7 @@ fn ppu_drawline_sprites(bench: &mut Bencher) {
     ppu.mode_2_oam_search(&mut interrupts);
 
     bench.iter(|| {
-        ppu.draw_line();
+        ppu.draw_line(&mut framebuffer);
     });
 }
 

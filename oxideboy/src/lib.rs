@@ -25,8 +25,8 @@ use crate::cartridge::Cartridge;
 use crate::cpu::Bus;
 use crate::cpu::Cpu;
 use crate::dma::DmaController;
-use crate::interrupt::InterruptController;
-use crate::joypad::Joypad;
+use crate::interrupt::{Interrupt, InterruptController};
+use crate::joypad::{Button, Joypad};
 use crate::ppu::OamCorruptionType;
 use crate::ppu::Ppu;
 use crate::ppu::SCREEN_SIZE;
@@ -243,6 +243,11 @@ impl Gameboy {
                 timer: &mut self.timer,
             },
         )
+    }
+
+    pub fn set_joypad_button(&mut self, button: Button, pressed: bool) {
+        self.joypad.state.set_button(button, pressed);
+        self.interrupts.request(Interrupt::Joypad);
     }
 
     pub fn run_instruction(&mut self, ctx: &mut Context) {
