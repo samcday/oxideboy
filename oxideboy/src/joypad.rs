@@ -18,15 +18,16 @@ pub struct Joypad {
 #[derive(Clone, Copy, Deserialize, Serialize)]
 pub struct JoypadState(u8);
 
+#[rustfmt::skip]
 pub enum Button {
-    Down = 0b1000_0000,
-    Up = 0b0100_0000,
-    Left = 0b0010_0000,
-    Right = 0b0001_0000,
-    Start = 0b0000_1000,
-    Select = 0b0000_0100,
-    B = 0b0000_0010,
-    A = 0b0000_0001,
+    Down    = 0b1000_0000,
+    Up      = 0b0100_0000,
+    Left    = 0b0010_0000,
+    Right   = 0b0001_0000,
+    Start   = 0b0000_1000,
+    Select  = 0b0000_0100,
+    B       = 0b0000_0010,
+    A       = 0b0000_0001,
 }
 
 impl Joypad {
