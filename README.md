@@ -22,9 +22,51 @@ Well let's be real, I'm writing this because I want to. But here's some post-rat
 - [ ] Frame / cycle rewinding
 - [ ] Remove all panics and do graceful error handling
 - [ ] Web-based debugger
-- [x] Passing all blargg cpu/memory/timing tests.
-- [ ] Passing all blargg dmg_sound tests.
-- [ ] Passing all blargg oam_bug tests.
-- [ ] Passing all mealybug-tearoom tests.
-- [x] Passing all mooneye-gb acceptance tests.
-- [ ] Passing all mooneye-gb mbc1 tests.
+  - [ ] Memory viewer/editor
+  - [ ] CPU+HW register viewer/editor
+  - [ ] Breakpoints
+  - [x] Break
+  - [x] Step forward
+  - [x] Step frame
+  - [ ] Step backward
+  - [ ] VRAM viewer
+- [ ] Cart memory bank controllers
+  - [x] MBC1
+  - [ ] MBC2
+  - [ ] MBC3
+  - [ ] MBC5
+  - [ ] MBC7
+- [ ] PPU cycle accuracy
+- [ ] Blargg test suite
+  - [x] instr_timing
+  - [x] mem_timing
+  - [x] cpu_instrs
+  - [ ] dmg_sound
+  - [ ] oam_bug
+- [ ] mooneye-gb test suite
+  - [x] acceptance
+  - [x] acceptance/bits
+  - [x] acceptance/instr
+  - [x] acceptance/oam_dma
+  - [x] acceptance/ppu
+  - [ ] acceptance/serial
+    - [x] with skipped bootrom
+    - [ ] with real bootrom
+  - [x] acceptance/timer
+  - [ ] mbc1
+- [ ] mealybug-tearoom test suite
+- [ ] GBC implementation
+  - [ ] Bootrom + skip
+  - [ ] RAM banking
+  - [ ] VRAM banking
+  - [ ] KEY1 register mode select
+  - [ ] CGB palettes
+  - [ ] VRAM DMA
+  - [ ] BG Map attributes
+  - [ ] Infra port?
+  - [ ] PCM registers
+- [ ] SGB implementation
+  - [ ] Bootrom + skip
+  - [ ] SGB command packet protocol
+  - [ ] SGB border
+  - [ ] SGB color palettes
