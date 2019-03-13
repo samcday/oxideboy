@@ -77,6 +77,7 @@ fn main() -> Result<()> {
 
     let start = Instant::now();
     let mut next_frame = FRAME_TIME;
+    let mut frame_count = 0;
 
     let mut update_fb = |framebuffer: &[u16]| {
         texture
@@ -112,17 +113,18 @@ fn main() -> Result<()> {
         }
     }
 
-    let mut frame_count = 0;
-    let mut frames = 0;
-    let mut fps_timer = Instant::now();
+    let mut frames = 0.0;
     let sec = Duration::from_secs(1);
+    let mut fps_timer = Instant::now();
+
     'running: loop {
+        frames += 1.0;
         if fps_timer.elapsed() >= sec {
             if print_fps {
-                println!("FPS: {}", frames);
+                println!("FPS: {}", frames / (fps_timer.elapsed().as_millis() as f32 / 1000.0));
             }
+            frames = 0.0;
             fps_timer = Instant::now();
-            frames = 0;
         }
 
         for event in event_pump.poll_iter() {
@@ -196,19 +198,6 @@ fn main() -> Result<()> {
                 }
             }
 
-            // if throwaway_samples {
-            //     let mut samples = samples.skip_while(|_| {
-
-            //     });
-            //     if throwaway_count > samples.len() {
-            //         throwaway_count -= samples.len();
-            //         samples = &[];
-            //     } else {
-            //         samples = &samples[throwaway_count..];
-            //         throwaway_samples = false;
-            //     }
-            // }
-
             queue_samples(&mut gb_context);
         }
 
@@ -223,8 +212,6 @@ fn main() -> Result<()> {
             update_fb(&gb_context.current_framebuffer);
             next_frame += FRAME_TIME;
         }
-
-        frames += 1;
     }
 
     Ok(())
