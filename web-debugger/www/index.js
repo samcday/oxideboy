@@ -170,15 +170,27 @@ class App extends React.Component {
             }
             <div className="register">
               <label htmlFor={`cpu_register_ime`}>IME:</label>
-              <input type="checkbox" readOnly={!this.state.paused} id={`cpu_register_ime`} checked={this.state.cpuState.ime} />
+              <input type="checkbox"
+                     id="cpu_register_ime"
+                     readOnly={!this.state.paused}
+                     onChange={this.toggleCpuFlag.bind(this, 'ime')}
+                     checked={this.state.cpuState.ime} />
             </div>
             <div className="register">
               <label htmlFor={`cpu_register_imd`}>IMD:</label>
-              <input type="checkbox" readOnly={!this.state.paused} id={`cpu_register_imd`} checked={this.state.cpuState.ime_defer} />
+              <input type="checkbox"
+                     id="cpu_register_imd"
+                     readOnly={!this.state.paused}
+                     onChange={this.toggleCpuFlag.bind(this, 'ime_defer')}
+                     checked={this.state.cpuState.ime_defer} />
             </div>
             <div className="register">
               <label htmlFor={`cpu_register_halt`}>HALT:</label>
-              <input type="checkbox" readOnly={!this.state.paused} id={`cpu_register_halt`} checked={this.state.cpuState.halted} />
+              <input type="checkbox"
+                     id="cpu_register_halt"
+                     readOnly={!this.state.paused}
+                     onChange={this.toggleCpuFlag.bind(this, 'halted')}
+                     checked={this.state.cpuState.halted} />
             </div>
             {
               Object.keys(MEM_REGISTERS).map((reg) =>
@@ -288,6 +300,13 @@ class App extends React.Component {
   updateCpuRegister(reg, newVal) {
     let cpuState = this.emulator.cpu_state();
     cpuState[reg] = parseInt(newVal, 16);
+    this.emulator.set_cpu_state(cpuState);
+    this.update();
+  }
+
+  toggleCpuFlag(flag) {
+    let cpuState = this.emulator.cpu_state();
+    cpuState[flag] = !cpuState[flag];
     this.emulator.set_cpu_state(cpuState);
     this.update();
   }

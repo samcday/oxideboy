@@ -24,7 +24,7 @@ Well let's be real, I'm writing this because I want to. But here's some post-rat
 - [ ] Web-based debugger
   - [ ] Memory viewer/editor
   - [ ] Jump to location
-  - [ ] CPU+HW register viewer/editor
+  - [x] CPU+HW register viewer/editor
   - [ ] Breakpoints
   - [x] Break
   - [x] Step forward
