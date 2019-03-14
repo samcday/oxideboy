@@ -1,3 +1,0 @@
-[submodule "gameboy/tests/mattcurrie"]
-	path = gameboy/tests/mattcurrie
-	url = https://github.com/mattcurrie/mealybug-tearoom-tests.git
