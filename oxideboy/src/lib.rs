@@ -42,6 +42,9 @@ use std::io::{Read, Write};
 /// emulation of the real bootrom.
 pub const BOOT_LOGO_DURATION: u64 = 30;
 
+/// The number of cycles it takes the PPU to render a whole video frame.
+pub const CYCLES_PER_FRAME: u64 = 17556;
+
 pub const CYCLES_PER_MICRO: f32 = 1_048_576.0 / 1_000_000.0;
 
 const TRADEMARK_ICON: [u8; 8] = [0x3c, 0x42, 0xb9, 0xa5, 0xb9, 0xa5, 0x42, 0x3c];
@@ -274,7 +277,6 @@ impl Gameboy {
     pub fn skip_bootrom(&mut self, rom: &Rom) {
         // Start the bootrom countdown. The idea here is to emulate noops for a bunch of cycles to keep the Nintendo
         // logo on the screen for half a second.
-        self.ppu.dirty = true;
         self.bootrom_countdown = 17_556 * BOOT_LOGO_DURATION; // 17556 clocks in a frame * number of frames
 
         // Ensure PPU has correct state (enabled, BG enabled, etc)

@@ -183,23 +183,21 @@ fn main() -> Result<()> {
             }
         }
 
-        if !paused {
-            if rewinding {
-                rewind_manager.rewind_frame(&mut gb, &mut gb_context);
-                frame_count = gb.frame_count;
-            } else {
-                for _ in 0..17556 {
-                    gb.run_instruction(&mut gb_context);
+        if rewinding {
+            rewind_manager.rewind_frame(&mut gb, &mut gb_context);
+            frame_count = gb.frame_count;
+        } else if !paused {
+            for _ in 0..17556 {
+                gb.run_instruction(&mut gb_context);
 
-                    if gb.frame_count > frame_count {
-                        frame_count = gb.frame_count;
-                        rewind_manager.notify_frame(&mut gb);
-                    }
+                if gb.frame_count > frame_count {
+                    frame_count = gb.frame_count;
+                    rewind_manager.snapshot(&mut gb);
                 }
             }
-
-            queue_samples(&mut gb_context);
         }
+
+        queue_samples(&mut gb_context);
 
         if limit {
             update_fb(&gb_context.current_framebuffer);
