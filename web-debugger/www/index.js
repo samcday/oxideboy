@@ -129,13 +129,6 @@ class App extends React.Component {
       if(!this.emulator || ev.target !== document.body) {
         return;
       }
-      if(ev.key == "[") {
-        this.emulator.save_state();
-      }
-      if (ev.key == "]") {
-        this.emulator.load_state();
-        this.update();
-      }
       this.emulator.set_joypad_state(ev.key, true);
     });
 
@@ -217,10 +210,16 @@ class App extends React.Component {
                       <i className="fas fa-pause"></i>
                     </button>
                   }
-                  <button type="button" className="btn btn-outline-secondary" id="step" onClick={this.step.bind(this)} disabled={!this.state.active || !this.state.paused}>
+                  <button type="button" className="btn btn-outline-secondary" id="step_frame_backward" onClick={this.stepFrameBack.bind(this)} disabled={!this.state.active || !this.state.paused}>
+                    <i className="fas fa-fast-backward"></i>
+                  </button>
+                  <button type="button" className="btn btn-outline-secondary" id="step_backward" onClick={this.stepBack.bind(this)} disabled={!this.state.active || !this.state.paused}>
+                    <i className="fas fa-backward"></i>
+                  </button>
+                  <button type="button" className="btn btn-outline-secondary" id="step_forward" onClick={this.stepForward.bind(this)} disabled={!this.state.active || !this.state.paused}>
                     <i className="fas fa-forward"></i>
                   </button>
-                  <button type="button" className="btn btn-outline-secondary" id="step_frame" onClick={this.stepFrame.bind(this)} disabled={!this.state.active || !this.state.paused}>
+                  <button type="button" className="btn btn-outline-secondary" id="step_frame_forward" onClick={this.stepFrameForward.bind(this)} disabled={!this.state.active || !this.state.paused}>
                     <i className="fas fa-fast-forward"></i>
                   </button>
                   <button type="button" className="btn btn-outline-secondary" id="restart" onClick={this.restart.bind(this)} disabled={!this.state.active}>
@@ -360,21 +359,39 @@ class App extends React.Component {
     }));
   }
 
-  step() {
+  stepFrameBack() {
     if (!this.state.paused) {
       return;
     }
 
-    this.emulator.step();
+    this.emulator.step_frame_backward();
     this.update();
   }
 
-  stepFrame() {
+  stepBack() {
     if (!this.state.paused) {
       return;
     }
 
-    this.emulator.step_frame();
+    this.emulator.step_backward();
+    this.update();
+  }
+
+  stepForward() {
+    if (!this.state.paused) {
+      return;
+    }
+
+    this.emulator.step_forward();
+    this.update();
+  }
+
+  stepFrameForward() {
+    if (!this.state.paused) {
+      return;
+    }
+
+    this.emulator.step_frame_forward();
     this.update();
   }
 

@@ -144,11 +144,14 @@ impl<T: StorageAdapter> RewindManager<T> {
             return;
         }
 
-        // This is the point we want to rewind to.
-        let desired_cycle = gb.cycle_count.saturating_sub(CYCLES_PER_FRAME);
+        self.rewind_cycles(gb, ctx, CYCLES_PER_FRAME);
+    }
 
-        // In order to rewind backwards 1 frame, we need to start from two frames back and run forward, this is so we
-        // have a full frame to render after the rewind.
+    pub fn rewind_cycles(&mut self, gb: &mut Gameboy, ctx: &mut Context, cycles: u64) {
+        let desired_cycle = gb.cycle_count.saturating_sub(cycles);
+
+        // We actually want to rewind to 2 frames before the desired cycle, so that we see a whole frame get built
+        // leading up to the desired cycle.
         let start_cycle = desired_cycle.saturating_sub(CYCLES_PER_FRAME * 2);
 
         let mut snapshot = Vec::new();

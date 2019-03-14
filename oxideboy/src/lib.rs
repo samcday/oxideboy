@@ -42,7 +42,7 @@ use std::io::{Read, Write};
 /// emulation of the real bootrom.
 pub const BOOT_LOGO_DURATION: u64 = 30;
 
-const BASE_CLOCK_SPEED: u64 = 1_048_576;
+pub const BASE_CLOCK_SPEED: u64 = 1_048_576;
 
 /// The number of cycles it takes the PPU to render a whole video frame.
 pub const CYCLES_PER_FRAME: u64 = 17556;
@@ -110,6 +110,7 @@ pub struct Gameboy {
     pub bootrom_countdown: u64,
     pub cycle_count: u64, // The total number of M-cycles that have elapsed since emulation began
     pub frame_count: u64, // The total number of frames we've rendered since emulation began
+    pub last_inst_cycles: u64, // The number of cycles the last executed instruction took.
 
     pub apu: Apu,
     pub cart: Cartridge,
@@ -202,6 +203,7 @@ impl Gameboy {
             bootrom_countdown: 0,
             cycle_count: 0,
             frame_count: 0,
+            last_inst_cycles: 0,
 
             apu: Apu::new(),
             cart,
@@ -278,8 +280,10 @@ impl Gameboy {
             return;
         }
 
+        let cycles = self.cycle_count;
         let (cpu, mut bus) = self.bus(ctx);
         cpu.step(&mut bus);
+        self.last_inst_cycles = self.cycle_count - cycles;
     }
 
     /// Skips emulating the bootrom startup process (the scrolling Nintendo logo). Emulating it is probably irritating

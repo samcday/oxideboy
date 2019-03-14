@@ -6,6 +6,7 @@ mod utils;
 use cfg_if::cfg_if;
 use js_sys::{Function, Uint16Array};
 use oxideboy::joypad::Button;
+use oxideboy::rewind::*;
 use oxideboy::rom::Rom;
 use oxideboy::*;
 use serde::{Deserialize, Serialize};
@@ -39,7 +40,7 @@ pub struct WebEmu {
     frame_count: u64,
     frame_cb: Function,
     pc_breakpoints: HashSet<u16>,
-    save_state: Vec<u8>,
+    rewind_manager: RewindManager<MemoryStorageAdapter>,
 }
 
 #[derive(Serialize)]
@@ -74,6 +75,8 @@ impl WebEmu {
         let mut gb_ctx = Context::new(rom);
         gb_ctx.enable_audio = false;
 
+        let rewind_manager = RewindManager::new(&gb, MemoryStorageAdapter::new()).unwrap();
+
         WebEmu {
             gb,
             gb_ctx,
@@ -83,7 +86,7 @@ impl WebEmu {
             rom_hash,
             rom_title,
             frame_count: 0,
-            save_state: vec![],
+            rewind_manager,
         }
     }
 
@@ -99,25 +102,11 @@ impl WebEmu {
         self.pc_breakpoints = val.into_serde().unwrap();
     }
 
-    pub fn save_state(&mut self) {
-        self.save_state.clear();
-        save_state(&self.gb, &self.gb_ctx, &mut self.save_state).unwrap();
-    }
-    pub fn load_state(&mut self) {
-        if self.save_state.is_empty() {
-            return;
-        }
-        oxideboy::load_state(&mut self.gb, &mut self.gb_ctx, &self.save_state[..]).unwrap();
-        self.update_frame();
-    }
+    pub fn run(&mut self, microseconds: f64) {
+        let desired_cycle = self.gb.cycle_count + ((BASE_CLOCK_SPEED as f64 / 1_000_000.0) * microseconds) as u64;
 
-    pub fn run(&mut self, microseconds: f32) {
-        self.gb.cycle_count = 0;
-
-        let desired_cycles = (CYCLES_PER_MICRO * microseconds) as u64;
-
-        while self.gb.cycle_count < desired_cycles {
-            self.step();
+        while self.gb.cycle_count < desired_cycle {
+            self.step_forward();
 
             let (cpu, bus) = self.gb.bus(&mut self.gb_ctx);
             let breakpoint = self.pc_breakpoints.contains(&cpu.pc) || bus.memory_get(cpu.pc) == 0x40;
@@ -141,10 +130,11 @@ impl WebEmu {
         let _ = self.frame_cb.call1(&JsValue::NULL, &buf);
     }
 
-    pub fn step(&mut self) -> bool {
+    pub fn step_forward(&mut self) -> bool {
         self.gb.run_instruction(&mut self.gb_ctx);
 
         if self.gb.frame_count > self.frame_count {
+            self.rewind_manager.snapshot(&self.gb);
             self.update_frame();
             true
         } else {
@@ -152,12 +142,24 @@ impl WebEmu {
         }
     }
 
-    pub fn step_frame(&mut self) {
+    pub fn step_backward(&mut self) {
+        let cycles = self.gb.last_inst_cycles;
+        self.rewind_manager
+            .rewind_cycles(&mut self.gb, &mut self.gb_ctx, cycles);
+        self.update_frame();
+    }
+
+    pub fn step_frame_forward(&mut self) {
         loop {
-            if self.step() {
+            if self.step_forward() {
                 break;
             }
         }
+    }
+
+    pub fn step_frame_backward(&mut self) {
+        self.rewind_manager.rewind_frame(&mut self.gb, &mut self.gb_ctx);
+        self.update_frame();
     }
 
     /// Decodes n number of instructions starting from given address.
@@ -242,6 +244,7 @@ impl WebEmu {
 
         if let Some(button) = button {
             self.gb.set_joypad_button(button, pressed);
+            self.rewind_manager.notify_input(&self.gb);
         }
     }
 }
