@@ -15,7 +15,7 @@ pub struct Joypad {
 
 /// there's only 8 buttons on the joypad, so we can encode the state of all of them in a single u8.
 /// The Gameboy treats a set bit as unpressed, and a cleared bit as pressed, so we store it like that too.
-#[derive(Clone, Copy, Deserialize, Serialize)]
+#[derive(Clone, Copy, Deserialize, PartialEq, Serialize)]
 pub struct JoypadState(u8);
 
 #[rustfmt::skip]

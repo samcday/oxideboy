@@ -165,6 +165,7 @@ fn main() -> Result<()> {
                     // Otherwise, whatever was pressed at the time of the frame we rewinded (rewound?) to will still
                     // be pressed.
                     gb.joypad.state.clear();
+                    cycle_target = gb.cycle_count;
                     rewinding = false;
                 }
 

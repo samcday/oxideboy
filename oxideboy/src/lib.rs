@@ -253,13 +253,15 @@ impl Gameboy {
         BASE_CLOCK_SPEED as f64 / CYCLES_PER_FRAME as f64
     }
 
-    pub fn set_joypad_button(&mut self, button: Button, pressed: bool) {
+    pub fn set_joypad_button(&mut self, button: Button, pressed: bool) -> bool {
         // We only trigger a Joypad interrupt if the button was pressed and was not previously pressed.
-        let should_interrupt = pressed && !self.joypad.state.get_button(button);
+        let was_pressed = self.joypad.state.get_button(button);
+        let should_interrupt = pressed && !was_pressed;
         self.joypad.state.set_button(button, pressed);
         if should_interrupt {
             self.interrupts.request(Interrupt::Joypad);
         }
+        was_pressed
     }
 
     pub fn run_instruction(&mut self, ctx: &mut Context) {

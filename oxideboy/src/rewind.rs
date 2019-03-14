@@ -32,6 +32,7 @@ pub struct RewindManager<T: StorageAdapter> {
     delta_size: usize, // Counts how many bytes of delta snapshots we've written since the last full snapshot.
     next_snapshot_at: u64, // Gameboy needs to be at this cycle (or further) befoer we take another snapshot.
     last_seen_cycle: u64, // The cycle we were at when we last took a snapshot or recorded input.
+    last_joypad_state: JoypadState, // Keep track of last joypad state, to prevent key repeats writing so many events
 }
 
 pub enum SnapshotType {
@@ -78,6 +79,7 @@ impl<T: StorageAdapter> RewindManager<T> {
             delta_size: 0,
             next_snapshot_at: 0,
             last_seen_cycle: 0,
+            last_joypad_state: Default::default(),
         };
         rewind_manager.snapshot(gb);
 
@@ -115,6 +117,10 @@ impl<T: StorageAdapter> RewindManager<T> {
     pub fn notify_input(&mut self, gb: &Gameboy) {
         self.check_truncate(gb);
 
+        if gb.joypad.state == self.last_joypad_state {
+            return;
+        }
+        self.last_joypad_state = gb.joypad.state;
         self.adapter.record_input(gb.cycle_count, gb.joypad.state);
     }
 
@@ -177,6 +183,8 @@ impl<T: StorageAdapter> RewindManager<T> {
         ctx.enable_video = prev_enable_video;
         // TODO: probably should be handling audio separately.
         ctx.enable_audio = prev_enable_audio;
+
+        self.last_joypad_state = gb.joypad.state;
     }
 }
 
