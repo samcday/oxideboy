@@ -13,7 +13,7 @@ use std::io::prelude::*;
 use std::slice;
 use std::time::{Duration, Instant};
 
-const FRAME_TIME: Duration = Duration::from_nanos((1_000_000_000.0 / (1_048_576.0 / 17556.0)) as u64);
+const SECOND: Duration = Duration::from_secs(1);
 
 type Result<T> = std::result::Result<T, Box<std::error::Error>>;
 
@@ -58,6 +58,9 @@ fn main() -> Result<()> {
         .opengl()
         .build()
         .unwrap();
+
+    let max_refresh_rate = Duration::from_micros(1000000 / window.display_mode().unwrap().refresh_rate as u64);
+
     let mut canvas = window.into_canvas().build().unwrap();
     let texture_creator = canvas.texture_creator();
     let mut texture = texture_creator
@@ -69,17 +72,23 @@ fn main() -> Result<()> {
         audio_device.resume();
     }
 
-    let mut state: Vec<u8> = Vec::new();
+    let print_fps = env::var("PRINT_FPS").ok().unwrap_or_else(|| String::from("0")) == "1";
     let mut limit = env::var("LIMIT").ok().unwrap_or_else(|| String::from("0")) == "1";
+
+    let mut state: Vec<u8> = Vec::new();
     let mut paused = false;
     let mut rewinding = false;
-    let print_fps = env::var("PRINT_FPS").ok().unwrap_or_else(|| String::from("0")) == "1";
-
-    let start = Instant::now();
-    let mut next_frame = FRAME_TIME;
     let mut frame_count = 0;
 
+    let mut last_refresh = Instant::now();
     let mut update_fb = |framebuffer: &[u16]| {
+        // If we're running in uncapped mode, there's no value in drawing frames to the screen faster than it's gonna
+        // show them.
+        if last_refresh.elapsed() < max_refresh_rate {
+            return;
+        }
+        last_refresh = Instant::now();
+
         texture
             .with_lock(None, |buffer: &mut [u8], _: usize| {
                 let framebuffer = unsafe { slice::from_raw_parts(framebuffer.as_ptr() as *mut u8, 160 * 144 * 2) };
@@ -113,13 +122,18 @@ fn main() -> Result<()> {
         }
     }
 
+    // Calculate the amount of time each Gameboy frame should take. It's not a constant because the speed depends on
+    // what Gameboy we're emulating. The SGB runs slightly faster than the DMG/CGB do.
+    let gb_frame_time = Duration::from_nanos((1000000000.0 / gb.fps()) as u64);
+
+    let mut last_gb_tick = Instant::now();
+    let mut cycle_target = 0;
+
     let mut frames = 0.0;
-    let sec = Duration::from_secs(1);
     let mut fps_timer = Instant::now();
 
     'running: loop {
-        frames += 1.0;
-        if fps_timer.elapsed() >= sec {
+        if fps_timer.elapsed() >= SECOND {
             if print_fps {
                 println!("FPS: {}", frames / (fps_timer.elapsed().as_millis() as f32 / 1000.0));
             }
@@ -187,28 +201,28 @@ fn main() -> Result<()> {
             rewind_manager.rewind_frame(&mut gb, &mut gb_context);
             frame_count = gb.frame_count;
         } else if !paused {
-            for _ in 0..17556 {
+            cycle_target += oxideboy::CYCLES_PER_FRAME;
+            while gb.cycle_count < cycle_target {
                 gb.run_instruction(&mut gb_context);
 
                 if gb.frame_count > frame_count {
+                    frames += 1.0;
                     frame_count = gb.frame_count;
                     rewind_manager.snapshot(&mut gb);
                 }
             }
         }
 
+        update_fb(&gb_context.current_framebuffer);
         queue_samples(&mut gb_context);
 
         if limit {
-            update_fb(&gb_context.current_framebuffer);
-            let elapsed = start.elapsed();
-            if elapsed < next_frame {
-                std::thread::sleep(next_frame - elapsed);
-            }
-            next_frame += FRAME_TIME;
-        } else if start.elapsed() >= next_frame {
-            update_fb(&gb_context.current_framebuffer);
-            next_frame += FRAME_TIME;
+            let sleep_for = gb_frame_time
+                .checked_sub(last_gb_tick.elapsed())
+                .unwrap_or(Duration::new(0, 0));
+
+            std::thread::sleep(sleep_for);
+            last_gb_tick = Instant::now();
         }
     }
 

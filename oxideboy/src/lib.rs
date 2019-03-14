@@ -42,10 +42,10 @@ use std::io::{Read, Write};
 /// emulation of the real bootrom.
 pub const BOOT_LOGO_DURATION: u64 = 30;
 
+const BASE_CLOCK_SPEED: u64 = 1_048_576;
+
 /// The number of cycles it takes the PPU to render a whole video frame.
 pub const CYCLES_PER_FRAME: u64 = 17556;
-
-pub const CYCLES_PER_MICRO: f32 = 1_048_576.0 / 1_000_000.0;
 
 const TRADEMARK_ICON: [u8; 8] = [0x3c, 0x42, 0xb9, 0xa5, 0xb9, 0xa5, 0x42, 0x3c];
 static DMG0_BOOTROM: &[u8; 256] = include_bytes!("bootroms/dmg0.rom");
@@ -246,6 +246,11 @@ impl Gameboy {
                 timer: &mut self.timer,
             },
         )
+    }
+
+    pub fn fps(&self) -> f64 {
+        // Once we implement SGB we need to calculate the correct FPS here.
+        BASE_CLOCK_SPEED as f64 / CYCLES_PER_FRAME as f64
     }
 
     pub fn set_joypad_button(&mut self, button: Button, pressed: bool) {
