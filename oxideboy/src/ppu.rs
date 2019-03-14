@@ -187,7 +187,7 @@ impl Ppu {
             // Handling a new frame is slightly finicky with our dirty checking.
             // If we finished the frame and the dirty check was never set, then there's no need to flip buffers. The
             // current frame is still good (nothing changed). Otherwise, we gotta flip.
-            if self.dirty {
+            if self.dirty && context.enable_video {
                 context.swap_framebuffers();
             }
         }
@@ -730,7 +730,7 @@ impl Ppu {
         // TODO: can do a better dirty check here. No need to set dirty flags if we didn't change anything important.
         self.mark_dirty(context);
 
-        if enabled {
+        if enabled && !self.enabled {
             self.enabled = true;
             self.ly = 0;
             self.reported_mode = 0;
@@ -753,7 +753,12 @@ impl Ppu {
                 state.hblank_active = false;
                 state.vblank_active = false;
             });
-        } else {
+        } else if !enabled && self.enabled {
+            for i in &mut context.next_framebuffer {
+                *i = COLOR_MAPPING[0];
+            }
+            context.swap_framebuffers();
+
             // TODO: check if we're inside a VBlank.
 
             // Disabling the PPU immediately clears the STAT mode bits, and sets LY to 0.
