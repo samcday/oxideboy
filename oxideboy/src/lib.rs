@@ -67,6 +67,7 @@ pub struct Context {
     pub enable_video: bool,
     pub current_framebuffer: Framebuffer,
     pub next_framebuffer: Framebuffer,
+    new_frame: bool,
 
     /// Similar to enable_video. The APU will keep running, but not write any samples to the queue. useful if sound
     /// is muted - no point spending time generating samples.
@@ -171,6 +172,7 @@ impl Context {
             enable_video: true,
             current_framebuffer: Default::default(),
             next_framebuffer: Default::default(),
+            new_frame: false,
 
             enable_audio: true,
             audio_samples: VecDeque::new(),
@@ -179,6 +181,16 @@ impl Context {
 
     pub fn swap_framebuffers(&mut self) {
         std::mem::swap(&mut self.current_framebuffer, &mut self.next_framebuffer);
+        self.new_frame = true;
+    }
+
+    pub fn is_new_frame(&mut self) -> bool {
+        if self.new_frame {
+            self.new_frame = false;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn drain_audio_samples<F: FnMut(&[f32])>(&mut self, mut f: F) {

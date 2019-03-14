@@ -23,13 +23,15 @@ Well let's be real, I'm writing this because I want to. But here's some post-rat
 - [ ] Remove all panics and do graceful error handling
 - [ ] Web-based debugger
   - [ ] Memory viewer/editor
+  - [ ] Jump to location
   - [ ] CPU+HW register viewer/editor
   - [ ] Breakpoints
   - [x] Break
   - [x] Step forward
   - [x] Step frame
-  - [ ] Step backward
+  - [x] Step backward
   - [ ] VRAM viewer
+  - [ ] Load symbol map
 - [ ] Cart memory bank controllers
   - [x] MBC1
   - [ ] MBC2

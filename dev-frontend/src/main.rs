@@ -78,7 +78,6 @@ fn main() -> Result<()> {
     let mut state: Vec<u8> = Vec::new();
     let mut paused = false;
     let mut rewinding = false;
-    let mut frame_count = 0;
 
     let mut last_refresh = Instant::now();
     let mut update_fb = |framebuffer: &[u16]| {
@@ -200,15 +199,13 @@ fn main() -> Result<()> {
 
         if rewinding {
             rewind_manager.rewind_frame(&mut gb, &mut gb_context);
-            frame_count = gb.frame_count;
         } else if !paused {
             cycle_target += oxideboy::CYCLES_PER_FRAME;
             while gb.cycle_count < cycle_target {
                 gb.run_instruction(&mut gb_context);
 
-                if gb.frame_count > frame_count {
+                if gb_context.is_new_frame() {
                     frames += 1.0;
-                    frame_count = gb.frame_count;
                     rewind_manager.snapshot(&mut gb);
                 }
             }

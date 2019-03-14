@@ -37,7 +37,6 @@ pub struct WebEmu {
     rom_title: String,
     rom_hash: String,
     breakpoint_cb: Function,
-    frame_count: u64,
     frame_cb: Function,
     pc_breakpoints: HashSet<u16>,
     rewind_manager: RewindManager<MemoryStorageAdapter>,
@@ -85,7 +84,6 @@ impl WebEmu {
             frame_cb,
             rom_hash,
             rom_title,
-            frame_count: 0,
             rewind_manager,
         }
     }
@@ -119,7 +117,6 @@ impl WebEmu {
     }
 
     fn update_frame(&mut self) {
-        self.frame_count = self.gb.frame_count;
         let buf = unsafe {
             Uint16Array::view(slice::from_raw_parts(
                 self.gb_ctx.current_framebuffer.as_ptr() as *const u16,
@@ -133,7 +130,7 @@ impl WebEmu {
     pub fn step_forward(&mut self) -> bool {
         self.gb.run_instruction(&mut self.gb_ctx);
 
-        if self.gb.frame_count > self.frame_count {
+        if self.gb_ctx.is_new_frame() {
             self.rewind_manager.snapshot(&self.gb);
             self.update_frame();
             true
