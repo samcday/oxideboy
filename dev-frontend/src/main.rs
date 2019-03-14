@@ -184,6 +184,8 @@ fn main() -> Result<()> {
                     Keycode::F8 => {
                         if !state.is_empty() {
                             load_state(&mut gb, &mut gb_context, &state[..]).unwrap();
+                            rewind_manager.snapshot(&mut gb);
+                            cycle_target = gb.cycle_count;
                             audio_device.clear();
                             queue_samples(&mut gb_context);
                             update_fb(&gb_context.current_framebuffer);
