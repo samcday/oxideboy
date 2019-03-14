@@ -87,6 +87,24 @@ macro_rules! memory_segment {
             }
         }
 
+        impl<'a> std::iter::IntoIterator for &'a $name {
+            type Item = &'a $type;
+            type IntoIter = std::slice::Iter<'a, $type>;
+
+            fn into_iter(self) -> Self::IntoIter {
+                self.0.iter()
+            }
+        }
+
+        impl<'a> std::iter::IntoIterator for &'a mut $name {
+            type Item = &'a mut $type;
+            type IntoIter = std::slice::IterMut<'a, $type>;
+
+            fn into_iter(self) -> Self::IntoIter {
+                self.0.iter_mut()
+            }
+        }
+
         impl serde::Serialize for $name {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where

@@ -7,7 +7,7 @@
 use crate::interrupt::Interrupt;
 use crate::joypad::JoypadState;
 use crate::simple_diff;
-use crate::{Context, Gameboy};
+use crate::{Context, Gameboy, CYCLES_PER_FRAME};
 use bincode;
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::Range;
@@ -20,7 +20,8 @@ use std::ops::Range;
 /// that we're looking for.
 const MAX_DELTAS_SIZE: usize = 262_144;
 
-const SNAPSHOT_FREQ: usize = 10; // We take a snapshot every SNAPSHOT_FREQ frames.
+/// We take a snapshot every SNAPSHOT_FREQ cycles.
+const SNAPSHOT_FREQ: u64 = 10 * CYCLES_PER_FRAME;
 
 pub struct RewindManager<T: StorageAdapter> {
     adapter: T,
@@ -29,8 +30,8 @@ pub struct RewindManager<T: StorageAdapter> {
     current_snapshot: Vec<u8>,
     delta_scratch: Vec<u8>,
     delta_size: usize, // Counts how many bytes of delta snapshots we've written since the last full snapshot.
-    next_snapshot_in: usize, // Countdown (in frames) to the next snapshot.
-    last_snapshot_cycle: u64,
+    next_snapshot_at: u64, // Gameboy needs to be at this cycle (or further) befoer we take another snapshot.
+    last_seen_cycle: u64, // The cycle we were at when we last took a snapshot or recorded input.
 }
 
 pub enum SnapshotType {
@@ -42,17 +43,17 @@ pub enum SnapshotType {
 /// file, or in IndexedDB in the browser. This trait encapsulates the behaviour we need to save and retrieve snapshots
 /// and input data for rewinding.
 pub trait StorageAdapter {
-    fn record_snapshot(&mut self, cycle: u64, frame: u64, snapshot: &[u8], snapshot_type: SnapshotType);
+    /// Save a newly generated snapshot for the given cycle. The snapshot may either be full or delta.
+    fn record_snapshot(&mut self, cycle: u64, snapshot: &[u8], snapshot_type: SnapshotType);
+
+    /// Record some input that the emulation received at a given cycle point.
     fn record_input(&mut self, cycle: u64, joypad: JoypadState);
-    fn snapshot_for_frame(
-        &mut self,
-        frame: u64,
-        cycle_hint: u64,
-        snapshot: &mut Vec<u8>,
-        input: &mut VecDeque<(u64, JoypadState)>,
-    );
-    fn snapshot_for_cycle(&mut self, cycle: u64, snapshot: &mut Vec<u8>, input: &mut VecDeque<(u64, JoypadState)>);
-    /// Drop all snapshots and recorded input after the given cycle+frame boundary.
+
+    /// Find the nearest snapshot for a desired cycle, and all input events that took place between the closest snapshot
+    /// and the desired cycle.
+    fn find_snapshot(&mut self, cycle: u64, snapshot: &mut Vec<u8>, input: &mut VecDeque<(u64, JoypadState)>);
+
+    /// Drop all snapshots and recorded input after the given cycle boundary.
     fn truncate(&mut self, cycle: u64);
 }
 
@@ -75,31 +76,24 @@ impl<T: StorageAdapter> RewindManager<T> {
             current_snapshot: Vec::with_capacity(snapshot_size),
             delta_scratch: Vec::with_capacity(snapshot_size),
             delta_size: 0,
-            last_snapshot_cycle: 0,
-            next_snapshot_in: 1,
+            next_snapshot_at: 0,
+            last_seen_cycle: 0,
         };
-        rewind_manager.notify_frame(gb);
+        rewind_manager.snapshot(gb);
 
         Ok(rewind_manager)
     }
 
-    /// Notify the RewindManager that another frame has completed in the given Gameboy.
-    pub fn notify_frame(&mut self, gb: &Gameboy) {
-        // If state was rewound and we're now moving forward from a previous point in time, we need to truncate all
-        // states and input events that come after where we're now up to.
-        if gb.cycle_count < self.last_snapshot_cycle {
-            self.adapter.truncate(gb.cycle_count);
-        }
+    /// Give the RewindManager a chance to take another snapshot of emulation state.
+    pub fn snapshot(&mut self, gb: &Gameboy) {
+        self.check_truncate(gb);
 
-        // TODO: assert that notify_frame was called on the cycle that vblanked.
-        self.last_snapshot_cycle = gb.cycle_count;
-        self.next_snapshot_in -= 1;
-        if self.next_snapshot_in > 0 {
-            // Nothing to do here.
+        // Are we ready to take another snapshot yet?
+        if gb.cycle_count < self.next_snapshot_at {
             return;
         }
 
-        self.next_snapshot_in = SNAPSHOT_FREQ;
+        self.next_snapshot_at += SNAPSHOT_FREQ;
 
         std::mem::swap(&mut self.last_snapshot, &mut self.current_snapshot);
         self.current_snapshot.clear();
@@ -107,88 +101,87 @@ impl<T: StorageAdapter> RewindManager<T> {
 
         if self.last_snapshot.len() == 0 || self.delta_size > MAX_DELTAS_SIZE {
             self.delta_size = 0;
-            self.adapter.record_snapshot(
-                gb.cycle_count,
-                gb.frame_count,
-                &self.current_snapshot,
-                SnapshotType::Full,
-            );
+            self.adapter
+                .record_snapshot(gb.cycle_count, &self.current_snapshot, SnapshotType::Full);
         } else {
             self.delta_scratch.clear();
             simple_diff::generate(&self.last_snapshot, &self.current_snapshot, &mut self.delta_scratch).unwrap();
             self.adapter
-                .record_snapshot(gb.cycle_count, gb.frame_count, &self.delta_scratch, SnapshotType::Delta);
+                .record_snapshot(gb.cycle_count, &self.delta_scratch, SnapshotType::Delta);
         }
     }
 
     /// Notify the RewindManager of some input that has been fed into the given Gameboy.
     pub fn notify_input(&mut self, gb: &Gameboy) {
-        // If state was rewound and we're now moving forward from a previous point in time, we need to truncate all
-        // states and input events that come after where we're now up to.
-        if gb.cycle_count < self.last_snapshot_cycle {
-            self.adapter.truncate(gb.cycle_count);
-        }
+        self.check_truncate(gb);
 
         self.adapter.record_input(gb.cycle_count, gb.joypad.state);
     }
 
-    /// Rewind by a single frame.
+    /// If the user rewound to a previous point in time and then began playing from that point, we need to purge all
+    /// snapshots and input that come after the new present point.
+    fn check_truncate(&mut self, gb: &Gameboy) {
+        // If state was rewound and we're now moving forward from a previous point in time, we need to truncate all
+        // states and input events that come after where we're now up to.
+        if gb.cycle_count < self.last_seen_cycle {
+            self.adapter.truncate(gb.cycle_count);
+            self.next_snapshot_at = gb.cycle_count + SNAPSHOT_FREQ;
+        }
+        self.last_seen_cycle = gb.cycle_count;
+    }
+
+    /// Rewind by a single frame. This is just a convenience method for rewinding by the number of cycles a
+    /// frame takes (which is 17556).
     pub fn rewind_frame(&mut self, gb: &mut Gameboy, ctx: &mut Context) {
         if gb.frame_count < 2 {
             // TODO: how do we signal this? Return a Result or an Option maybe?
             return;
         }
 
-        let desired_frame = gb.frame_count - 1;
+        // This is the point we want to rewind to.
+        let desired_cycle = gb.cycle_count.saturating_sub(CYCLES_PER_FRAME);
 
-        // In order to rewind backwards 1 frame, we need to get a snapshot for 2 frames back. This is so we can start
-        // from two frames back and run forward, building a complete framebuffer that can be drawn.
+        // In order to rewind backwards 1 frame, we need to start from two frames back and run forward, this is so we
+        // have a full frame to render after the rewind.
+        let start_cycle = desired_cycle.saturating_sub(CYCLES_PER_FRAME * 2);
+
         let mut snapshot = Vec::new();
         let mut input = VecDeque::new();
-        self.adapter
-            .snapshot_for_frame(desired_frame - 1, gb.cycle_count, &mut snapshot, &mut input);
+        self.adapter.find_snapshot(start_cycle, &mut snapshot, &mut input);
 
         // Load the new state in, then run the emulation until we get to the desired frame.
         *gb = bincode::deserialize_from(&snapshot[..]).unwrap();
 
-        fn run_emulation(
-            gb: &mut Gameboy,
-            ctx: &mut Context,
-            input: &mut VecDeque<(u64, JoypadState)>,
-            desired_frame: u64,
-        ) {
-            let mut next_input = input.pop_front();
-
-            while gb.frame_count < desired_frame {
-                if next_input.is_some() && next_input.unwrap().0 == gb.cycle_count {
-                    gb.joypad.state = next_input.unwrap().1;
-                    gb.interrupts.request(Interrupt::Joypad);
-                    next_input = input.pop_front();
-                }
-                gb.run_instruction(ctx);
-            }
-        }
-
-        // We don't need to render frames or audio samples while we're emulating up to the previous frame.
+        // Disable video until the next frame boundary. Otherwise, the framebuffer gets flipped by the PPU and we end
+        // up with half-rendered frames tearing all over the screen.
         let prev_enable_video = ctx.enable_video;
         let prev_enable_audio = ctx.enable_audio;
         ctx.enable_video = false;
         ctx.enable_audio = false;
-        run_emulation(gb, ctx, &mut input, desired_frame - 1);
+
+        let mut next_input = input.pop_front();
+        let frame_count = gb.frame_count;
+
+        while gb.cycle_count < desired_cycle {
+            if next_input.is_some() && next_input.unwrap().0 == gb.cycle_count {
+                gb.joypad.state = next_input.unwrap().1;
+                gb.interrupts.request(Interrupt::Joypad);
+                next_input = input.pop_front();
+            }
+            gb.run_instruction(ctx);
+
+            if !ctx.enable_video && gb.frame_count > frame_count {
+                ctx.enable_video = true;
+            }
+        }
         ctx.enable_video = prev_enable_video;
+        // TODO: probably should be handling audio separately.
         ctx.enable_audio = prev_enable_audio;
-
-        // Make sure the PPU renders this frame fully.
-        gb.ppu.dirty = true;
-        gb.ppu.next_dirty = true;
-
-        run_emulation(gb, ctx, &mut input, desired_frame);
     }
 }
 
 #[derive(Default)]
 pub struct MemoryStorageAdapter {
-    frame_cycles: BTreeMap<u64, u64>,
     full_snapshots: BTreeMap<u64, Range<usize>>,
     delta_snapshots: BTreeMap<u64, Range<usize>>,
     input_events: BTreeMap<u64, JoypadState>,
@@ -202,41 +195,8 @@ impl MemoryStorageAdapter {
     }
 }
 
-impl MemoryStorageAdapter {
-    /// Finds a snapshot (base + any number of deltas applied) closest to the desired cycle.
-    /// Returns the cycle number that the snapshot is pointing at.
-    fn get_snapshot(&self, cycle: u64, mut snapshot: &mut Vec<u8>) -> u64 {
-        // First we need to find the closest full snapshot to the desired cycle.
-        let (base_cycle, base_range) = self.full_snapshots.range(0..=cycle).rev().next().unwrap();
-
-        // Copy the base snapshot into the destination.
-        snapshot.extend_from_slice(&self.data[base_range.clone()]);
-
-        // Now look through all delta snapshots that fall between the base and the desired cycle.
-        let mut last_delta_cycle = *base_cycle;
-        self.delta_snapshots
-            .range(*base_cycle..=cycle)
-            .for_each(|(cycle, delta_range)| {
-                last_delta_cycle = *cycle;
-                simple_diff::apply(&mut snapshot, &self.data[delta_range.clone()]);
-            });
-
-        last_delta_cycle
-    }
-
-    fn get_input(&self, from_cycle: u64, to_cycle: u64, input: &mut VecDeque<(u64, JoypadState)>) {
-        input.extend(
-            self.input_events
-                .range(from_cycle..=to_cycle)
-                .map(|(cycle, joypad)| (*cycle, *joypad)),
-        );
-    }
-}
-
 impl StorageAdapter for MemoryStorageAdapter {
-    fn record_snapshot(&mut self, cycle: u64, frame: u64, snapshot: &[u8], snapshot_type: SnapshotType) {
-        self.frame_cycles.insert(frame, cycle);
-
+    fn record_snapshot(&mut self, cycle: u64, snapshot: &[u8], snapshot_type: SnapshotType) {
         match snapshot_type {
             SnapshotType::Full => {
                 let pos = self.data.len();
@@ -255,42 +215,31 @@ impl StorageAdapter for MemoryStorageAdapter {
         self.input_events.insert(cycle, joypad);
     }
 
-    fn snapshot_for_cycle(&mut self, cycle: u64, snapshot: &mut Vec<u8>, input: &mut VecDeque<(u64, JoypadState)>) {
-        let from_cycle = self.get_snapshot(cycle, snapshot);
-        self.get_input(from_cycle, cycle, input);
-    }
+    fn find_snapshot(&mut self, cycle: u64, mut snapshot: &mut Vec<u8>, input: &mut VecDeque<(u64, JoypadState)>) {
+        // First we need to find the closest full snapshot to the desired cycle.
+        let (base_cycle, base_range) = self.full_snapshots.range(0..=cycle).rev().next().unwrap();
 
-    fn snapshot_for_frame(
-        &mut self,
-        frame: u64,
-        cycle_hint: u64,
-        snapshot: &mut Vec<u8>,
-        input: &mut VecDeque<(u64, JoypadState)>,
-    ) {
-        // First we need to find a cycle number for the desired frame.
-        let frame_cycle = *self.frame_cycles.range(0..=frame).rev().next().unwrap_or((&0, &0)).1;
+        // Copy the base snapshot into the destination.
+        snapshot.extend_from_slice(&self.data[base_range.clone()]);
 
-        // Now we can load a snapshot for that cycle.
-        let from_cycle = self.get_snapshot(frame_cycle, snapshot);
+        // Now apply all delta snapshots that fall between the base and the desired cycle.
+        let mut last_delta_cycle = *base_cycle;
+        self.delta_snapshots
+            .range(*base_cycle..=cycle)
+            .for_each(|(cycle, delta_range)| {
+                last_delta_cycle = *cycle;
+                simple_diff::apply(&mut snapshot, &self.data[delta_range.clone()]);
+            });
 
-        // Finally, we get all input events starting from the base frame cycle, up to the cycle hint we were given from
-        // the caller. This hint will probably wind up returning more input events than needed, but that's better than
-        // fewer input events than was expected.
-        self.get_input(from_cycle, cycle_hint, input);
+        // Finally, grab all input events that occurred between the most recent delta snapshot and the desired cycle.
+        input.extend(
+            self.input_events
+                .range(last_delta_cycle..=cycle)
+                .map(|(input_cycle, joypad)| (*input_cycle, *joypad)),
+        );
     }
 
     fn truncate(&mut self, cycle: u64) {
-        // Find all frames with a starting cycle that is greater than the trim boundary.
-        let purge = self
-            .frame_cycles
-            .iter()
-            .skip_while(|(_, frame_cycle)| **frame_cycle <= cycle)
-            .map(|(frame, _)| *frame)
-            .collect::<Vec<u64>>();
-        for key in purge {
-            self.frame_cycles.remove(&key);
-        }
-
         // Now we clear out all full/delta snapshots that came after the cycle boundary.
         // We take note of the earliest position in the data blob that was encountered.
         fn purge_snapshots(cycle: u64, snapshots: &mut BTreeMap<u64, Range<usize>>) -> Option<usize> {
