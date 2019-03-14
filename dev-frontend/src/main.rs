@@ -153,9 +153,7 @@ fn main() -> Result<()> {
                     if map_keycode_to_joypad(keycode).is_some() =>
                 {
                     let pressed = if let Event::KeyDown { .. } = event { true } else { false };
-                    gb.joypad
-                        .state
-                        .set_button(map_keycode_to_joypad(keycode).unwrap(), pressed);
+                    gb.set_joypad_button(map_keycode_to_joypad(keycode).unwrap(), pressed);
                     rewind_manager.notify_input(&gb);
                 }
 

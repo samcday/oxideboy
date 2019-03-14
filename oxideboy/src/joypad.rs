@@ -19,6 +19,7 @@ pub struct Joypad {
 pub struct JoypadState(u8);
 
 #[rustfmt::skip]
+#[derive(Clone, Copy, Debug)]
 pub enum Button {
     Down    = 0b1000_0000,
     Up      = 0b0100_0000,
@@ -59,11 +60,15 @@ impl Default for JoypadState {
 impl JoypadState {
     pub fn set_button(&mut self, key: Button, pressed: bool) {
         if pressed {
-            self.0 ^= key as u8;
+            self.0 &= !(key as u8);
         } else {
             // Note that if a button bit is set it means it's *not* pressed, because Gameboy logic.
             self.0 |= key as u8;
         }
+    }
+
+    pub fn get_button(&self, key: Button) -> bool {
+        self.0 & (key as u8) == 0
     }
 
     pub fn clear(&mut self) {

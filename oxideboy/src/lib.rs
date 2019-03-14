@@ -254,8 +254,12 @@ impl Gameboy {
     }
 
     pub fn set_joypad_button(&mut self, button: Button, pressed: bool) {
+        // We only trigger a Joypad interrupt if the button was pressed and was not previously pressed.
+        let should_interrupt = pressed && !self.joypad.state.get_button(button);
         self.joypad.state.set_button(button, pressed);
-        self.interrupts.request(Interrupt::Joypad);
+        if should_interrupt {
+            self.interrupts.request(Interrupt::Joypad);
+        }
     }
 
     pub fn run_instruction(&mut self, ctx: &mut Context) {
