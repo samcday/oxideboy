@@ -1,6 +1,6 @@
 import "@babel/polyfill";
 
-import "./style.scss";
+import "../style.scss";
 import "@fortawesome/fontawesome-free/css/all.css";
 
 import "bootstrap";
@@ -9,7 +9,7 @@ import ReactDOM from "react-dom";
 import SplitPane from "react-split-pane";
 import {FixedSizeList} from "react-window";
 import { get, set } from "idb-keyval";
-import * as wasm from "web-debugger";
+import { WebEmu } from "../crate/pkg";
 import regl from "regl";
 
 // TODO: debounce memory view resize handler.
@@ -288,7 +288,7 @@ class App extends React.Component {
   }
 
   async loadRom(rom) {
-    this.emulator = wasm.WebEmu.new(rom, this.newFrame.bind(this), this.breakpointHit.bind(this));
+    this.emulator = WebEmu.new(rom, this.newFrame.bind(this), this.breakpointHit.bind(this));
 
     const breakpoints = await get(`${this.emulator.rom_hash()}-breakpoints`);
     this.emulator.set_breakpoints(breakpoints || []);

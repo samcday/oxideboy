@@ -1,17 +1,24 @@
-const CopyWebpackPlugin = require("copy-webpack-plugin");
 const path = require('path');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const WasmPackPlugin = require('@wasm-tool/wasm-pack-plugin');
+
+const dist = path.resolve(__dirname, 'dist');
 
 module.exports = {
   devtool: 'eval-source-map',
 
-  entry: "./bootstrap.js",
+  entry: './js/bootstrap.js',
   output: {
-    path: path.resolve(__dirname, "dist"),
-    filename: "bootstrap.js",
+    path: dist,
+    filename: 'bundle.js',
   },
-  mode: "development",
+  devServer: {
+    contentBase: dist,
+  },
+  mode: 'development',
   plugins: [
-    new CopyWebpackPlugin(['index.html'])
+    new HtmlWebpackPlugin({template: 'index.html'}),
+    new WasmPackPlugin({crateDirectory: path.resolve(__dirname, 'crate')}),
   ],
   module:{
     rules:[
@@ -22,11 +29,11 @@ module.exports = {
       },
       {
         test: /\.woff(2)?(\?v=[0-9]\.[0-9]\.[0-9])?$/, 
-        loader: "url-loader?limit=10000&mimetype=application/font-woff" 
+        loader: 'url-loader?limit=10000&mimetype=application/font-woff' 
       },
       { 
         test: /\.(ttf|eot|svg)(\?v=[0-9]\.[0-9]\.[0-9])?$/, 
-        loader: "file-loader" 
+        loader: 'file-loader' 
       },
       {
         test:/\.css$/,
