@@ -632,7 +632,7 @@ class Breakpoints extends React.Component {
     this.setState({text: ev.target.value.replace(/[^0-9A-Fa-f]+/g, "").replace(/^0+([1-9a-fA-F].*)/, "$1").substring(0, 4) });
   }
 
-  handleSubmit(ev) {
+  handleSubmit(ev: Event): void {
     if (!this.state.text) {
       return;
     }
@@ -645,7 +645,7 @@ class Breakpoints extends React.Component {
 
 ReactDOM.render(<App/>, document.getElementById("root"));
 
-function toPaddedHexString(num, len) {
+function toPaddedHexString(num: number, len: number): string {
     const str = num.toString(16);
     return "0".repeat(len - str.length) + str;
 }

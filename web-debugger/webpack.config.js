@@ -20,10 +20,14 @@ module.exports = {
     new HtmlWebpackPlugin({template: 'index.html'}),
     new WasmPackPlugin({crateDirectory: path.resolve(__dirname, 'crate')}),
   ],
+  resolve: {
+    extensions: ['.ts', '.tsx', '.js', '.json', '.wasm']
+  },
   module:{
     rules:[
       {
-        test: /\.js$/,
+        
+        test: /\.(js|ts)x?$/,
         exclude: /node_modules/,
         loader: 'babel-loader'
       },
