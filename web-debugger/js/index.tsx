@@ -3,6 +3,7 @@ import "@babel/polyfill";
 import "../style.scss";
 import "@fortawesome/fontawesome-free/css/all.css";
 
+import { toPaddedHexString } from "./util";
 import "bootstrap";
 import React from "react";
 import ReactDOM from "react-dom";
@@ -11,6 +12,9 @@ import {FixedSizeList} from "react-window";
 import { get, set } from "idb-keyval";
 import { WebEmu } from "../crate/pkg";
 import regl from "regl";
+
+import RegisterCPU from "./components/RegisterCPU";
+import RegisterMem from "./components/RegisterMem";
 
 // TODO: debounce memory view resize handler.
 // TODO: window resize handler for memory view.
@@ -160,7 +164,7 @@ class App extends React.Component {
           <div className="d-flex px-3 flex-wrap text-monospace registers">
             {
               CPU_REGISTERS.map((reg) =>
-                <CpuRegister
+                <RegisterCPU
                   name={reg}
                   key={reg}
                   value={this.state.cpuState[reg]}
@@ -194,7 +198,7 @@ class App extends React.Component {
             </div>
             {
               Object.keys(MEM_REGISTERS).map((reg) =>
-                <Register
+                <RegisterMem
                   name={reg}
                   addr={MEM_REGISTERS[reg]}
                   fn={this.read_memory.bind(this)}
@@ -457,101 +461,6 @@ class App extends React.Component {
   }
 };
 
-class CpuRegister extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = {editing: false};
-    ['onChange', 'onFocus', 'onBlur', 'onKeyPress'].forEach((name) => this[name] = this[name].bind(this));
-  }
-
-  render() {
-    return (
-      <div className="register">
-        <label htmlFor={`cpu_register_${this.props.name}`}>{this.props.name.toUpperCase()}:</label>
-        <input  type="text"
-                readOnly={!this.props.enabled}
-                id={`cpu_register_${this.props.name}`}
-                size={4}
-                value={this.state.editing ? this.state.value : toPaddedHexString(this.props.value, 4)}
-                onChange={this.onChange}
-                onBlur={this.onBlur}
-                onKeyPress={this.onKeyPress}
-                onFocus={this.onFocus} />
-      </div>
-    );
-  }
-
-  onFocus(ev) {
-    this.setState({editing: true, value: this.props.value.toString(16)});
-  }
-
-  onBlur(ev) {
-    this.setState({editing: false});
-  }
-
-  onKeyPress(ev) {
-    if (ev.key !== 'Enter') {
-      return;
-    }
-    this.setState({editing: false});
-    this.props.onUpdate(this.state.value);
-    ev.target.blur();
-  }
-
-  onChange(ev) {
-    this.setState({value: ev.target.value.replace(/[^0-9A-Fa-f]+/g, "").replace(/^0+([1-9a-fA-F].*)/, "$1").substring(0, 4) });
-  }
-}
-
-class Register extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = {editing: false};
-    ['onChange', 'onFocus', 'onBlur', 'onKeyPress'].forEach((name) => this[name] = this[name].bind(this));
-  }
-
-  render() {
-    return (
-      <div className="register">
-        <label htmlFor={`register_${this.props.name}`}>
-          <abbr title={`0x${toPaddedHexString(this.props.addr, 4).toUpperCase()}`}>{this.props.name}</abbr>:
-        </label>
-
-        <input  type="text"
-                readOnly={!this.props.enabled}
-                id={`cpu_register_${this.props.name}`}
-                size={2}
-                value={this.state.editing ? this.state.value : toPaddedHexString(this.props.fn(this.props.addr), 2)}
-                onChange={this.onChange}
-                onBlur={this.onBlur}
-                onKeyPress={this.onKeyPress}
-                onFocus={this.onFocus} />
-      </div>
-    );
-  }
-
-  onFocus(ev) {
-    this.setState({editing: true, value: this.props.fn(this.props.addr).toString(16)});
-  }
-
-  onBlur(ev) {
-    this.setState({editing: false});
-  }
-
-  onKeyPress(ev) {
-    if (ev.key !== 'Enter') {
-      return;
-    }
-    this.setState({editing: false});
-    this.props.onUpdate(this.state.value);
-    ev.target.blur();
-  }
-
-  onChange(ev) {
-    this.setState({value: ev.target.value.replace(/[^0-9A-Fa-f]+/g, "").replace(/^0+([1-9a-fA-F].*)/, "$1").substring(0, 2) });
-  }
-}
-
 class MemoryViewer extends React.Component {
   render() {
     return (
@@ -644,8 +553,3 @@ class Breakpoints extends React.Component {
 }
 
 ReactDOM.render(<App/>, document.getElementById("root"));
-
-function toPaddedHexString(num: number, len: number): string {
-    const str = num.toString(16);
-    return "0".repeat(len - str.length) + str;
-}
