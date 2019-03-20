@@ -1,13 +1,17 @@
-import "@babel/polyfill";
 
 import "../style.scss";
 import "@fortawesome/fontawesome-free/css/all.css";
+import "golden-layout/src/css/goldenlayout-base.css";
+import "golden-layout/src/css/goldenlayout-light-theme.css";
+
+import "@babel/polyfill";
+import "jquery";
+import "bootstrap";
+import GoldenLayout from "golden-layout";
 
 import { toPaddedHexString } from "./util";
-import "bootstrap";
 import React from "react";
 import ReactDOM from "react-dom";
-import SplitPane from "react-split-pane";
 import {FixedSizeList} from "react-window";
 import { get, set } from "idb-keyval";
 import { WebEmu } from "../crate/pkg";
@@ -16,9 +20,10 @@ import regl from "regl";
 import RegisterCPU from "./components/RegisterCPU";
 import RegisterMem from "./components/RegisterMem";
 
-// TODO: debounce memory view resize handler.
-// TODO: window resize handler for memory view.
-// TODO: persist scrollpane preferences in indexeddb
+// GoldenLayout is a bit of a relic - expects React+ReactDOM to be available on global namespace.
+window.React = React;
+window.ReactDOM = ReactDOM;
+
 // TODO: hide unhandled segments of memory (echo RAM, unused high registers).
 // TODO: visual indicator when we pause execution.
 
@@ -73,7 +78,6 @@ class App extends React.Component {
     super(props);
 
     this.state = {
-      memoryViewerHeight: 200,
       memDirty: 1,
       cpuState: {
         af: 0xFFFF,
@@ -127,8 +131,6 @@ class App extends React.Component {
       count: 3,
     });
 
-    this.setState({memoryViewerHeight: this.refs.split.pane1.getBoundingClientRect().height});
-
     document.addEventListener("keydown", this.keyDown = (ev) => {
       if(!this.emulator || ev.target !== document.body) {
         return;
@@ -162,16 +164,6 @@ class App extends React.Component {
         <div className="left-sidebar min-vh-100 border-right">
           <canvas ref="lcd" width="320" height="288" className="border-bottom" />
           <div className="d-flex px-3 flex-wrap text-monospace registers">
-            {
-              CPU_REGISTERS.map((reg) =>
-                <RegisterCPU
-                  name={reg}
-                  key={reg}
-                  value={this.state.cpuState[reg]}
-                  enabled={this.state.paused}
-                  onUpdate={this.updateCpuRegister.bind(this, reg)} />
-              )
-            }
             <div className="register">
               <label htmlFor={`cpu_register_ime`}>IME:</label>
               <input type="checkbox"
@@ -211,9 +203,7 @@ class App extends React.Component {
           </div>
         </div>
         <div className="flex-fill position-relative">
-          <SplitPane split="vertical" height="100%" defaultSize="80%">
-            <SplitPane ref="split" split="horizontal" defaultSize="70%" onChange={this.resizeMemoryViewer.bind(this)}>
-              <MemoryViewer height={this.state.memoryViewerHeight} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} />
+              <MemoryViewer height={200} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} />
               <div className="h-100">
                 <div className="btn-group" role="group">
                   { this.state.paused &&
@@ -244,9 +234,33 @@ class App extends React.Component {
                 </div>
                 <InstructionViewer instructions={this.state.instructions} />
               </div>
-            </SplitPane>
             <div>
               <div className="accordion min-vh-100" id="sidebar">
+
+
+                <div className="card">
+                  <div className="card-header" id="cpuHeading">
+                    <h2 className="mb-0">
+                      <button className="btn btn-link" type="button" data-toggle="collapse" data-target="#cpu" aria-expanded="true" aria-controls="cpu">CPU</button>
+                    </h2>
+                  </div>
+
+                  <div id="cpu" className="collapse show" aria-labelledby="cpuHeading" >
+                    <div className="card-body text-monospace registers form-inline">
+                      {
+                        CPU_REGISTERS.map((reg) =>
+                          <RegisterCPU
+                            name={reg}
+                            key={reg}
+                            value={this.state.cpuState[reg]}
+                            enabled={this.state.paused}
+                            onUpdate={this.updateCpuRegister.bind(this, reg)} />
+                        )
+                      }
+                    </div>
+                  </div>
+                </div>
+
                 <div className="card">
                   <div className="card-header" id="breakpointsHeading">
                     <h2 className="mb-0">
@@ -275,7 +289,6 @@ class App extends React.Component {
                 </div>
               </div>
             </div>
-          </SplitPane>
         </div>
       </div>
     );
@@ -454,11 +467,6 @@ class App extends React.Component {
     this.emulator.run(delta * 1000);
     this.update();
   }
-
-  resizeMemoryViewer(newSize) {
-    clearTimeout(this.resizeTimeout);
-    this.resizeTimeout = setTimeout(() => { this.setState({memoryViewerHeight: newSize}) }, 10);
-  }
 };
 
 class MemoryViewer extends React.Component {
@@ -552,4 +560,51 @@ class Breakpoints extends React.Component {
   }
 }
 
-ReactDOM.render(<App/>, document.getElementById("root"));
+class Screen extends React.Component {
+  render() {
+    return (
+      <span>ok cool</span>
+    );
+  }
+}
+
+var appLayout = new GoldenLayout({
+  settings: {
+    showPopoutIcon: false,
+    showCloseIcon: false,
+  },
+  content: [
+    {
+      type: 'row',
+      content: [
+        {
+          type: 'column',
+          content:[
+            {
+              type:'react-component',
+              id: 'screen',
+              component: 'Screen',
+            },
+            {
+              type:'react-component',
+              component: 'Screen',
+            },
+          ]
+        },
+        {
+          type:'react-component',
+          component: 'Screen',
+        },
+        {
+          type:'react-component',
+          component: 'Screen',
+        },
+
+      ]
+    }
+  ]
+});
+
+window.blah = appLayout;
+appLayout.registerComponent('Screen', Screen);
+appLayout.init();

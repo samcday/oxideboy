@@ -24,6 +24,23 @@ $line-height-base: 1;
 
 .registers {
     font-size: 0.75rem;
+
+    .input-group {
+        margin: 0.1rem;
+    }
+
+    .input-group-text {
+        border-radius: 0;
+        padding: 0.375rem 0.5rem;
+    }
+    .form-control {
+        border-radius: 0;
+        padding: 0.375rem 0.25rem;
+
+        &[readonly] {
+            background: white;
+        }
+    }
 }
 
 .register {
