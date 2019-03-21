@@ -15,10 +15,11 @@ import ReactDOM from "react-dom";
 import {FixedSizeList} from "react-window";
 import { get, set } from "idb-keyval";
 import { WebEmu } from "../crate/pkg";
-import regl from "regl";
 
 import RegisterCPU from "./components/RegisterCPU";
 import RegisterMem from "./components/RegisterMem";
+import Screen from "./components/Screen";
+import Registers from "./components/Registers";
 
 // GoldenLayout is a bit of a relic - expects React+ReactDOM to be available on global namespace.
 window.React = React;
@@ -73,7 +74,7 @@ const MEM_REGISTERS = {
   NR52: 0xFF26,
 };
 
-class App extends React.Component {
+class AppOld extends React.Component {
   constructor(props) {
     super(props);
 
@@ -91,56 +92,17 @@ class App extends React.Component {
         halted: false,
       },
       paused: false,
-      active: false
+      active: false,
     };
   }
 
   componentDidMount() {
-    this.lcd = this.refs.lcd;
-    this.regl = regl(this.lcd);
-    this.framebuffer = this.regl.texture();
-    this.screen = this.regl({
-      frag: `
-      precision mediump float;
-      uniform sampler2D texture;
-      varying vec2 uv;
-      void main () {
-        gl_FragColor = texture2D(texture, uv);
-      }`,
-
-      vert: `
-      precision mediump float;
-      attribute vec2 position;
-      varying vec2 uv;
-      void main () {
-        uv = position;
-        gl_Position = vec4(2.0 * position.x - 1.0, 1.0 - 2.0 * position.y, 0, 1);
-      }`,
-
-      attributes: {
-        position: [
-          -2, 0,
-          0, -2,
-          2, 2]
-      },
-
-      uniforms: {
-        texture: this.framebuffer,
-      },
-
-      count: 3,
-    });
-
     document.addEventListener("keydown", this.keyDown = (ev) => {
       if(!this.emulator || ev.target !== document.body) {
         return;
       }
       this.emulator.set_joypad_state(ev.key, true);
     });
-
-    window.addEventListener("hashchange", this.hashChange = (ev) => {
-      this.onHashChange();
-    }, false);
 
     document.addEventListener("keyup", this.keyUp = (ev) => {
       if (!this.emulator || ev.target !== document.body) {
@@ -160,47 +122,8 @@ class App extends React.Component {
 
   render() {
     return (
-      <div className="d-flex min-vh-100" onDragOver={this.onDragOver} onDrop={this.onDrop.bind(this)}>
+      <div className="d-flex min-vh-100">
         <div className="left-sidebar min-vh-100 border-right">
-          <canvas ref="lcd" width="320" height="288" className="border-bottom" />
-          <div className="d-flex px-3 flex-wrap text-monospace registers">
-            <div className="register">
-              <label htmlFor={`cpu_register_ime`}>IME:</label>
-              <input type="checkbox"
-                     id="cpu_register_ime"
-                     readOnly={!this.state.paused}
-                     onChange={this.toggleCpuFlag.bind(this, 'ime')}
-                     checked={this.state.cpuState.ime} />
-            </div>
-            <div className="register">
-              <label htmlFor={`cpu_register_imd`}>IMD:</label>
-              <input type="checkbox"
-                     id="cpu_register_imd"
-                     readOnly={!this.state.paused}
-                     onChange={this.toggleCpuFlag.bind(this, 'ime_defer')}
-                     checked={this.state.cpuState.ime_defer} />
-            </div>
-            <div className="register">
-              <label htmlFor={`cpu_register_halt`}>HALT:</label>
-              <input type="checkbox"
-                     id="cpu_register_halt"
-                     readOnly={!this.state.paused}
-                     onChange={this.toggleCpuFlag.bind(this, 'halted')}
-                     checked={this.state.cpuState.halted} />
-            </div>
-            {
-              Object.keys(MEM_REGISTERS).map((reg) =>
-                <RegisterMem
-                  name={reg}
-                  addr={MEM_REGISTERS[reg]}
-                  fn={this.read_memory.bind(this)}
-                  enabled={this.state.paused}
-                  dirty={this.state.memDirty}
-                  key={reg}
-                  onUpdate={this.writeMem.bind(this, MEM_REGISTERS[reg])} />
-              )
-            }
-          </div>
         </div>
         <div className="flex-fill position-relative">
               <MemoryViewer height={200} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} />
@@ -294,26 +217,6 @@ class App extends React.Component {
     );
   }
 
-  async onHashChange() {
-    if (window.location.hash) {
-      const hash = window.location.hash.substring(1);
-      const rom = await get(`${hash}_rom`);
-      if (rom) {
-        this.loadRom(rom);
-      }
-    }
-  }
-
-  async loadRom(rom) {
-    this.emulator = WebEmu.new(rom, this.newFrame.bind(this), this.breakpointHit.bind(this));
-
-    const breakpoints = await get(`${this.emulator.rom_hash()}-breakpoints`);
-    this.emulator.set_breakpoints(breakpoints || []);
-    this.setState({active: true, paused: false, breakpoints});
-    document.title = `oxideboy-debugger: ${this.emulator.rom_title()}`;
-    this.start();
-  }
-
   updateCpuRegister(reg, newVal) {
     let cpuState = this.emulator.cpu_state();
     cpuState[reg] = parseInt(newVal, 16);
@@ -344,35 +247,8 @@ class App extends React.Component {
     this.setState({breakpoints});
   }
 
-  onDragOver(ev) {
-    ev.preventDefault();
-  }
-
-  onDrop(ev) {
-    ev.preventDefault();
-
-    if (!ev.dataTransfer.items || ev.dataTransfer.items[0].kind !== 'file') {
-      return;
-    }
-
-    let file = ev.dataTransfer.items[0].getAsFile();
-    let reader = new FileReader();
-    reader.onload = async (e) => {
-      const rom = new Uint8Array(e.target.result);
-      this.loadRom(rom);
-
-      const hash = this.emulator.rom_hash();
-      await set(`${hash}_rom`, rom);
-      window.location = `#${hash}`;
-    };
-    reader.readAsArrayBuffer(file);
-  }
-
   start() {
     this.setState({paused: false});
-
-    this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
-    // this.viewUpdates = setInterval(this.update.bind(this), 100);
   }
 
   pause() {
@@ -439,13 +315,7 @@ class App extends React.Component {
 
   newFrame(framebuffer) {
     try {
-      this.framebuffer({
-        format: "rgb565",
-        data: framebuffer,
-        width: 160,
-        height: 144,
-      });
-      this.screen();
+      
     } catch(err) {
       console.error(err);
     }
@@ -453,19 +323,6 @@ class App extends React.Component {
 
   breakpointHit() {
     this.pause();
-  }
-
-  runFrame(timestamp) {
-    this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
-
-    let delta = 16; // Default delta amount - enough to render a frame.
-    if (this.lastFrameTimestamp) {
-      delta = Math.min(1000, timestamp - this.lastFrameTimestamp) // Don't try and emulate more than a second of time.
-    }
-    this.lastFrameTimestamp = timestamp;
-
-    this.emulator.run(delta * 1000);
-    this.update();
   }
 };
 
@@ -560,47 +417,6 @@ class Breakpoints extends React.Component {
   }
 }
 
-class Screen extends React.Component {
-  constructor(props) {
-    super(props);
-
-    this.onResize = this.onResize.bind(this);
-    this.state = this.calculateCanvasDimensions();
-  }
-
-  componentDidMount() {
-    this.props.glContainer.on('resize', this.onResize);
-  }
-
-  componentWillUnmount() {
-    this.props.glContainer.off('resize', this.onResize);
-  }
-
-  onResize() {
-    this.setState(this.calculateCanvasDimensions());
-  }
-
-  calculateCanvasDimensions() {
-    let newWidth = this.props.glContainer.width;
-    let newHeight = newWidth * (144/160);
-    if (newHeight > this.props.glContainer.height) {
-      newHeight = this.props.glContainer.height;
-      newWidth = newHeight * (160/144);
-    }
-    this.props.glContainer.setSize(newWidth, newHeight);
-    return {
-      canvasWidth: newWidth,
-      canvasHeight: newHeight,
-    };
-  }
-
-  render() {
-    return (
-      <canvas width={this.state.canvasWidth} height={this.state.canvasHeight} style={{background: 'black'}} ref='lcd'></canvas>
-    );
-  }
-}
-
 class Dummy extends React.Component {
   render() {
     return (
@@ -609,44 +425,157 @@ class Dummy extends React.Component {
   }
 }
 
-var appLayout = new GoldenLayout({
-  settings: {
-    showPopoutIcon: false,
-    showCloseIcon: false,
-  },
-  content: [
-    {
-      type: 'row',
+class App {
+  container: GoldenLayout;
+  emulator?: WebEmu = undefined;
+
+  constructor() {
+    this.container = new GoldenLayout({
+      settings: {
+        showPopoutIcon: false,
+        showCloseIcon: false,
+      },
       content: [
         {
-          type: 'column',
-          width: 30,
-          content:[
+          type: 'row',
+          content: [
             {
-              type:'react-component',
-              component: 'Screen',
+              type: 'column',
+              width: 30,
+              content: [
+                {
+                  type: 'react-component',
+                  component: 'Screen',
+                  id: 'screen',
+                  title: 'LCD',
+                },
+                {
+                  type: 'react-component',
+                  component: 'Registers',
+                  title: 'Registers',
+                },
+              ]
             },
             {
-              type:'react-component',
-              id: 'test',
-              component: 'Dummy',
-            },
+              type: 'column',
+              width: 70,
+              content: [
+                {
+                  type:'react-component',
+                  component: 'Dummy',
+                },
+                {
+                  type:'react-component',
+                  component: 'Dummy',
+                },
+              ]
+            }
           ]
-        },
-        {
-          type:'react-component',
-          component: 'Dummy',
-        },
-        {
-          type:'react-component',
-          component: 'Dummy',
-        },
-
+        }
       ]
-    }
-  ]
-});
+    });
 
-appLayout.registerComponent('Screen', Screen);
-appLayout.registerComponent('Dummy', Dummy);
-appLayout.init();
+    this.container.registerComponent('Screen', Screen);
+    this.container.registerComponent('Registers', Registers);
+    this.container.registerComponent('Dummy', Dummy);
+  }
+
+  init() {
+    this.container.init();
+
+    window.addEventListener("hashchange", this.onHashChange);
+
+    document.body.addEventListener('dragover', this.onDragOver);
+    document.body.addEventListener('drop', this.onDrop);
+
+    this.onHashChange();
+  }
+
+  onHashChange = async (ev: HashChangeEvent) => {
+    if (window.location.hash) {
+      const hash = window.location.hash.substring(1);
+      const rom = await get(`${hash}_rom`);
+      if (rom) {
+        this.loadRom(rom as Uint8Array);
+      }
+    }
+  }
+
+  onDragOver = (ev: Event) => {
+    ev.preventDefault();
+  }
+
+  onDrop = (ev: DragEvent) => {
+    ev.preventDefault();
+
+    if (!ev.dataTransfer || !ev.dataTransfer.items || ev.dataTransfer.items[0].kind !== 'file') {
+      return;
+    }
+
+    let file = ev.dataTransfer.items[0].getAsFile();
+    if (!file) {
+      return;
+    }
+
+    let reader = new FileReader();
+    reader.onload = async () => {
+      const rom = new Uint8Array(reader.result as ArrayBuffer);
+      this.loadRom(rom);
+
+      const hash = this.emulator.rom_hash();
+      await set(`${hash}_rom`, rom);
+      window.location = `#${hash}`;
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  onFrame = (framebuffer: Uint16Array) => {
+    this.container.eventHub.emit('oxideboy:frame', framebuffer);
+  }
+
+  onBreakpointHit = () => {
+    console.log("todo");
+  }
+
+  loadRom(rom: Uint8Array) {
+    this.emulator = WebEmu.new(rom, this.onFrame, this.onBreakpointHit);
+    this.start();
+  }
+
+  start() {
+    this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
+  }
+
+  runFrame(timestamp) {
+    this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
+
+    let delta = 16; // Default delta amount - enough to render a frame.
+    if (this.lastFrameTimestamp) {
+      delta = Math.min(1000, timestamp - this.lastFrameTimestamp) // Don't try and emulate more than a second of time.
+    }
+    this.lastFrameTimestamp = timestamp;
+
+    this.emulator.run(delta * 1000);
+    // this.update();
+  }
+}
+
+new App().init();
+
+
+/*
+  onDrop(ev) {
+
+  }
+
+  async loadRom(rom) {
+    
+
+    const breakpoints = await get(`${this.emulator.rom_hash()}-breakpoints`);
+    this.emulator.set_breakpoints(breakpoints || []);
+    this.setState({active: true, paused: false, breakpoints});
+    document.title = `oxideboy-debugger: ${this.emulator.rom_title()}`;
+    this.start();
+  }
+
+*/
