@@ -561,6 +561,47 @@ class Breakpoints extends React.Component {
 }
 
 class Screen extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.onResize = this.onResize.bind(this);
+    this.state = this.calculateCanvasDimensions();
+  }
+
+  componentDidMount() {
+    this.props.glContainer.on('resize', this.onResize);
+  }
+
+  componentWillUnmount() {
+    this.props.glContainer.off('resize', this.onResize);
+  }
+
+  onResize() {
+    this.setState(this.calculateCanvasDimensions());
+  }
+
+  calculateCanvasDimensions() {
+    let newWidth = this.props.glContainer.width;
+    let newHeight = newWidth * (144/160);
+    if (newHeight > this.props.glContainer.height) {
+      newHeight = this.props.glContainer.height;
+      newWidth = newHeight * (160/144);
+    }
+    this.props.glContainer.setSize(newWidth, newHeight);
+    return {
+      canvasWidth: newWidth,
+      canvasHeight: newHeight,
+    };
+  }
+
+  render() {
+    return (
+      <canvas width={this.state.canvasWidth} height={this.state.canvasHeight} style={{background: 'black'}} ref='lcd'></canvas>
+    );
+  }
+}
+
+class Dummy extends React.Component {
   render() {
     return (
       <span>ok cool</span>
@@ -579,25 +620,26 @@ var appLayout = new GoldenLayout({
       content: [
         {
           type: 'column',
+          width: 30,
           content:[
             {
               type:'react-component',
-              id: 'screen',
               component: 'Screen',
             },
             {
               type:'react-component',
-              component: 'Screen',
+              id: 'test',
+              component: 'Dummy',
             },
           ]
         },
         {
           type:'react-component',
-          component: 'Screen',
+          component: 'Dummy',
         },
         {
           type:'react-component',
-          component: 'Screen',
+          component: 'Dummy',
         },
 
       ]
@@ -605,6 +647,6 @@ var appLayout = new GoldenLayout({
   ]
 });
 
-window.blah = appLayout;
 appLayout.registerComponent('Screen', Screen);
+appLayout.registerComponent('Dummy', Dummy);
 appLayout.init();
