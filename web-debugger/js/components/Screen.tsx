@@ -61,8 +61,6 @@ export default class Screen extends React.Component<ScreenProps, ScreenState> {
 
       count: 3,
     });
-
-    window.sigh = this.drawScreen;
   }
 
   componentWillUnmount() {
@@ -108,8 +106,7 @@ export default class Screen extends React.Component<ScreenProps, ScreenState> {
     return (
       <canvas ref={this.canvasRef}
               width={this.state.canvasWidth}
-              height={this.state.canvasHeight}
-              style={{background: 'black'}}></canvas>
+              height={this.state.canvasHeight} />
     );
   }
 }

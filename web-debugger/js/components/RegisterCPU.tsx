@@ -22,12 +22,11 @@ export default class RegisterCPU extends React.Component<Props, State> {
 
   render() {
     return (
-      <div className="input-group">
-        <div className="input-group-prepend">
-          <span className="input-group-text">{this.props.name.toUpperCase()}</span>
-        </div>
+      <div className="register">
+        <label htmlFor={`cpu_register_${this.props.name}`}>
+          {this.props.name.toUpperCase()}
+        </label>
         <input  type="text"
-                className="form-control"
                 readOnly={!this.props.enabled}
                 id={`cpu_register_${this.props.name}`}
                 size={4}

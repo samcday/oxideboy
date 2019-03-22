@@ -16,8 +16,6 @@ import {FixedSizeList} from "react-window";
 import { get, set } from "idb-keyval";
 import { WebEmu } from "../crate/pkg";
 
-import RegisterCPU from "./components/RegisterCPU";
-import RegisterMem from "./components/RegisterMem";
 import Screen from "./components/Screen";
 import Registers from "./components/Registers";
 
@@ -28,51 +26,6 @@ window.ReactDOM = ReactDOM;
 // TODO: hide unhandled segments of memory (echo RAM, unused high registers).
 // TODO: visual indicator when we pause execution.
 
-const CPU_REGISTERS = ['af', 'bc', 'de', 'hl', 'sp', 'pc'];
-const MEM_REGISTERS = {
-    IF: 0xFF0F,
-    IE: 0xFFFF,
-   DIV: 0xFF04,
-  TIMA: 0xFF05,
-   TMA: 0xFF06,
-   TAC: 0xFF07,
-    P1: 0xFF00,
-    SB: 0xFF01,
-    SC: 0xFF02,
-  LCDC: 0xFF40,
-  STAT: 0xFF41,
-   SCY: 0xFF42,
-   SCX: 0xFF43,
-    LY: 0xFF44,
-   LYC: 0xFF45,
-   DMA: 0xFF46,
-   BGP: 0xFF47,
-  OBP0: 0xFF48,
-  OBP1: 0xFF49,
-    WY: 0xFF4A,
-    WX: 0xFF4B,
-  NR10: 0xFF10,
-  NR11: 0xFF11,
-  NR12: 0xFF12,
-  NR13: 0xFF13,
-  NR14: 0xFF14,
-  NR21: 0xFF16,
-  NR22: 0xFF17,
-  NR23: 0xFF18,
-  NR24: 0xFF19,
-  NR30: 0xFF1A,
-  NR31: 0xFF1B,
-  NR32: 0xFF1C,
-  NR33: 0xFF1D,
-  NR34: 0xFF1E,
-  NR41: 0xFF20,
-  NR42: 0xFF21,
-  NR43: 0xFF22,
-  NR44: 0xFF23,
-  NR50: 0xFF24,
-  NR51: 0xFF25,
-  NR52: 0xFF26,
-};
 
 class AppOld extends React.Component {
   constructor(props) {
@@ -80,17 +33,6 @@ class AppOld extends React.Component {
 
     this.state = {
       memDirty: 1,
-      cpuState: {
-        af: 0xFFFF,
-        bc: 0xFFFF,
-        de: 0xFFFF,
-        hl: 0xFFFF,
-        sp: 0xFFFF,
-        pc: 0xFFFF,
-        ime: false,
-        ime_defer: false,
-        halted: false,
-      },
       paused: false,
       active: false,
     };
@@ -170,16 +112,6 @@ class AppOld extends React.Component {
 
                   <div id="cpu" className="collapse show" aria-labelledby="cpuHeading" >
                     <div className="card-body text-monospace registers form-inline">
-                      {
-                        CPU_REGISTERS.map((reg) =>
-                          <RegisterCPU
-                            name={reg}
-                            key={reg}
-                            value={this.state.cpuState[reg]}
-                            enabled={this.state.paused}
-                            onUpdate={this.updateCpuRegister.bind(this, reg)} />
-                        )
-                      }
                     </div>
                   </div>
                 </div>
@@ -215,20 +147,6 @@ class AppOld extends React.Component {
         </div>
       </div>
     );
-  }
-
-  updateCpuRegister(reg, newVal) {
-    let cpuState = this.emulator.cpu_state();
-    cpuState[reg] = parseInt(newVal, 16);
-    this.emulator.set_cpu_state(cpuState);
-    this.update();
-  }
-
-  toggleCpuFlag(flag) {
-    let cpuState = this.emulator.cpu_state();
-    cpuState[flag] = !cpuState[flag];
-    this.emulator.set_cpu_state(cpuState);
-    this.update();
   }
 
   writeMem(addr, newVal) {
@@ -544,6 +462,7 @@ class App {
 
   start() {
     this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
+    this.container.eventHub.emit('oxideboy:start');
   }
 
   runFrame(timestamp) {
@@ -556,12 +475,16 @@ class App {
     this.lastFrameTimestamp = timestamp;
 
     this.emulator.run(delta * 1000);
-    // this.update();
+    this.refreshState();
+  }
+
+  refreshState() {
+    const cpu = this.emulator.cpu_state();
+    this.container.eventHub.emit('oxideboy:cpu-state', cpu);
   }
 }
 
 new App().init();
-
 
 /*
   onDrop(ev) {
@@ -569,8 +492,6 @@ new App().init();
   }
 
   async loadRom(rom) {
-    
-
     const breakpoints = await get(`${this.emulator.rom_hash()}-breakpoints`);
     this.emulator.set_breakpoints(breakpoints || []);
     this.setState({active: true, paused: false, breakpoints});
