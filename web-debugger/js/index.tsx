@@ -1,24 +1,24 @@
-import "../style.scss";
-import "@fortawesome/fontawesome-free/css/all.css";
-import "golden-layout/src/css/goldenlayout-base.css";
-import "golden-layout/src/css/goldenlayout-light-theme.css";
+import '../style.scss';
+import '@fortawesome/fontawesome-free/css/all.css';
+import 'golden-layout/src/css/goldenlayout-base.css';
+import 'golden-layout/src/css/goldenlayout-light-theme.css';
 
-import "@babel/polyfill";
-import "jquery";
-import "bootstrap";
-import GoldenLayout from "golden-layout";
+import '@babel/polyfill';
+import 'jquery';
+import 'bootstrap';
+import GoldenLayout from 'golden-layout';
 
-import { toPaddedHexString } from "./util";
-import React from "react";
-import ReactDOM from "react-dom";
-import {FixedSizeList} from "react-window";
-import { get, set } from "idb-keyval";
-// import { WebEmu } from "../crate/pkg";
+import { toPaddedHexString } from './util';
+import React from 'react';
+import ReactDOM from 'react-dom';
+import {FixedSizeList} from 'react-window';
+import { get, set } from 'idb-keyval';
+// import { WebEmu } from '../crate/pkg';
 
-import Screen from "./components/Screen";
-import Registers from "./components/Registers";
+import Screen from './components/Screen';
+import Registers from './components/Registers';
 
-import Worker from "@samcday/worker-loader?name=hash.worker.js!./worker-bootstrap";
+import Worker from '@samcday/worker-loader?name=hash.worker.js!./worker-bootstrap';
 
 // GoldenLayout is a bit of a relic - expects React+ReactDOM to be available on global namespace.
 window.React = React;
@@ -39,105 +39,91 @@ class AppOld extends React.Component {
   }
 
   componentDidMount() {
-    document.addEventListener("keydown", this.keyDown = (ev) => {
-      if(!this.emulator || ev.target !== document.body) {
-        return;
-      }
-      this.emulator.set_joypad_state(ev.key, true);
-    });
-
-    document.addEventListener("keyup", this.keyUp = (ev) => {
-      if (!this.emulator || ev.target !== document.body) {
-        return;
-      }
-      this.emulator.set_joypad_state(ev.key, false);
-    });
-
     this.onHashChange();
   }
 
   componentWillUnmount() {
-    document.removeEventListener("keydown", this.keyDown);
-    document.removeEventListener("keyup", this.keyUp);
-    document.removeEventListener("hashchange", this.hashChange);
+    document.removeEventListener('keydown', this.keyDown);
+    document.removeEventListener('keyup', this.keyUp);
+    document.removeEventListener('hashchange', this.hashChange);
   }
 
   render() {
     return (
-      <div className="d-flex min-vh-100">
-        <div className="left-sidebar min-vh-100 border-right">
+      <div className='d-flex min-vh-100'>
+        <div className='left-sidebar min-vh-100 border-right'>
         </div>
-        <div className="flex-fill position-relative">
+        <div className='flex-fill position-relative'>
               <MemoryViewer height={200} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} />
-              <div className="h-100">
-                <div className="btn-group" role="group">
+              <div className='h-100'>
+                <div className='btn-group' role='group'>
                   { this.state.paused &&
-                    <button type="button" className="btn btn-outline-secondary" id="start" onClick={this.start.bind(this)} disabled={!this.state.active}>
-                      <i className="fas fa-play"></i>
+                    <button type='button' className='btn btn-outline-secondary' id='start' onClick={this.start.bind(this)} disabled={!this.state.active}>
+                      <i className='fas fa-play'></i>
                     </button>
                   }
                   { !this.state.paused &&
-                    <button type="button" className="btn btn-outline-secondary" id="pause" onClick={this.pause.bind(this)} disabled={!this.state.active}>
-                      <i className="fas fa-pause"></i>
+                    <button type='button' className='btn btn-outline-secondary' id='pause' onClick={this.pause.bind(this)} disabled={!this.state.active}>
+                      <i className='fas fa-pause'></i>
                     </button>
                   }
-                  <button type="button" className="btn btn-outline-secondary" id="step_frame_backward" onClick={this.stepFrameBack.bind(this)} disabled={!this.state.active || !this.state.paused}>
-                    <i className="fas fa-fast-backward"></i>
+                  <button type='button' className='btn btn-outline-secondary' id='step_frame_backward' onClick={this.stepFrameBack.bind(this)} disabled={!this.state.active || !this.state.paused}>
+                    <i className='fas fa-fast-backward'></i>
                   </button>
-                  <button type="button" className="btn btn-outline-secondary" id="step_backward" onClick={this.stepBack.bind(this)} disabled={!this.state.active || !this.state.paused}>
-                    <i className="fas fa-backward"></i>
+                  <button type='button' className='btn btn-outline-secondary' id='step_backward' onClick={this.stepBack.bind(this)} disabled={!this.state.active || !this.state.paused}>
+                    <i className='fas fa-backward'></i>
                   </button>
-                  <button type="button" className="btn btn-outline-secondary" id="step_forward" onClick={this.stepForward.bind(this)} disabled={!this.state.active || !this.state.paused}>
-                    <i className="fas fa-forward"></i>
+                  <button type='button' className='btn btn-outline-secondary' id='step_forward' onClick={this.stepForward.bind(this)} disabled={!this.state.active || !this.state.paused}>
+                    <i className='fas fa-forward'></i>
                   </button>
-                  <button type="button" className="btn btn-outline-secondary" id="step_frame_forward" onClick={this.stepFrameForward.bind(this)} disabled={!this.state.active || !this.state.paused}>
-                    <i className="fas fa-fast-forward"></i>
+                  <button type='button' className='btn btn-outline-secondary' id='step_frame_forward' onClick={this.stepFrameForward.bind(this)} disabled={!this.state.active || !this.state.paused}>
+                    <i className='fas fa-fast-forward'></i>
                   </button>
-                  <button type="button" className="btn btn-outline-secondary" id="restart" onClick={this.restart.bind(this)} disabled={!this.state.active}>
-                    <i className="fas fa-redo"></i>
+                  <button type='button' className='btn btn-outline-secondary' id='restart' onClick={this.restart.bind(this)} disabled={!this.state.active}>
+                    <i className='fas fa-redo'></i>
                   </button>
                 </div>
                 <InstructionViewer instructions={this.state.instructions} />
               </div>
             <div>
-              <div className="accordion min-vh-100" id="sidebar">
+              <div className='accordion min-vh-100' id='sidebar'>
 
 
-                <div className="card">
-                  <div className="card-header" id="cpuHeading">
-                    <h2 className="mb-0">
-                      <button className="btn btn-link" type="button" data-toggle="collapse" data-target="#cpu" aria-expanded="true" aria-controls="cpu">CPU</button>
+                <div className='card'>
+                  <div className='card-header' id='cpuHeading'>
+                    <h2 className='mb-0'>
+                      <button className='btn btn-link' type='button' data-toggle='collapse' data-target='#cpu' aria-expanded='true' aria-controls='cpu'>CPU</button>
                     </h2>
                   </div>
 
-                  <div id="cpu" className="collapse show" aria-labelledby="cpuHeading" >
-                    <div className="card-body text-monospace registers form-inline">
+                  <div id='cpu' className='collapse show' aria-labelledby='cpuHeading' >
+                    <div className='card-body text-monospace registers form-inline'>
                     </div>
                   </div>
                 </div>
 
-                <div className="card">
-                  <div className="card-header" id="breakpointsHeading">
-                    <h2 className="mb-0">
-                      <button className="btn btn-link" type="button" data-toggle="collapse" data-target="#breakpoints" aria-expanded="true" aria-controls="breakpoints">Breakpoints</button>
+                <div className='card'>
+                  <div className='card-header' id='breakpointsHeading'>
+                    <h2 className='mb-0'>
+                      <button className='btn btn-link' type='button' data-toggle='collapse' data-target='#breakpoints' aria-expanded='true' aria-controls='breakpoints'>Breakpoints</button>
                     </h2>
                   </div>
 
-                  <div id="breakpoints" className="collapse show" aria-labelledby="breakpointsHeading" >
-                    <div className="card-body">
+                  <div id='breakpoints' className='collapse show' aria-labelledby='breakpointsHeading' >
+                    <div className='card-body'>
                       <Breakpoints list={this.state.breakpoints} onChange={this.updateBreakpoints.bind(this)} disabled={!this.state.active} />
                     </div>
                   </div>
                 </div>
-                <div className="card">
-                  <div className="card-header" id="watchesHeading">
-                    <h2 className="mb-0">
-                      <button className="btn btn-link" type="button" data-toggle="collapse" data-target="#watches" aria-expanded="true" aria-controls="watches">Watches</button>
+                <div className='card'>
+                  <div className='card-header' id='watchesHeading'>
+                    <h2 className='mb-0'>
+                      <button className='btn btn-link' type='button' data-toggle='collapse' data-target='#watches' aria-expanded='true' aria-controls='watches'>Watches</button>
                     </h2>
                   </div>
 
-                  <div id="watches" className="collapse show" aria-labelledby="breakpointsHeading" >
-                    <div className="card-body">
+                  <div id='watches' className='collapse show' aria-labelledby='breakpointsHeading' >
+                    <div className='card-body'>
                       TODO.
                     </div>
                   </div>
@@ -247,7 +233,7 @@ class AppOld extends React.Component {
 class MemoryViewer extends React.Component {
   render() {
     return (
-      <FixedSizeList height={this.props.height} itemCount={4096} itemSize={25} itemData={[this.props.dirty, this.props.fn]} width="100%" className="text-monospace">
+      <FixedSizeList height={this.props.height} itemCount={4096} itemSize={25} itemData={[this.props.dirty, this.props.fn]} width='100%' className='text-monospace'>
         {this.row}
       </FixedSizeList>
     );
@@ -259,12 +245,12 @@ class MemoryViewer extends React.Component {
 
     let values = [];
     for (let i = 0; i < 16; i++) {
-      values.push(<div key={`address_${address+i}`} className="memory-cell mx-1">{toPaddedHexString(fn(address+i), 2)}</div>);
+      values.push(<div key={`address_${address+i}`} className='memory-cell mx-1'>{toPaddedHexString(fn(address+i), 2)}</div>);
     }
 
     return (
       <div style={style}>
-        <div className="memory-address bg-light pl-1 pr-2 mr-2">0x{toPaddedHexString(address, 4)}</div>
+        <div className='memory-address bg-light pl-1 pr-2 mr-2'>0x{toPaddedHexString(address, 4)}</div>
         {values}
       </div>
     );
@@ -274,7 +260,7 @@ class MemoryViewer extends React.Component {
 class InstructionViewer extends React.Component {
   render() {
     return (
-      <div className="text-monospace">
+      <div className='text-monospace'>
         { (this.props.instructions || []).map((inst) => (
             <div key={`inst_${inst.loc}`}>0x{toPaddedHexString(inst.loc, 4)}: {inst.txt}</div>
         ))}
@@ -302,11 +288,11 @@ class Breakpoints extends React.Component {
       </ul>
 
       <form onSubmit={this.handleSubmit}>
-        <div className="input-group mb-3">
-          <div className="input-group-prepend">
-            <span className="input-group-text">0x</span>
+        <div className='input-group mb-3'>
+          <div className='input-group-prepend'>
+            <span className='input-group-text'>0x</span>
           </div>
-          <input type="text" className="form-control" value={this.state.text} onChange={this.handleChange} disabled={this.props.disabled} size={4} />
+          <input type='text' className='form-control' value={this.state.text} onChange={this.handleChange} disabled={this.props.disabled} size={4} />
         </div>
       </form>
       </React.Fragment>
@@ -321,7 +307,7 @@ class Breakpoints extends React.Component {
   }
 
   handleChange(ev) {
-    this.setState({text: ev.target.value.replace(/[^0-9A-Fa-f]+/g, "").replace(/^0+([1-9a-fA-F].*)/, "$1").substring(0, 4) });
+    this.setState({text: ev.target.value.replace(/[^0-9A-Fa-f]+/g, '').replace(/^0+([1-9a-fA-F].*)/, '$1').substring(0, 4) });
   }
 
   handleSubmit(ev: Event): void {
@@ -346,10 +332,15 @@ class Dummy extends React.Component {
 class App {
   container: GoldenLayout;
   worker: Worker;
+  refreshRaf: number;
+  framebuffer?: Uint16Array = undefined;
 
   constructor() {
     this.worker = new Worker;
     this.worker.onmessage = this.onWorkerMessage;
+
+    this.refreshRaf = requestAnimationFrame(this.requestRefresh);
+    this.framebuffer = new Uint16Array(160*144);
 
     this.container = new GoldenLayout({
       settings: {
@@ -408,28 +399,52 @@ class App {
   init() {
     this.container.init();
 
-    window.addEventListener("hashchange", this.onHashChange);
+    document.addEventListener('keydown', this.keyDown = (ev) => {
+      if(ev.target !== document.body) {
+        return;
+      }
+      this.worker.postMessage({type: 'keydown', key: ev.key});
+    });
+
+    document.addEventListener('keyup', this.keyUp = (ev) => {
+      if (ev.target !== document.body) {
+        return;
+      }
+      this.worker.postMessage({type: 'keyup', key: ev.key});
+    });
+
+    window.addEventListener('hashchange', this.onHashChange);
 
     document.body.addEventListener('dragover', this.onDragOver);
     document.body.addEventListener('drop', this.onDrop);
   }
 
+  requestRefresh = () => {
+    requestAnimationFrame(this.requestRefresh);
+    if (!this.framebuffer) {
+      return;
+    }
+
+    this.container.eventHub.emit('oxideboy:frame', this.framebuffer);
+    this.worker.postMessage({type: 'refresh', buffer: this.framebuffer}, [this.framebuffer.buffer]);
+    this.framebuffer = null;
+  }
 
   onWorkerMessage = async (ev) => {
     const message = ev.data;
     
     switch (message.type) {
-      case "init": {
+      case 'init': {
         this.onWorkerInit();
         break;
       }
-      case "loaded": {
-        document.title = `oxideboy-debugger: ${message.rom.title}`;
-        window.location = `#${message.rom.hash}`;
+      case 'loaded': {
+        this.onRomLoaded(message);
         break;
       }
-      case "frame": {
-        this.container.eventHub.emit('oxideboy:frame', message.buffer);
+      case 'state': {
+        this.framebuffer = message.framebuffer;
+        this.container.eventHub.emit('oxideboy:cpu-state', message.state.cpu);
         break;
       }
     }
@@ -437,6 +452,17 @@ class App {
 
   onWorkerInit() {
     this.onHashChange();
+  }
+
+  onRomLoaded(info) {
+    document.title = `oxideboy-debugger: ${info.rom.title}`;
+    window.location = `#${info.rom.hash}`;
+
+    // This is the buffer we'll start passing back and forth with the Worker. The buffer is Transferable, so there's
+    // zero copying going on. Instead, each time we're ready for a new frame (dictated by rAF), we simply send the
+    // framebuffer to the worker to have the latest frame copied into it (from the core framebuffer in Rust/WASM land).
+    // Once the copy is done the buffer is handed back. And on it goes.
+    this.framebuffer = new Uint16Array(160*144);
   }
 
   onHashChange = async (ev: HashChangeEvent) => {
@@ -478,7 +504,7 @@ class App {
   }
 
   onBreakpointHit = () => {
-    console.log("todo");
+    console.log('todo');
   }
 
   loadRom(rom) {
@@ -491,20 +517,11 @@ class App {
   }
 
   runFrame(timestamp) {
-    this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
-
     let delta = 16; // Default delta amount - enough to render a frame.
     if (this.lastFrameTimestamp) {
       delta = Math.min(1000, timestamp - this.lastFrameTimestamp) // Don't try and emulate more than a second of time.
     }
     this.lastFrameTimestamp = timestamp;
-
-    this.refreshState();
-  }
-
-  refreshState() {
-    // const cpu = this.emulator.cpu_state();
-    // this.container.eventHub.emit('oxideboy:cpu-state', cpu);
   }
 }
 

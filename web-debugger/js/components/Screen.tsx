@@ -106,7 +106,7 @@ export default class Screen extends React.Component<ScreenProps, ScreenState> {
 
   render() {
     return (
-      <div className='d-flex justify-content-center align-content-center'>
+      <div className='d-flex justify-content-center align-items-center h-100'>
         <canvas ref={this.canvasRef}
                 width={this.state.canvasWidth}
                 height={this.state.canvasHeight} />

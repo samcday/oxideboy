@@ -37,7 +37,6 @@ pub struct WebEmu {
     rom_title: String,
     rom_hash: String,
     breakpoint_cb: Function,
-    frame_cb: Function,
     pc_breakpoints: HashSet<u16>,
     rewind_manager: RewindManager<MemoryStorageAdapter>,
 }
@@ -63,7 +62,7 @@ struct CpuState {
 
 #[wasm_bindgen]
 impl WebEmu {
-    pub fn new(rom: &[u8], frame_cb: Function, breakpoint_cb: Function) -> WebEmu {
+    pub fn new(rom: &[u8], breakpoint_cb: Function) -> WebEmu {
         utils::set_panic_hook();
 
         let rom = Rom::new(rom.to_vec().into()).unwrap();
@@ -81,7 +80,6 @@ impl WebEmu {
             gb_ctx,
             pc_breakpoints: HashSet::new(),
             breakpoint_cb,
-            frame_cb,
             rom_hash,
             rom_title,
             rewind_manager,
@@ -101,6 +99,7 @@ impl WebEmu {
     }
 
     pub fn run(&mut self, microseconds: f64) {
+        // TODO: should keep the desired cycle in struct to handle uneven cycle boundaries.
         let desired_cycle = self.gb.cycle_count + ((BASE_CLOCK_SPEED as f64 / 1_000_000.0) * microseconds) as u64;
 
         while self.gb.cycle_count < desired_cycle {
@@ -116,15 +115,16 @@ impl WebEmu {
         }
     }
 
-    fn update_frame(&mut self) {
-        let buf = unsafe {
-            Uint16Array::view(slice::from_raw_parts(
-                self.gb_ctx.current_framebuffer.as_ptr() as *const u16,
-                160 * 144,
-            ))
-        };
-
-        let _ = self.frame_cb.call1(&JsValue::NULL, &buf);
+    pub fn update_frame(&self, buf: &Uint16Array) {
+        buf.set(
+            unsafe {
+                &Uint16Array::view(slice::from_raw_parts(
+                    self.gb_ctx.current_framebuffer.as_ptr() as *const u16,
+                    160 * 144,
+                ))
+            },
+            0,
+        );
     }
 
     pub fn step_forward(&mut self) -> bool {
@@ -132,7 +132,6 @@ impl WebEmu {
 
         if self.gb_ctx.is_new_frame() {
             self.rewind_manager.snapshot(&self.gb);
-            self.update_frame();
             true
         } else {
             false
@@ -143,7 +142,6 @@ impl WebEmu {
         let cycles = self.gb.last_inst_cycles;
         self.rewind_manager
             .rewind_cycles(&mut self.gb, &mut self.gb_ctx, cycles);
-        self.update_frame();
     }
 
     pub fn step_frame_forward(&mut self) {
@@ -156,7 +154,6 @@ impl WebEmu {
 
     pub fn step_frame_backward(&mut self) {
         self.rewind_manager.rewind_frame(&mut self.gb, &mut self.gb_ctx);
-        self.update_frame();
     }
 
     /// Decodes n number of instructions starting from given address.
