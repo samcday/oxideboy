@@ -334,13 +334,13 @@ class App {
   worker: Worker;
   refreshRaf: number;
   framebuffer?: Uint16Array = undefined;
+  memory?: Uint8Array = undefined;
 
   constructor() {
     this.worker = new Worker;
     this.worker.onmessage = this.onWorkerMessage;
 
     this.refreshRaf = requestAnimationFrame(this.requestRefresh);
-    this.framebuffer = new Uint16Array(160*144);
 
     this.container = new GoldenLayout({
       settings: {
@@ -426,8 +426,13 @@ class App {
     }
 
     this.container.eventHub.emit('oxideboy:frame', this.framebuffer);
-    this.worker.postMessage({type: 'refresh', buffer: this.framebuffer}, [this.framebuffer.buffer]);
+    this.worker.postMessage({
+      type: 'refresh',
+      framebuffer: this.framebuffer,
+      memory: this.memory,
+    }, [this.framebuffer.buffer, this.memory.buffer]);
     this.framebuffer = null;
+    this.memory = null;
   }
 
   onWorkerMessage = async (ev) => {
@@ -444,7 +449,9 @@ class App {
       }
       case 'state': {
         this.framebuffer = message.framebuffer;
-        this.container.eventHub.emit('oxideboy:cpu-state', message.state.cpu);
+        this.memory = message.memory;
+        this.container.eventHub.emit('oxideboy:cpu-state', message.cpu);
+        this.container.eventHub.emit('oxideboy:memory', message.memory);
         break;
       }
     }
@@ -463,6 +470,7 @@ class App {
     // framebuffer to the worker to have the latest frame copied into it (from the core framebuffer in Rust/WASM land).
     // Once the copy is done the buffer is handed back. And on it goes.
     this.framebuffer = new Uint16Array(160*144);
+    this.memory = new Uint8Array(0x10000);
   }
 
   onHashChange = async (ev: HashChangeEvent) => {

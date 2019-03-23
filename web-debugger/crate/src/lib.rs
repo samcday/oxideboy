@@ -115,16 +115,13 @@ impl WebEmu {
         }
     }
 
-    pub fn update_frame(&self, buf: &Uint16Array) {
-        buf.set(
-            unsafe {
-                &Uint16Array::view(slice::from_raw_parts(
-                    self.gb_ctx.current_framebuffer.as_ptr() as *const u16,
-                    160 * 144,
-                ))
-            },
-            0,
-        );
+    pub fn update_state(&mut self, framebuffer: &mut [u16], mem: &mut [u8]) {
+        framebuffer.copy_from_slice(&self.gb_ctx.current_framebuffer);
+
+        let (_, bus) = self.gb.bus(&mut self.gb_ctx);
+        for addr in 0xFF00..=0xFFFF {
+            mem[addr] = bus.memory_get(addr as u16);
+        }
     }
 
     pub fn step_forward(&mut self) -> bool {

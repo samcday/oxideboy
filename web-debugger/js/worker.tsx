@@ -8,16 +8,6 @@ const TICK_INTERVAL = 2; // in milliseconds
 let emulator = undefined;
 let lastTick = null;
 let tickId = null;
-let framebuffer = null;
-
-// function onFrame(new_frame) {
-//   if (!framebuffer) {
-//     return;
-//   }
-
-//   framebuffer.set(new_frame, 0);
-//   postMessage({type: 'frame', buffer: framebuffer}, [framebuffer.buffer]);
-// }
 
 function onBreakpointHit() {
 
@@ -32,11 +22,10 @@ function tick() {
 }
 
 // Bundles up all information about current state of the emulator (registers, memory, etc) and sends it to the UI.
-function sendState(buffer) {
-  // const state = emulator.get_state();
-  const state = {cpu: emulator.cpu_state()};
-  emulator.update_frame(buffer);
-  postMessage({type: 'state', state, framebuffer: buffer}, [buffer.buffer]);
+function sendState(framebuffer, memory) {
+  const cpuState = emulator.cpu_state();
+  emulator.update_state(framebuffer, memory);
+  postMessage({type: 'state', cpu: cpuState, framebuffer, memory}, [framebuffer.buffer, memory.buffer]);
 }
 
 onmessage = async (ev) => {
@@ -65,7 +54,7 @@ onmessage = async (ev) => {
       break;
     }
     case 'refresh': {
-      if (emulator) sendState(message.buffer);
+      if (emulator) sendState(message.framebuffer, message.memory);
       break;
     }
   }

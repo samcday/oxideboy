@@ -5,7 +5,7 @@ export interface Props {
   name: string;
   addr: number;
   enabled: boolean;
-  fn(addr: number): number;
+  value: number;
   onUpdate(this: void, value: number): void;
 }
 
@@ -32,7 +32,7 @@ export default class RegisterMem extends React.Component<Props, State> {
                 readOnly={!this.props.enabled}
                 id={`cpu_register_${this.props.name}`}
                 size={2}
-                value={this.state.editing ? this.state.value : toPaddedHexString(this.props.fn(this.props.addr), 2)}
+                value={this.state.editing ? this.state.value : toPaddedHexString(this.props.value, 2)}
                 onChange={this.onChange}
                 onBlur={this.onBlur}
                 onKeyPress={this.onKeyPress}
@@ -42,7 +42,7 @@ export default class RegisterMem extends React.Component<Props, State> {
   }
 
   onFocus(ev: React.FocusEvent<HTMLInputElement>) {
-    this.setState({editing: true, value: this.props.fn(this.props.addr).toString(16)});
+    this.setState({editing: true, value: this.props.value.toString(16)});
   }
 
   onBlur(ev: React.FocusEvent<HTMLInputElement>) {

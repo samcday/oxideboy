@@ -63,6 +63,9 @@ export default class Registers extends React.Component<Props, State> {
   constructor(props: Props) {
     super(props);
 
+    const registers = {};
+    Object.keys(MEM_REGISTERS).forEach(name => { registers[name] = 255 });
+
     this.state = {
       cpuState: {
         af: 0xFFFF,
@@ -75,11 +78,13 @@ export default class Registers extends React.Component<Props, State> {
         ime_defer: false,
         halted: false,
       },
+      registers,
     };
   }
 
   componentDidMount() {
     this.props.glEventHub.on('oxideboy:cpu-state', this.updateCpuState);
+    this.props.glEventHub.on('oxideboy:memory', this.updateRegisters);
   }
 
   updateCpuRegister(reg, newVal) {
@@ -87,6 +92,12 @@ export default class Registers extends React.Component<Props, State> {
     cpuState[reg] = parseInt(newVal, 16);
     this.emulator.set_cpu_state(cpuState);
     this.update();
+  }
+
+  updateRegisters = (mem) => {
+    const registers = {};
+    Object.keys(MEM_REGISTERS).forEach(name => { registers[name] = mem[MEM_REGISTERS[name]]; });
+    this.setState({registers});
   }
 
   toggleCpuFlag(flag) {
@@ -150,9 +161,8 @@ export default class Registers extends React.Component<Props, State> {
             <RegisterMem
               name={reg}
               addr={MEM_REGISTERS[reg]}
-              fn={this.readMemory.bind(this)}
+              value={this.state.registers[reg]}
               enabled={this.state.paused}
-              dirty={this.state.memDirty}
               key={reg}
               onUpdate={this.writeMemory.bind(this, MEM_REGISTERS[reg])} />
           )
