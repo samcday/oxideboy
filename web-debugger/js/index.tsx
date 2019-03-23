@@ -1,4 +1,3 @@
-
 import "../style.scss";
 import "@fortawesome/fontawesome-free/css/all.css";
 import "golden-layout/src/css/goldenlayout-base.css";
@@ -14,10 +13,12 @@ import React from "react";
 import ReactDOM from "react-dom";
 import {FixedSizeList} from "react-window";
 import { get, set } from "idb-keyval";
-import { WebEmu } from "../crate/pkg";
+// import { WebEmu } from "../crate/pkg";
 
 import Screen from "./components/Screen";
 import Registers from "./components/Registers";
+
+import Worker from "@samcday/worker-loader?name=hash.worker.js!./worker-bootstrap";
 
 // GoldenLayout is a bit of a relic - expects React+ReactDOM to be available on global namespace.
 window.React = React;
@@ -25,7 +26,6 @@ window.ReactDOM = ReactDOM;
 
 // TODO: hide unhandled segments of memory (echo RAM, unused high registers).
 // TODO: visual indicator when we pause execution.
-
 
 class AppOld extends React.Component {
   constructor(props) {
@@ -345,13 +345,20 @@ class Dummy extends React.Component {
 
 class App {
   container: GoldenLayout;
-  emulator?: WebEmu = undefined;
+  worker: Worker;
 
   constructor() {
+    this.worker = new Worker;
+    this.worker.onmessage = this.onWorkerMessage;
+
     this.container = new GoldenLayout({
       settings: {
         showPopoutIcon: false,
         showCloseIcon: false,
+      },
+      dimensions: {
+        minItemHeight: 144,
+        minItemWidth: 160,
       },
       content: [
         {
@@ -405,7 +412,30 @@ class App {
 
     document.body.addEventListener('dragover', this.onDragOver);
     document.body.addEventListener('drop', this.onDrop);
+  }
 
+
+  onWorkerMessage = async (ev) => {
+    const message = ev.data;
+    
+    switch (message.type) {
+      case "init": {
+        this.onWorkerInit();
+        break;
+      }
+      case "loaded": {
+        document.title = `oxideboy-debugger: ${message.rom.title}`;
+        window.location = `#${message.rom.hash}`;
+        break;
+      }
+      case "frame": {
+        this.container.eventHub.emit('oxideboy:frame', message.buffer);
+        break;
+      }
+    }
+  }
+
+  onWorkerInit() {
     this.onHashChange();
   }
 
@@ -439,10 +469,6 @@ class App {
     reader.onload = async () => {
       const rom = new Uint8Array(reader.result as ArrayBuffer);
       this.loadRom(rom);
-
-      const hash = this.emulator.rom_hash();
-      await set(`${hash}_rom`, rom);
-      window.location = `#${hash}`;
     };
     reader.readAsArrayBuffer(file);
   }
@@ -455,9 +481,8 @@ class App {
     console.log("todo");
   }
 
-  loadRom(rom: Uint8Array) {
-    this.emulator = WebEmu.new(rom, this.onFrame, this.onBreakpointHit);
-    this.start();
+  loadRom(rom) {
+    this.worker.postMessage({type: 'load', rom: rom});
   }
 
   start() {
@@ -474,13 +499,12 @@ class App {
     }
     this.lastFrameTimestamp = timestamp;
 
-    this.emulator.run(delta * 1000);
     this.refreshState();
   }
 
   refreshState() {
-    const cpu = this.emulator.cpu_state();
-    this.container.eventHub.emit('oxideboy:cpu-state', cpu);
+    // const cpu = this.emulator.cpu_state();
+    // this.container.eventHub.emit('oxideboy:cpu-state', cpu);
   }
 }
 
@@ -495,7 +519,6 @@ new App().init();
     const breakpoints = await get(`${this.emulator.rom_hash()}-breakpoints`);
     this.emulator.set_breakpoints(breakpoints || []);
     this.setState({active: true, paused: false, breakpoints});
-    document.title = `oxideboy-debugger: ${this.emulator.rom_title()}`;
     this.start();
   }
 

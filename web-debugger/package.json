@@ -15,6 +15,7 @@
     "@babel/preset-react": "^7.0.0",
     "@babel/preset-typescript": "^7.3.3",
     "@fortawesome/fontawesome-free": "^5.7.2",
+    "@samcday/worker-loader": "^2.0.0",
     "@types/react": "^16.8.8",
     "@types/react-dom": "^16.8.2",
     "@wasm-tool/wasm-pack-plugin": "^0.2.7",

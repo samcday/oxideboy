@@ -1,4 +1,5 @@
 const path = require('path');
+const LoaderOptionsPlugin = require('webpack').LoaderOptionsPlugin;
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const WasmPackPlugin = require('@wasm-tool/wasm-pack-plugin');
 
@@ -7,8 +8,9 @@ const dist = path.resolve(__dirname, 'dist');
 module.exports = {
   devtool: 'eval-source-map',
 
-  entry: './js/bootstrap.js',
+  entry: './js/index',
   output: {
+    globalObject: 'self',
     path: dist,
     filename: 'bundle.js',
   },
@@ -19,6 +21,16 @@ module.exports = {
   plugins: [
     new HtmlWebpackPlugin({template: 'index.html'}),
     new WasmPackPlugin({crateDirectory: path.resolve(__dirname, 'crate')}),
+    new LoaderOptionsPlugin({
+      options: {
+        worker: {
+          output: {
+            filename: "hash.worker.js",
+            chunkFilename: "[id].hash.worker.js"
+          }
+        }
+      }
+    }),
   ],
   resolve: {
     extensions: ['.ts', '.tsx', '.js', '.json', '.wasm']

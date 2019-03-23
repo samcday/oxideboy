@@ -85,12 +85,14 @@ export default class Screen extends React.Component<ScreenProps, ScreenState> {
 
   calculateCanvasDimensions() {
     let newWidth = this.props.glContainer.width;
+    newWidth -= newWidth % 160;
     let newHeight = newWidth * (144/160);
+
     if (newHeight > this.props.glContainer.height) {
       newHeight = this.props.glContainer.height;
+      newHeight -= newHeight % 144;
       newWidth = newHeight * (160/144);
     }
-    // this.props.glContainer.setSize(newWidth, newHeight);
     const currentCanvas = this.canvasRef.current;
     if (currentCanvas) {
       currentCanvas.width = newWidth;
@@ -104,9 +106,11 @@ export default class Screen extends React.Component<ScreenProps, ScreenState> {
 
   render() {
     return (
-      <canvas ref={this.canvasRef}
-              width={this.state.canvasWidth}
-              height={this.state.canvasHeight} />
+      <div className='d-flex justify-content-center align-content-center'>
+        <canvas ref={this.canvasRef}
+                width={this.state.canvasWidth}
+                height={this.state.canvasHeight} />
+      </div>
     );
   }
 }

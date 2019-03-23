@@ -8,5 +8,9 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "jsx": "preserve",
+    "lib": [
+        "esnext",
+        "webworker"
+    ]
   }
 }
