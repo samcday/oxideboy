@@ -21,6 +21,14 @@ export default class RegisterMem extends React.Component<Props, State> {
     ['onChange', 'onFocus', 'onBlur', 'onKeyPress'].forEach((name) => this[name] = this[name].bind(this));
   }
 
+  shouldComponentUpdate(nextProps) {
+    if (this.state.editing) {
+      return true;
+    }
+
+    return this.props.value != nextProps.value;
+  }
+
   render() {
     return (
       <div className="register">

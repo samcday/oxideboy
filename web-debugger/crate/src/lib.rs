@@ -119,6 +119,20 @@ impl WebEmu {
         framebuffer.copy_from_slice(&self.gb_ctx.current_framebuffer);
 
         let (_, bus) = self.gb.bus(&mut self.gb_ctx);
+
+        mem[0x0000..=0x3FFF].copy_from_slice(&bus.cart.rom_lo(&bus.context.rom.data));
+        if *bus.bootrom_enabled {
+            mem[0x0000..0x0100].copy_from_slice(&bus.bootrom());
+        }
+        mem[0x4000..=0x7FFF].copy_from_slice(&bus.cart.rom_hi(&bus.context.rom.data));
+        mem[0x8000..=0x97FF].copy_from_slice(&bus.ppu.tiles);
+        mem[0x9800..=0x9FFF].copy_from_slice(&bus.ppu.tilemap);
+        let ram = bus.cart.ram();
+        mem[0xA000..0xA000 + ram.len()].copy_from_slice(ram);
+        mem[0xC000..=0xDFFF].copy_from_slice(&bus.ram);
+        mem[0xE000..=0xFDFF].copy_from_slice(&bus.ram[0..0x1E00]);
+        mem[0xFE00..=0xFE9F].copy_from_slice(&bus.ppu.oam_memory());
+
         for addr in 0xFF00..=0xFFFF {
             mem[addr] = bus.memory_get(addr as u16);
         }

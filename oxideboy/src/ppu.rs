@@ -618,11 +618,15 @@ impl Ppu {
         }
     }
 
+    pub fn oam_memory(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) }
+    }
+
     pub fn oam_read(&self, addr: usize) -> u8 {
         if !self.oam_allow_read {
             return 0xFF; // Reading OAM memory during Mode2 & Mode3 is not permitted.
         }
-        (unsafe { slice::from_raw_parts(self.oam.as_ptr() as *const u8, 160) })[addr]
+        self.oam_memory()[addr]
     }
 
     pub fn oam_write(&mut self, _context: &mut Context, addr: usize, v: u8) {

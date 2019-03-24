@@ -44,27 +44,36 @@ impl Cartridge {
         }
     }
 
-    pub fn rom_lo(&self, rom: &[u8], addr: usize) -> u8 {
+    pub fn rom_lo<'a>(&self, rom: &'a [u8]) -> &'a [u8] {
         match self.cart_type {
-            CartridgeType::ROMOnly => rom[addr],
+            CartridgeType::ROMOnly => &rom[0..0x4000],
             CartridgeType::MBC1 | CartridgeType::MBC3 => {
                 let base = (self.lo_rom_bank as usize) * 0x4000;
-                rom[base + addr]
+                &rom[base..base + 0x4000]
             }
         }
     }
 
-    pub fn rom_hi(&self, rom: &[u8], addr: usize) -> u8 {
+    pub fn rom_hi<'a>(&self, rom: &'a [u8]) -> &'a [u8] {
         match self.cart_type {
-            CartridgeType::ROMOnly => rom[0x4000 + addr],
+            CartridgeType::ROMOnly => &rom[0x4000..0x8000],
             CartridgeType::MBC1 | CartridgeType::MBC3 => {
                 let base = (self.hi_rom_bank as usize) * 0x4000;
-                rom[base + addr]
+                &rom[base..base + 0x4000]
             }
         }
     }
 
-    pub fn ram(&self, addr: usize) -> u8 {
+    pub fn ram(&self) -> &[u8] {
+        if !self.ram_enabled {
+            return &[];
+        }
+        let base = (self.ram_bank as usize) * 0x2000;
+        let end = std::cmp::max(base + 0x2000, self.ram.len());
+        &self.ram[base..end]
+    }
+
+    pub fn ram_read(&self, addr: usize) -> u8 {
         if !self.ram_enabled {
             return 0xFF;
         }

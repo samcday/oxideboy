@@ -471,6 +471,7 @@ class App {
     // Once the copy is done the buffer is handed back. And on it goes.
     this.framebuffer = new Uint16Array(160*144);
     this.memory = new Uint8Array(0x10000);
+    this.worker.postMessage({type: 'start'});
   }
 
   onHashChange = async (ev: HashChangeEvent) => {

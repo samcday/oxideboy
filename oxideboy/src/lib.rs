@@ -129,21 +129,21 @@ pub struct Gameboy {
 /// Holds the gameboy hardware components other than the CPU. This is constructed and fed into the CPU when executing
 /// instructions. It can also be manually obtained (via Gameboy#bus) to query/poke internal state directly.
 pub struct GameboyBus<'a> {
-    model: &'a Model,
-    bootrom_enabled: &'a mut bool,
-    cycle_count: &'a mut u64,
-    frame_count: &'a mut u64,
-    context: &'a mut Context,
-    apu: &'a mut Apu,
-    cart: &'a mut Cartridge,
-    dma: &'a mut DmaController,
-    hram: &'a mut HRam, // 0xFF80 - 0xFFFE
-    interrupts: &'a mut InterruptController,
-    joypad: &'a mut Joypad,
-    ppu: &'a mut Ppu,
-    ram: &'a mut Ram, // 0xC000 - 0xDFFF (and echoed in 0xE000 - 0xFDFF)
-    serial: &'a mut Serial,
-    timer: &'a mut Timer,
+    pub model: &'a Model,
+    pub bootrom_enabled: &'a mut bool,
+    pub cycle_count: &'a mut u64,
+    pub frame_count: &'a mut u64,
+    pub context: &'a mut Context,
+    pub apu: &'a mut Apu,
+    pub cart: &'a mut Cartridge,
+    pub dma: &'a mut DmaController,
+    pub hram: &'a mut HRam, // 0xFF80 - 0xFFFE
+    pub interrupts: &'a mut InterruptController,
+    pub joypad: &'a mut Joypad,
+    pub ppu: &'a mut Ppu,
+    pub ram: &'a mut Ram, // 0xC000 - 0xDFFF (and echoed in 0xE000 - 0xFDFF)
+    pub serial: &'a mut Serial,
+    pub timer: &'a mut Timer,
 }
 
 /// Saves the state of a given Gameboy + Context pair. This is a complete save state - including the framebuffers, audio
@@ -450,10 +450,10 @@ impl<'a> GameboyBus<'a> {
     pub fn memory_get(&self, addr: u16) -> u8 {
         match addr {
             0x0000...0x00FF if *self.bootrom_enabled => self.bootrom_read(addr),
-            0x0000...0x3FFF => self.cart.rom_lo(&self.context.rom.data, addr as usize),
-            0x4000...0x7FFF => self.cart.rom_hi(&self.context.rom.data, (addr - 0x4000) as usize),
+            0x0000...0x3FFF => self.cart.rom_lo(&self.context.rom.data)[addr as usize],
+            0x4000...0x7FFF => self.cart.rom_hi(&self.context.rom.data)[addr as usize - 0x4000],
             0x8000...0x9FFF => self.ppu.vram_read(addr - 0x8000),
-            0xA000...0xBFFF => self.cart.ram((addr - 0xA000) as usize),
+            0xA000...0xBFFF => self.cart.ram_read((addr - 0xA000) as usize),
             0xC000...0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000...0xFDFF => self.ram[(addr - 0xE000) as usize],
             0xFE00...0xFE9F => self.ppu.oam_read((addr - 0xFE00) as usize),
@@ -563,12 +563,16 @@ impl<'a> GameboyBus<'a> {
         }
     }
 
-    fn bootrom_read(&self, addr: u16) -> u8 {
+    pub fn bootrom(&self) -> &[u8] {
         match *self.model {
-            Model::DMG0 => DMG0_BOOTROM[addr as usize],
-            Model::DMGABC => DMG_BOOTROM[addr as usize],
-            Model::MGB => MGB_BOOTROM[addr as usize],
+            Model::DMG0 => DMG0_BOOTROM,
+            Model::DMGABC => DMG_BOOTROM,
+            Model::MGB => MGB_BOOTROM,
         }
+    }
+
+    fn bootrom_read(&self, addr: u16) -> u8 {
+        self.bootrom()[addr as usize]
     }
 }
 
