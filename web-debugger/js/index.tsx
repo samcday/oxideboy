@@ -1,7 +1,7 @@
 import '../style.scss';
 import '@fortawesome/fontawesome-free/css/all.css';
 import 'golden-layout/src/css/goldenlayout-base.css';
-import 'golden-layout/src/css/goldenlayout-light-theme.css';
+import 'golden-layout/src/css/goldenlayout-dark-theme.css';
 
 import '@babel/polyfill';
 import 'jquery';
