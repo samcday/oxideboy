@@ -1,4 +1,5 @@
 import React from "react";
+import GoldenLayout from "golden-layout";
 
 import RegisterCPU from "./RegisterCPU";
 import RegisterMem from "./RegisterMem";
@@ -85,6 +86,11 @@ export default class Registers extends React.Component<Props, State> {
   componentDidMount() {
     this.props.glEventHub.on('oxideboy:cpu-state', this.updateCpuState);
     this.props.glEventHub.on('oxideboy:memory', this.updateRegisters);
+  }
+
+  componentWillUnmount() {
+    this.props.glEventHub.off('oxideboy:cpu-state', this.updateCpuState);
+    this.props.glEventHub.off('oxideboy:memory', this.updateRegisters);
   }
 
   updateCpuRegister(reg, newVal) {

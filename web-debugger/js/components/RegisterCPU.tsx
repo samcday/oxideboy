@@ -39,7 +39,7 @@ export default class RegisterCPU extends React.Component<Props, State> {
                 readOnly={!this.props.enabled}
                 id={`cpu_register_${this.props.name}`}
                 size={4}
-                value={this.state.editing ? this.state.value : toPaddedHexString(this.props.value, 4)}
+                value={(this.props.enabled && this.state.editing) ? this.state.value : toPaddedHexString(this.props.value, 4)}
                 onChange={this.onChange}
                 onBlur={this.onBlur}
                 onKeyPress={this.onKeyPress}
@@ -49,7 +49,9 @@ export default class RegisterCPU extends React.Component<Props, State> {
   }
 
   onFocus(ev: React.FocusEvent<HTMLInputElement>) {
-    this.setState({editing: true, value: this.props.value.toString(16)});
+    if (this.props.enabled) {
+      this.setState({editing: true, value: this.props.value.toString(16)});
+    }
   }
 
   onBlur(ev: React.FocusEvent<HTMLInputElement>) {

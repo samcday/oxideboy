@@ -11,12 +11,12 @@ import GoldenLayout from 'golden-layout';
 import { toPaddedHexString } from './util';
 import React from 'react';
 import ReactDOM from 'react-dom';
-import {FixedSizeList} from 'react-window';
 import { get, set } from 'idb-keyval';
 // import { WebEmu } from '../crate/pkg';
 
 import Screen from './components/Screen';
 import Registers from './components/Registers';
+import Memory from './components/Memory';
 
 import Worker from '@samcday/worker-loader?name=hash.worker.js!./worker-bootstrap';
 
@@ -230,33 +230,6 @@ class AppOld extends React.Component {
   }
 };
 
-class MemoryViewer extends React.Component {
-  render() {
-    return (
-      <FixedSizeList height={this.props.height} itemCount={4096} itemSize={25} itemData={[this.props.dirty, this.props.fn]} width='100%' className='text-monospace'>
-        {this.row}
-      </FixedSizeList>
-    );
-  }
-
-  row({data, index, style}) {
-    const address = index * 16;
-    const [_, fn] = data;
-
-    let values = [];
-    for (let i = 0; i < 16; i++) {
-      values.push(<div key={`address_${address+i}`} className='memory-cell mx-1'>{toPaddedHexString(fn(address+i), 2)}</div>);
-    }
-
-    return (
-      <div style={style}>
-        <div className='memory-address bg-light pl-1 pr-2 mr-2'>0x{toPaddedHexString(address, 4)}</div>
-        {values}
-      </div>
-    );
-  }
-}
-
 class InstructionViewer extends React.Component {
   render() {
     return (
@@ -378,7 +351,8 @@ class App {
               content: [
                 {
                   type:'react-component',
-                  component: 'Dummy',
+                  component: 'Memory',
+                  title: 'Memory',
                 },
                 {
                   type:'react-component',
@@ -393,6 +367,7 @@ class App {
 
     this.container.registerComponent('Screen', Screen);
     this.container.registerComponent('Registers', Registers);
+    this.container.registerComponent('Memory', Memory);
     this.container.registerComponent('Dummy', Dummy);
   }
 
