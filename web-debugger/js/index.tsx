@@ -12,11 +12,11 @@ import { toPaddedHexString } from './util';
 import React from 'react';
 import ReactDOM from 'react-dom';
 import { get, set } from 'idb-keyval';
-// import { WebEmu } from '../crate/pkg';
 
 import Screen from './components/Screen';
 import Registers from './components/Registers';
 import Memory from './components/Memory';
+import Disassembler from './components/Disassembler';
 
 import Worker from '@samcday/worker-loader?name=hash.worker.js!./worker-bootstrap';
 
@@ -32,20 +32,9 @@ class AppOld extends React.Component {
     super(props);
 
     this.state = {
-      memDirty: 1,
       paused: false,
       active: false,
     };
-  }
-
-  componentDidMount() {
-    this.onHashChange();
-  }
-
-  componentWillUnmount() {
-    document.removeEventListener('keydown', this.keyDown);
-    document.removeEventListener('keyup', this.keyUp);
-    document.removeEventListener('hashchange', this.hashChange);
   }
 
   render() {
@@ -54,7 +43,6 @@ class AppOld extends React.Component {
         <div className='left-sidebar min-vh-100 border-right'>
         </div>
         <div className='flex-fill position-relative'>
-              <MemoryViewer height={200} fn={this.read_memory.bind(this)} dirty={this.state.memDirty} />
               <div className='h-100'>
                 <div className='btn-group' role='group'>
                   { this.state.paused &&
@@ -166,15 +154,6 @@ class AppOld extends React.Component {
     });
   }
 
-  update() {
-    const cpu = this.emulator.cpu_state();
-    this.setState(({memDirty}) => ({
-      cpuState: cpu,
-      instructions: this.emulator.current_instructions(cpu.pc, 11),
-      memDirty: memDirty + 1,
-    }));
-  }
-
   stepFrameBack() {
     if (!this.state.paused) {
       return;
@@ -230,18 +209,6 @@ class AppOld extends React.Component {
   }
 };
 
-class InstructionViewer extends React.Component {
-  render() {
-    return (
-      <div className='text-monospace'>
-        { (this.props.instructions || []).map((inst) => (
-            <div key={`inst_${inst.loc}`}>0x{toPaddedHexString(inst.loc, 4)}: {inst.txt}</div>
-        ))}
-      </div>
-    );
-  }
-}
-
 class Breakpoints extends React.Component {
   constructor(props) {
     super(props);
@@ -291,14 +258,6 @@ class Breakpoints extends React.Component {
     ev.preventDefault();
     this.props.onChange((this.props.list || []).concat(parseInt(this.state.text, 16)));
     this.setState({text: ''});
-  }
-}
-
-class Dummy extends React.Component {
-  render() {
-    return (
-      <span>ok cool</span>
-    );
   }
 }
 
@@ -356,7 +315,8 @@ class App {
                 },
                 {
                   type:'react-component',
-                  component: 'Dummy',
+                  component: 'Disassembler',
+                  title: 'Disassembly',
                 },
               ]
             }
@@ -368,7 +328,7 @@ class App {
     this.container.registerComponent('Screen', Screen);
     this.container.registerComponent('Registers', Registers);
     this.container.registerComponent('Memory', Memory);
-    this.container.registerComponent('Dummy', Dummy);
+    this.container.registerComponent('Disassembler', Disassembler);
   }
 
   init() {
@@ -427,6 +387,7 @@ class App {
         this.memory = message.memory;
         this.container.eventHub.emit('oxideboy:cpu-state', message.cpu);
         this.container.eventHub.emit('oxideboy:memory', message.memory);
+        this.container.eventHub.emit('oxideboy:instructions', message.instructions);
         break;
       }
     }
