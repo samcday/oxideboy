@@ -16,7 +16,7 @@ import { get, set } from 'idb-keyval';
 import Screen from './components/Screen';
 import Registers from './components/Registers';
 import Memory from './components/Memory';
-import Disassembler from './components/Disassembler';
+import Disassembly from './components/Disassembly';
 
 import Worker from '@samcday/worker-loader?name=hash.worker.js!./worker-bootstrap';
 
@@ -315,7 +315,7 @@ class App {
                 },
                 {
                   type:'react-component',
-                  component: 'Disassembler',
+                  component: 'Disassembly',
                   title: 'Disassembly',
                 },
               ]
@@ -328,7 +328,7 @@ class App {
     this.container.registerComponent('Screen', Screen);
     this.container.registerComponent('Registers', Registers);
     this.container.registerComponent('Memory', Memory);
-    this.container.registerComponent('Disassembler', Disassembler);
+    this.container.registerComponent('Disassembly', Disassembly);
   }
 
   init() {
@@ -385,9 +385,9 @@ class App {
       case 'state': {
         this.framebuffer = message.framebuffer;
         this.memory = message.memory;
+        this.container.eventHub.emit('oxideboy:state', message);
         this.container.eventHub.emit('oxideboy:cpu-state', message.cpu);
         this.container.eventHub.emit('oxideboy:memory', message.memory);
-        this.container.eventHub.emit('oxideboy:instructions', message.instructions);
         break;
       }
     }
@@ -410,7 +410,7 @@ class App {
     this.worker.postMessage({type: 'start'});
   }
 
-  onHashChange = async (ev: HashChangeEvent) => {
+  onHashChange = async () => {
     if (window.location.hash) {
       const hash = window.location.hash.substring(1);
       const rom = await get(`${hash}_rom`);

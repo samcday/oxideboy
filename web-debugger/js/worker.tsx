@@ -1,7 +1,7 @@
 import '@babel/polyfill';
 import { get, set } from 'idb-keyval';
 
-import {WebEmu} from '../crate/pkg';
+import {WebEmu} from '../crate-worker/pkg';
 
 const TICK_INTERVAL = 2; // in milliseconds
 
@@ -66,10 +66,9 @@ loadedHandlers.keyup = (message) => {
 
 loadedHandlers.refresh = (message) => {
   const cpu = emulator.cpu_state();
-  const instructions = emulator.current_instructions(cpu.pc, 11);
   const {framebuffer, memory} = message;
   emulator.update_state(framebuffer, memory);
-  postMessage({type: 'state', cpu, instructions, framebuffer, memory}, [framebuffer.buffer, memory.buffer]);
+  postMessage({type: 'state', cpu, framebuffer, memory}, [framebuffer.buffer, memory.buffer]);
 };
 
 postMessage({type: 'init'});

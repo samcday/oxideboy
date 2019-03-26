@@ -8,7 +8,7 @@ const dist = path.resolve(__dirname, 'dist');
 module.exports = {
   devtool: 'eval-source-map',
 
-  entry: './js/index',
+  entry: './js/index-bootstrap',
   output: {
     globalObject: 'self',
     path: dist,
@@ -20,7 +20,8 @@ module.exports = {
   mode: 'development',
   plugins: [
     new HtmlWebpackPlugin({template: 'index.html'}),
-    new WasmPackPlugin({crateDirectory: path.resolve(__dirname, 'crate')}),
+    new WasmPackPlugin({crateDirectory: path.resolve(__dirname, 'crate-worker')}),
+    new WasmPackPlugin({crateDirectory: path.resolve(__dirname, 'crate-ui')}),
     new LoaderOptionsPlugin({
       options: {
         worker: {

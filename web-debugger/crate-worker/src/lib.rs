@@ -167,30 +167,6 @@ impl WebEmu {
         self.rewind_manager.rewind_frame(&mut self.gb, &mut self.gb_ctx);
     }
 
-    /// Decodes n number of instructions starting from given address.
-    pub fn current_instructions(&mut self, addr: u16, n: usize) -> JsValue {
-        let mut instrs = Vec::new();
-
-        let mut loc = addr;
-
-        while instrs.len() < n {
-            let inst_loc = loc;
-            let (_, bus) = self.gb.bus(&mut self.gb_ctx);
-            let inst = cpu::decode_instruction(|| {
-                let b = bus.memory_get(loc);
-                loc = loc.wrapping_add(1);
-                b
-            });
-
-            instrs.push(Instruction {
-                loc: inst_loc,
-                txt: inst.to_string(),
-            });
-        }
-
-        JsValue::from_serde(&instrs).unwrap()
-    }
-
     pub fn mem_read(&mut self, addr: u16) -> u8 {
         let (_, bus) = self.gb.bus(&mut self.gb_ctx);
         bus.memory_get(addr)

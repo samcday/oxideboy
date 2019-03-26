@@ -1025,10 +1025,30 @@ impl Instruction {
             false
         }
     }
-    /// Indicates if current instruction affects program execution flow (CALL, JP, JR, RET, RETI, RST)
-    pub fn is_flow_control(&self) -> bool {
+
+    /// Returns true if this instruction causes a branch (CALL, JP, JR, RST), and the address if so.
+    pub fn is_branching(&self) -> (bool, u16) {
         match self {
-            CALL(_, _) | JP(_, _) | JR(_, _) | RET(_) | RETI | RST(_) => true,
+            CALL(_, addr) | JP(_, Operand16::Immediate(addr)) => (true, *addr),
+            JP(_, _) => (true, 0), // Can't know where this is jumping to statically.
+            JR(_, addr) => (true, i16::from(*addr as i8) as u16),
+            RST(addr) => (true, u16::from(*addr)),
+            _ => (false, 0),
+        }
+    }
+
+    /// Returns true if this instruction is a RET or RETI.
+    pub fn is_ret(&self) -> bool {
+        match self {
+            RET(_) | RETI => true,
+            _ => false,
+        }
+    }
+
+    // Returns true if this instruction is terminating. i.e a RET/RETI/RST or unconditional jump.
+    pub fn is_terminating(&self) -> bool {
+        match self {
+            RET(_) | RETI | RST(_) | JP(None, _) | JR(None, _) => true,
             _ => false,
         }
     }
