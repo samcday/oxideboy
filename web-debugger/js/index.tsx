@@ -18,7 +18,8 @@ import Registers from './components/Registers';
 import Memory from './components/Memory';
 import Disassembly from './components/Disassembly';
 
-import Worker from '@samcday/worker-loader?name=hash.worker.js!./worker-bootstrap';
+// import Worker from '@samcday/worker-loader?name=hash.worker.js!./worker';
+import Worker from './worker';
 
 // GoldenLayout is a bit of a relic - expects React+ReactDOM to be available on global namespace.
 window.React = React;
@@ -267,6 +268,8 @@ class App {
   refreshRaf: number;
   framebuffer?: Uint16Array = undefined;
   memory?: Uint8Array = undefined;
+  nextFrame?: number = undefined;
+  rom?: Uint8Array = undefined;
 
   constructor() {
     this.worker = new Worker;
@@ -372,7 +375,6 @@ class App {
 
   onWorkerMessage = async (ev) => {
     const message = ev.data;
-    
     switch (message.type) {
       case 'init': {
         this.onWorkerInit();
@@ -385,9 +387,9 @@ class App {
       case 'state': {
         this.framebuffer = message.framebuffer;
         this.memory = message.memory;
-        this.container.eventHub.emit('oxideboy:state', message);
-        this.container.eventHub.emit('oxideboy:cpu-state', message.cpu);
-        this.container.eventHub.emit('oxideboy:memory', message.memory);
+        // this.container.eventHub.emit('oxideboy:state', message);
+        // this.container.eventHub.emit('oxideboy:cpu-state', message.cpu);
+        // this.container.eventHub.emit('oxideboy:memory', message.memory);
         break;
       }
     }
@@ -398,6 +400,8 @@ class App {
   }
 
   onRomLoaded(info) {
+    this.container.eventHub.emit('oxideboy:rom-loaded', this.rom);
+
     document.title = `oxideboy-debugger: ${info.rom.title}`;
     window.location = `#${info.rom.hash}`;
 
@@ -452,7 +456,8 @@ class App {
     console.log('todo');
   }
 
-  loadRom(rom) {
+  loadRom(rom: Uint8Array) {
+    this.rom = rom;
     this.worker.postMessage({type: 'load', rom: rom});
   }
 

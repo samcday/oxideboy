@@ -8,7 +8,7 @@ const dist = path.resolve(__dirname, 'dist');
 module.exports = {
   devtool: 'eval-source-map',
 
-  entry: './js/index-bootstrap',
+  entry: './js/index',
   output: {
     globalObject: 'self',
     path: dist,
@@ -20,18 +20,20 @@ module.exports = {
   mode: 'development',
   plugins: [
     new HtmlWebpackPlugin({template: 'index.html'}),
-    new WasmPackPlugin({crateDirectory: path.resolve(__dirname, 'crate-worker')}),
-    new WasmPackPlugin({crateDirectory: path.resolve(__dirname, 'crate-ui')}),
-    new LoaderOptionsPlugin({
-      options: {
-        worker: {
-          output: {
-            filename: "hash.worker.js",
-            chunkFilename: "[id].hash.worker.js"
-          }
-        }
-      }
+    new WasmPackPlugin({
+      crateDirectory: path.resolve(__dirname, 'crate'),
+      forceMode: 'production',
     }),
+    // new LoaderOptionsPlugin({
+    //   options: {
+    //     worker: {
+    //       output: {
+    //         filename: "hash.worker.js",
+    //         chunkFilename: "[id].hash.worker.js"
+    //       }
+    //     }
+    //   }
+    // }),
   ],
   resolve: {
     extensions: ['.ts', '.tsx', '.js', '.json', '.wasm']
@@ -39,7 +41,10 @@ module.exports = {
   module:{
     rules:[
       {
-        
+        test: /worker\.tsx$/,
+        loader: '@samcday/worker-loader',
+      },
+      {
         test: /\.(js|ts)x?$/,
         exclude: /node_modules/,
         loader: 'babel-loader'

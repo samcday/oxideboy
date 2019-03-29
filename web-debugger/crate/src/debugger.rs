@@ -1,44 +1,19 @@
-extern crate cfg_if;
-extern crate wasm_bindgen;
-
-mod utils;
-
-use cfg_if::cfg_if;
-use js_sys::{Function, Uint16Array};
 use oxideboy::joypad::Button;
 use oxideboy::rewind::*;
 use oxideboy::rom::Rom;
 use oxideboy::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::slice;
 use wasm_bindgen::prelude::*;
 
-macro_rules! log {
-    ( $( $t:tt )* ) => {
-        web_sys::console::log_1(&format!( $( $t )* ).into());
-    }
-}
-
-cfg_if! {
-    // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
-    // allocator.
-    if #[cfg(feature = "wee_alloc")] {
-        extern crate wee_alloc;
-        #[global_allocator]
-        static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
-    }
-}
-
-#[wasm_bindgen]
-pub struct WebEmu {
+pub struct Debugger {
     gb: Gameboy,
     gb_ctx: Context,
     rom_title: String,
     rom_hash: String,
-    breakpoint_cb: Function,
     pc_breakpoints: HashSet<u16>,
     rewind_manager: RewindManager<MemoryStorageAdapter>,
+    memory: Vec<u8>,
 }
 
 #[derive(Serialize)]
@@ -60,11 +35,8 @@ struct CpuState {
     halted: bool,
 }
 
-#[wasm_bindgen]
-impl WebEmu {
-    pub fn new(rom: &[u8], breakpoint_cb: Function) -> WebEmu {
-        utils::set_panic_hook();
-
+impl Debugger {
+    pub fn new(rom: &[u8]) -> Debugger {
         let rom = Rom::new(rom.to_vec().into()).unwrap();
         let rom_hash = format!("{:x}", md5::compute(&rom.data));
         let rom_title = rom.title.clone();
@@ -75,14 +47,14 @@ impl WebEmu {
 
         let rewind_manager = RewindManager::new(&gb, MemoryStorageAdapter::new()).unwrap();
 
-        WebEmu {
+        Debugger {
             gb,
             gb_ctx,
             pc_breakpoints: HashSet::new(),
-            breakpoint_cb,
             rom_hash,
             rom_title,
             rewind_manager,
+            memory: vec![0; 0x10000],
         }
     }
 
@@ -108,34 +80,41 @@ impl WebEmu {
             let (cpu, bus) = self.gb.bus(&mut self.gb_ctx);
             let breakpoint = self.pc_breakpoints.contains(&cpu.pc) || bus.memory_get(cpu.pc) == 0x40;
 
-            if breakpoint {
-                let _ = self.breakpoint_cb.call0(&JsValue::NULL);
-                return;
-            }
+            // if breakpoint {
+            //     let _ = self.breakpoint_cb.call0(&JsValue::NULL);
+            //     return;
+            // }
+        }
+
+        self.update_mem();
+    }
+
+    fn update_mem(&mut self) {
+        let (_, bus) = self.gb.bus(&mut self.gb_ctx);
+        self.memory[0x0000..=0x3FFF].copy_from_slice(&bus.cart.rom_lo(&bus.context.rom.data));
+        if *bus.bootrom_enabled {
+            self.memory[0x0000..0x0100].copy_from_slice(&bus.bootrom());
+        }
+        self.memory[0x4000..=0x7FFF].copy_from_slice(&bus.cart.rom_hi(&bus.context.rom.data));
+        self.memory[0x8000..=0x97FF].copy_from_slice(&bus.ppu.tiles);
+        self.memory[0x9800..=0x9FFF].copy_from_slice(&bus.ppu.tilemap);
+        let ram = bus.cart.ram();
+        self.memory[0xA000..0xA000 + ram.len()].copy_from_slice(ram);
+        self.memory[0xC000..=0xDFFF].copy_from_slice(&bus.ram);
+        self.memory[0xE000..=0xFDFF].copy_from_slice(&bus.ram[0..0x1E00]);
+        self.memory[0xFE00..=0xFE9F].copy_from_slice(&bus.ppu.oam_memory());
+
+        for addr in 0xFF00..=0xFFFF {
+            self.memory[addr] = bus.memory_get(addr as u16);
         }
     }
 
-    pub fn update_state(&mut self, framebuffer: &mut [u16], mem: &mut [u8]) {
-        framebuffer.copy_from_slice(&self.gb_ctx.current_framebuffer);
+    pub fn memory(&self) -> &[u8] {
+        &self.memory
+    }
 
-        let (_, bus) = self.gb.bus(&mut self.gb_ctx);
-
-        mem[0x0000..=0x3FFF].copy_from_slice(&bus.cart.rom_lo(&bus.context.rom.data));
-        if *bus.bootrom_enabled {
-            mem[0x0000..0x0100].copy_from_slice(&bus.bootrom());
-        }
-        mem[0x4000..=0x7FFF].copy_from_slice(&bus.cart.rom_hi(&bus.context.rom.data));
-        mem[0x8000..=0x97FF].copy_from_slice(&bus.ppu.tiles);
-        mem[0x9800..=0x9FFF].copy_from_slice(&bus.ppu.tilemap);
-        let ram = bus.cart.ram();
-        mem[0xA000..0xA000 + ram.len()].copy_from_slice(ram);
-        mem[0xC000..=0xDFFF].copy_from_slice(&bus.ram);
-        mem[0xE000..=0xFDFF].copy_from_slice(&bus.ram[0..0x1E00]);
-        mem[0xFE00..=0xFE9F].copy_from_slice(&bus.ppu.oam_memory());
-
-        for addr in 0xFF00..=0xFFFF {
-            mem[addr] = bus.memory_get(addr as u16);
-        }
+    pub fn framebuffer(&self) -> &[u16] {
+        &self.gb_ctx.current_framebuffer
     }
 
     pub fn step_forward(&mut self) -> bool {

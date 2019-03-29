@@ -4,7 +4,9 @@ extern crate wasm_bindgen;
 mod utils;
 
 use cfg_if::cfg_if;
+use core::ops::Range;
 use oxideboy::cpu::{decode_instruction, Instruction};
+use oxideboy::rom::Rom;
 use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
@@ -26,23 +28,25 @@ cfg_if! {
     }
 }
 
-#[wasm_bindgen]
-pub struct Disassembler {
-    blocks: Vec<Block>,
-}
-
-#[wasm_bindgen]
-pub struct Block {
-    pub start: usize,
-    pub end: usize,
-    instructions: Vec<Instruction>,
-    hash: u64,
-}
-
 fn compute_hash(data: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
     hasher.write(data);
     hasher.finish()
+}
+
+/// A RomBlock is a segment of code residing in the ROM. Since ROM is immutable we don't need to track hashes.
+/// But we do need to track which bank this segment resides in.
+struct RomBlock {
+    loc: Range<usize>,
+    instructions: Vec<Instruction>,
+    bank_num: usize,
+}
+
+struct Block {
+    pub start: usize,
+    pub end: usize,
+    instructions: Vec<Instruction>,
+    hash: u64,
 }
 
 #[wasm_bindgen]
@@ -92,9 +96,34 @@ impl Block {
 }
 
 #[wasm_bindgen]
+pub struct Disassembler {
+    rom: Rom,
+    rom_blocks: Vec<RomBlock>,
+    blocks: Vec<Block>,
+}
+
+#[wasm_bindgen]
 impl Disassembler {
-    pub fn new() -> Disassembler {
-        Disassembler { blocks: Vec::new() }
+    pub fn new(rom: &[u8]) -> Disassembler {
+        let rom = Rom::new(rom.to_vec().into_boxed_slice()).unwrap();
+        let rom_blocks = Vec::new();
+
+        Disassembler {
+            blocks: Vec::new(),
+            rom,
+            rom_blocks,
+        }
+    }
+
+    fn disassemble_block(data: &[u8], start: usize) -> (Range<usize>, Vec<Instruction>) {
+        let loc = Range { start: 0, end: 0 };
+        let instructions = Vec::new();
+
+        let pc = start;
+
+        log!("ok");
+
+        (loc, instructions)
     }
 
     /// Performs a full disassembly on the 65kb memory bus of the Gameboy.
@@ -192,10 +221,6 @@ impl Disassembler {
                 });
             }
         }
-
-        // Remove any blocks that are no longer reachable from the addresses we saw.
-        self.blocks
-            .retain(|block| seen_addresses.iter().any(|addr| block.contains(*addr)));
 
         self.blocks
             .sort_unstable_by(|a, b| a.start.partial_cmp(&b.start).unwrap());

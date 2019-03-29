@@ -98,4 +98,9 @@ impl Rom {
             ram_size,
         })
     }
+
+    pub fn rom_bank(&self, bank: usize) -> &[u8] {
+        let bank = std::cmp::max(bank, self.rom_banks - 1);
+        &self.data[bank * 0x4000..bank + 1 * 0x4000]
+    }
 }

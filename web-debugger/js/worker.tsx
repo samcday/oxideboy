@@ -1,74 +1,20 @@
-import '@babel/polyfill';
-import { get, set } from 'idb-keyval';
+import('../crate/pkg').catch(err => console.error('Failed to load worker.', err));
 
-import {WebEmu} from '../crate-worker/pkg';
+// loadedHandlers.pause = (message) => {
+//   clearInterval(tickId);
+//   tickId = null;
+//   postMessage({type: 'paused'});
+// };
 
-const TICK_INTERVAL = 2; // in milliseconds
+// loadedHandlers.keydown = (message) => {
+//   emulator.set_joypad_state(message.key, true);
+// };
 
-let emulator = undefined;
-let lastTick = null;
-let tickId = null;
+// loadedHandlers.keyup = (message) => {
+//   emulator.set_joypad_state(message.key, false);
+// };
 
-function onBreakpointHit() {
-
-}
-
-// Runs the emulator for a single "tick". Our ticks are just regular intervals (see TICK_INTERVAL) where we run the
-// emulator core for the amount of interval time that has passed.
-function tick() {
-  emulator.run(TICK_INTERVAL * 1000);
-}
-
-const messageHandlers = {};  // Message handlers that are always responsive.
-const loadedHandlers = {};   // Message handlers that only work when the emulator is loaded.
-
-onmessage = async (ev) => {
-  const message = ev.data;
-
-  if (messageHandlers[message.type]) {
-    messageHandlers[message.type](message);
-    return;
-  }
-
-  if (emulator) {
-    (loadedHandlers[message.type] || (() => {}))(message);
-  }
+balls = (framebuffer, memory) => {
+	postMessage({type: 'state', framebuffer, memory}, [framebuffer.buffer, memory.buffer]);
+	// console.log('really doe', left.framebuffer.buffer === right[0] );
 };
-
-messageHandlers.load = async (message) => {
-  emulator = WebEmu.new(message.rom, onBreakpointHit);
-  const rom_hash = emulator.rom_hash();
-  await set(`${rom_hash}_rom`, message.rom);
-  postMessage({type: 'loaded', rom: {
-    title: emulator.rom_title(),
-    hash: rom_hash,
-  }});
-};
-
-loadedHandlers.start = (message) => {
-  tickId = setInterval(tick, TICK_INTERVAL);
-  postMessage({type: 'running'});
-};
-
-loadedHandlers.pause = (message) => {
-  clearInterval(tickId);
-  tickId = null;
-  postMessage({type: 'paused'});
-};
-
-loadedHandlers.keydown = (message) => {
-  emulator.set_joypad_state(message.key, true);
-};
-
-loadedHandlers.keyup = (message) => {
-  emulator.set_joypad_state(message.key, false);
-};
-
-loadedHandlers.refresh = (message) => {
-  const cpu = emulator.cpu_state();
-  const {framebuffer, memory} = message;
-  emulator.update_state(framebuffer, memory);
-  postMessage({type: 'state', cpu, framebuffer, memory}, [framebuffer.buffer, memory.buffer]);
-};
-
-postMessage({type: 'init'});
