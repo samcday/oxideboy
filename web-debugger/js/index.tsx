@@ -387,9 +387,9 @@ class App {
       case 'state': {
         this.framebuffer = message.framebuffer;
         this.memory = message.memory;
-        // this.container.eventHub.emit('oxideboy:state', message);
-        // this.container.eventHub.emit('oxideboy:cpu-state', message.cpu);
-        // this.container.eventHub.emit('oxideboy:memory', message.memory);
+        this.container.eventHub.emit('oxideboy:state', message);
+        this.container.eventHub.emit('oxideboy:cpu-state', message.cpu);
+        this.container.eventHub.emit('oxideboy:memory', message.memory);
         break;
       }
     }
