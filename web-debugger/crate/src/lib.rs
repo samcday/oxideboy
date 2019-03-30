@@ -1,4 +1,5 @@
 mod debugger;
+mod disassembler;
 mod worker;
 
 use crate::worker::Worker;

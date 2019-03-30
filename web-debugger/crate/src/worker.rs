@@ -104,6 +104,7 @@ impl Worker {
         match message_type.as_str() {
             "load" => self.load_rom(prop_object(&message, "rom")),
             "start" => self.start_emulation(),
+            "pause" => self.pause_emulation(),
             "refresh" => self.refresh_state(prop_object(&message, "framebuffer"), prop_object(&message, "memory")),
             "keydown" => self.handle_keypress(&prop_string(&message, "key"), true),
             "keyup" => self.handle_keypress(&prop_string(&message, "key"), false),
@@ -141,6 +142,11 @@ impl Worker {
         }));
 
         MessageBuilder::new("running").send();
+    }
+
+    fn pause_emulation(&mut self) {
+        self.emulation_tick.take();
+        MessageBuilder::new("paused").send();
     }
 
     fn refresh_state(&self, framebuffer: Uint16Array, mem: Uint8Array) {
