@@ -16,8 +16,8 @@ pub struct Cartridge {
 
     // Used by MBC1 + MBC3
     ram_bank_mode: bool,
-    lo_rom_bank: u8,
-    hi_rom_bank: u8,
+    pub lo_rom_bank: u8,
+    pub hi_rom_bank: u8,
     rom_bank_mask: u8,
     ram_enabled: bool,
     ram_bank: u8,

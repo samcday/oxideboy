@@ -355,6 +355,8 @@ class App {
 
     document.body.addEventListener('dragover', this.onDragOver);
     document.body.addEventListener('drop', this.onDrop);
+
+    this.container.eventHub.on('oxideboy:request-segments', this.onRequestSegments);
   }
 
   requestRefresh = () => {
@@ -373,6 +375,13 @@ class App {
     this.memory = null;
   }
 
+  onRequestSegments = (ids) => {
+    this.worker.postMessage({
+      type: 'disassembly',
+      segments: ids,
+    })
+  }
+
   onWorkerMessage = async (ev) => {
     const message = ev.data;
     switch (message.type) {
@@ -387,10 +396,14 @@ class App {
       case 'state': {
         this.framebuffer = message.framebuffer;
         this.memory = message.memory;
+        // console.log(message.disassembly);
         this.container.eventHub.emit('oxideboy:state', message);
         this.container.eventHub.emit('oxideboy:cpu-state', message.cpu);
         this.container.eventHub.emit('oxideboy:memory', message.memory);
         break;
+      }
+      case 'disassembly': {
+        this.container.eventHub.emit('oxideboy:segments', message.segments);
       }
     }
   }
@@ -411,7 +424,7 @@ class App {
     // Once the copy is done the buffer is handed back. And on it goes.
     this.framebuffer = new Uint16Array(160*144);
     this.memory = new Uint8Array(0x10000);
-    this.worker.postMessage({type: 'start'});
+    // this.worker.postMessage({type: 'start'});
   }
 
   onHashChange = async () => {

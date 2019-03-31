@@ -952,8 +952,8 @@ impl std::fmt::Display for Instruction {
             INC16(rr) => write!(f, "inc {}", rr),
             JP(None, o) => write!(f, "jp {}", o),
             JP(cc, o) => write!(f, "jp {}, {}", cc.unwrap(), o),
-            JR(None, r8) => write!(f, "jr {}", r8),
-            JR(cc, r8) => write!(f, "jr {}, {}", cc.unwrap(), r8),
+            JR(None, r8) => write!(f, "jr {}", *r8 as i8),
+            JR(cc, r8) => write!(f, "jr {}, {}", cc.unwrap(), *r8 as i8),
             LD(lhs, rhs) => write!(f, "ld {}, {}", lhs, rhs),
             LD16(lhs, rhs) => write!(f, "ld {}, {}", lhs, rhs),
             LD_HL_SP(e8) => write!(f, "ld hl, sp+${:02x}", e8),
@@ -1027,11 +1027,11 @@ impl Instruction {
     }
 
     /// Returns true if this instruction causes a branch (CALL, JP, JR, RST), and the address if so.
-    pub fn is_branching(&self) -> (bool, u16) {
+    pub fn is_branching(&self, base_addr: u16) -> (bool, u16) {
         match self {
             CALL(_, addr) | JP(_, Operand16::Immediate(addr)) => (true, *addr),
             JP(_, _) => (true, 0), // Can't know where this is jumping to statically.
-            JR(_, addr) => (true, i16::from(*addr as i8) as u16),
+            JR(_, addr) => (true, base_addr.wrapping_add(i16::from(*addr as i8) as u16)),
             RST(addr) => (true, u16::from(*addr)),
             _ => (false, 0),
         }

@@ -1,3 +1,5 @@
+use crate::disassembler::Disassembler;
+use js_sys::Array;
 use oxideboy::joypad::Button;
 use oxideboy::rewind::*;
 use oxideboy::rom::Rom;
@@ -14,6 +16,7 @@ pub struct Debugger {
     pc_breakpoints: HashSet<u16>,
     rewind_manager: RewindManager<MemoryStorageAdapter>,
     memory: Vec<u8>,
+    pub disassembler: Disassembler,
 }
 
 #[derive(Serialize)]
@@ -55,6 +58,7 @@ impl Debugger {
             rom_title,
             rewind_manager,
             memory: vec![0; 0x10000],
+            disassembler: Disassembler::new(),
         }
     }
 
@@ -169,6 +173,17 @@ impl Debugger {
             halted: self.gb.cpu.halted,
         })
         .unwrap()
+    }
+
+    pub fn disassembly(&mut self) -> Array {
+        let (cpu, bus) = self.gb.bus(&mut self.gb_ctx);
+
+        let segments = self.disassembler.update(&cpu, &bus);
+        let array = Array::new();
+        for segment in segments {
+            array.push(&JsValue::from_str(&segment));
+        }
+        array
     }
 
     pub fn set_cpu_state(&mut self, val: JsValue) {

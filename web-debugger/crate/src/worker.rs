@@ -1,4 +1,5 @@
 use crate::debugger::Debugger;
+use crate::disassembler::Disassembler;
 use crate::{log, worker_scope};
 use core::cell::RefCell;
 use gloo_timers::callback::Interval;
@@ -108,6 +109,7 @@ impl Worker {
             "refresh" => self.refresh_state(prop_object(&message, "framebuffer"), prop_object(&message, "memory")),
             "keydown" => self.handle_keypress(&prop_string(&message, "key"), true),
             "keyup" => self.handle_keypress(&prop_string(&message, "key"), false),
+            "disassembly" => self.fetch_disassembly(&prop_object(&message, "segments")),
             _ => log!("Received unhandled message {}", message_type),
         }
     }
@@ -128,7 +130,8 @@ impl Worker {
             .send();
 
         *self.debugger.borrow_mut() = Some(debugger);
-        //   await set(`${rom_hash}_rom`, message.rom);
+
+        // TODO: save the ROM to idb.
     }
 
     fn start_emulation(&mut self) {
@@ -150,8 +153,8 @@ impl Worker {
     }
 
     fn refresh_state(&self, framebuffer: Uint16Array, mem: Uint8Array) {
-        let debugger = self.debugger.borrow();
-        let debugger = debugger.as_ref().unwrap();
+        let mut borrow = self.debugger.borrow_mut();
+        let debugger = borrow.as_mut().unwrap();
 
         framebuffer.set(unsafe { &Uint16Array::view(debugger.framebuffer()) }, 0);
         mem.set(unsafe { &Uint8Array::view(debugger.memory()) }, 0);
@@ -160,6 +163,7 @@ impl Worker {
             .val("framebuffer", &framebuffer)
             .val("memory", &mem)
             .val("cpu", &debugger.cpu_state())
+            .val("disassembly", &debugger.disassembly())
             .transfer(framebuffer.buffer())
             .transfer(mem.buffer())
             .send();
@@ -171,5 +175,43 @@ impl Worker {
             .as_mut()
             .unwrap()
             .set_joypad_state(key, pressed);
+    }
+
+    fn fetch_disassembly(&self, segments: &Array) {
+        let mut borrow = self.debugger.borrow_mut();
+        let debugger = borrow.as_mut().unwrap();
+        let result = Array::new();
+
+        while segments.length() > 0 {
+            let segment_id = segments.pop().as_string().expect_throw("Invalid segment id");
+            let segment_obj = Object::new();
+            Reflect::set(&segment_obj, &JsValue::from_str("id"), &JsValue::from_str(&segment_id)).unwrap_throw();
+
+            let segment = debugger
+                .disassembler
+                .segment(segment_id)
+                .expect_throw("Segment not found");
+
+            let instructions = Array::new();
+            let mut addr = segment.loc.start;
+            for instruction in &segment.instructions {
+                let inst_obj = Object::new();
+                Reflect::set(&inst_obj, &JsValue::from_str("addr"), &JsValue::from_f64(addr as f64)).unwrap_throw();
+                Reflect::set(
+                    &inst_obj,
+                    &JsValue::from_str("txt"),
+                    &JsValue::from_str(&instruction.to_string()),
+                )
+                .unwrap_throw();
+                addr += instruction.size() as usize;
+                instructions.push(&inst_obj);
+            }
+
+            Reflect::set(&segment_obj, &JsValue::from_str("instructions"), &instructions).unwrap_throw();
+
+            result.push(&segment_obj);
+        }
+
+        MessageBuilder::new("disassembly").val("segments", &result).send();
     }
 }
