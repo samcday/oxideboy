@@ -16,7 +16,6 @@ pub struct Debugger {
     pc_breakpoints: HashSet<u16>,
     rewind_manager: RewindManager<MemoryStorageAdapter>,
     memory: Vec<u8>,
-    pub disassembler: Disassembler,
 }
 
 #[derive(Serialize)]
@@ -58,7 +57,6 @@ impl Debugger {
             rom_title,
             rewind_manager,
             memory: vec![0; 0x10000],
-            disassembler: Disassembler::new(),
         }
     }
 
@@ -175,15 +173,10 @@ impl Debugger {
         .unwrap()
     }
 
-    pub fn disassembly(&mut self) -> Array {
+    pub fn run_disassembler(&mut self, dis: &mut Disassembler) -> Vec<String> {
         let (cpu, bus) = self.gb.bus(&mut self.gb_ctx);
 
-        let segments = self.disassembler.update(&cpu, &bus);
-        let array = Array::new();
-        for segment in segments {
-            array.push(&JsValue::from_str(&segment));
-        }
-        array
+        dis.disassemble(cpu, &bus)
     }
 
     pub fn set_cpu_state(&mut self, val: JsValue) {

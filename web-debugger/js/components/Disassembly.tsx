@@ -42,28 +42,19 @@ export default class Disassembly extends React.Component<Props, State> {
   }
 
   onState = (state) => {
-    if (!this.foo) {
-      this.foo = true;
+    this.activeSegments = state.codeSegments;
 
-      this.activeSegments = state.disassembly;
+    // Check if there's any segments we're missing.
+    const missingSegments = this.activeSegments.filter(segment_id => !this.segments.has(segment_id));
 
-      // Check if there's any segments we're missing.
-      const missingSegments = this.activeSegments.filter(segment_id => !this.segments.has(segment_id));
-
-      if (missingSegments.length) {
-        this.props.glEventHub.emit('oxideboy:request-segments', missingSegments);
-        return;
-      }
-
-      // We already have all live segments, so we can render now.
-      this.setState({activeSegments: this.activeSegments});
-
-      // console.time('foo');
-      // this.disassembler.disassemble(state.cpu.pc, state.memory);
-      // console.timeEnd('foo');
-      // this.forceUpdate();
+    if (missingSegments.length) {
+      console.log('new segments to find:', missingSegments);
+      this.props.glEventHub.emit('oxideboy:request-segments', missingSegments);
+      return;
     }
-    // this.setState({instructions});
+
+    // We already have all live segments, so we can render now.
+    this.setState({activeSegments: this.activeSegments});
   }
 
   onSegments = (segments: Segment[]) => {
@@ -95,7 +86,6 @@ export default class Disassembly extends React.Component<Props, State> {
 
 export class DisassemblySegment extends React.PureComponent<{}, {}> {
   render() {
-    console.log('render.', this.props.segment);
     return (
       <div style={{display: this.props.active ? 'block' : 'none'}}>
         { this.props.segment.instructions.map(inst => (

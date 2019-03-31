@@ -377,7 +377,7 @@ class App {
 
   onRequestSegments = (ids) => {
     this.worker.postMessage({
-      type: 'disassembly',
+      type: 'code-segments',
       segments: ids,
     })
   }
@@ -396,14 +396,17 @@ class App {
       case 'state': {
         this.framebuffer = message.framebuffer;
         this.memory = message.memory;
-        // console.log(message.disassembly);
         this.container.eventHub.emit('oxideboy:state', message);
         this.container.eventHub.emit('oxideboy:cpu-state', message.cpu);
         this.container.eventHub.emit('oxideboy:memory', message.memory);
         break;
       }
-      case 'disassembly': {
+      case 'code-segments': {
         this.container.eventHub.emit('oxideboy:segments', message.segments);
+        break;
+      }
+      default: {
+        console.log(`unhandled message type ${message.type}`);
       }
     }
   }
@@ -424,7 +427,7 @@ class App {
     // Once the copy is done the buffer is handed back. And on it goes.
     this.framebuffer = new Uint16Array(160*144);
     this.memory = new Uint8Array(0x10000);
-    // this.worker.postMessage({type: 'start'});
+    this.worker.postMessage({type: 'start'});
   }
 
   onHashChange = async () => {

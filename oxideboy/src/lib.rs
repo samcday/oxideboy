@@ -73,6 +73,10 @@ pub struct Context {
     /// is muted - no point spending time generating samples.
     pub enable_audio: bool,
     audio_samples: VecDeque<f32>,
+
+    /// Keeps track of the last address the CPU jumped to, either via a branching (JP/CALL/etc) instruction or the CPU
+    /// processing an interrupt. Used by the disassembler to know where to start disassembling a segment of code from.
+    pub last_jump_addr: u16,
 }
 
 #[derive(Eq, Deserialize, PartialEq, Serialize)]
@@ -173,6 +177,7 @@ impl Context {
             current_framebuffer: Default::default(),
             next_framebuffer: Default::default(),
             new_frame: false,
+            last_jump_addr: 0,
 
             enable_audio: true,
             audio_samples: VecDeque::new(),
@@ -597,6 +602,10 @@ impl<'a> Bus for GameboyBus<'a> {
         } else {
             self.memory_get(addr)
         }
+    }
+
+    fn set_last_jump_addr(&mut self, addr: u16) {
+        self.context.last_jump_addr = addr;
     }
 
     fn memory_write(&mut self, addr: u16, v: u8) {

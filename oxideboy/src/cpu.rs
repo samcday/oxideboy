@@ -39,6 +39,7 @@ pub trait Bus {
     fn memory_write(&mut self, addr: u16, v: u8);
     fn trigger_oam_glitch(&mut self, kind: OamCorruptionType);
     fn interrupt_controller(&mut self) -> &mut InterruptController;
+    fn set_last_jump_addr(&mut self, addr: u16);
 
     fn memory_read16(&mut self, addr: u16) -> u16 {
         let mut v = u16::from(self.memory_read(addr));
@@ -325,6 +326,8 @@ impl Cpu {
 
         // Are there any pending interrupts to service?
         if self.process_interrupts(bus) {
+            bus.set_last_jump_addr(self.pc);
+
             // We processed an interrupt. We return now before decoding and executing the next instruction.
             // This gives debuggers a chance to examine the new PC location and handle any potential breakpoints.
             return;
@@ -773,6 +776,7 @@ impl Cpu {
         let pc = self.pc;
         self.stack_push(bus, pc);
         self.pc = addr;
+        bus.set_last_jump_addr(self.pc);
     }
 
     fn call<T: Bus>(&mut self, bus: &mut T, cc: Option<FlagCondition>, addr: u16) {

@@ -85,6 +85,7 @@ impl MessageBuilder {
 pub struct Worker {
     debugger: Rc<RefCell<Option<Debugger>>>,
     emulation_tick: Option<Interval>,
+    disassembler: Disassembler,
 }
 
 impl Worker {
@@ -92,6 +93,7 @@ impl Worker {
         Worker {
             debugger: Rc::new(RefCell::new(None)),
             emulation_tick: None,
+            disassembler: Disassembler::new(),
         }
     }
 
@@ -109,7 +111,7 @@ impl Worker {
             "refresh" => self.refresh_state(prop_object(&message, "framebuffer"), prop_object(&message, "memory")),
             "keydown" => self.handle_keypress(&prop_string(&message, "key"), true),
             "keyup" => self.handle_keypress(&prop_string(&message, "key"), false),
-            "disassembly" => self.fetch_disassembly(&prop_object(&message, "segments")),
+            "code-segments" => self.fetch_segments(&prop_object(&message, "segments")),
             _ => log!("Received unhandled message {}", message_type),
         }
     }
@@ -152,18 +154,24 @@ impl Worker {
         MessageBuilder::new("paused").send();
     }
 
-    fn refresh_state(&self, framebuffer: Uint16Array, mem: Uint8Array) {
+    fn refresh_state(&mut self, framebuffer: Uint16Array, mem: Uint8Array) {
         let mut borrow = self.debugger.borrow_mut();
         let debugger = borrow.as_mut().unwrap();
 
         framebuffer.set(unsafe { &Uint16Array::view(debugger.framebuffer()) }, 0);
         mem.set(unsafe { &Uint8Array::view(debugger.memory()) }, 0);
 
+        let code_segments = &debugger.run_disassembler(&mut self.disassembler);
+        let segments_array = Array::new();
+        for segment in code_segments {
+            segments_array.push(&JsValue::from_str(segment));
+        }
+
         MessageBuilder::new("state")
             .val("framebuffer", &framebuffer)
             .val("memory", &mem)
             .val("cpu", &debugger.cpu_state())
-            .val("disassembly", &debugger.disassembly())
+            .val("codeSegments", &segments_array)
             .transfer(framebuffer.buffer())
             .transfer(mem.buffer())
             .send();
@@ -177,9 +185,7 @@ impl Worker {
             .set_joypad_state(key, pressed);
     }
 
-    fn fetch_disassembly(&self, segments: &Array) {
-        let mut borrow = self.debugger.borrow_mut();
-        let debugger = borrow.as_mut().unwrap();
+    fn fetch_segments(&self, segments: &Array) {
         let result = Array::new();
 
         while segments.length() > 0 {
@@ -187,10 +193,10 @@ impl Worker {
             let segment_obj = Object::new();
             Reflect::set(&segment_obj, &JsValue::from_str("id"), &JsValue::from_str(&segment_id)).unwrap_throw();
 
-            let segment = debugger
-                .disassembler
-                .segment(segment_id)
-                .expect_throw("Segment not found");
+            let segment = self.disassembler.cached_segment.as_ref().unwrap_throw();
+            if segment.id() != segment_id {
+                continue;
+            }
 
             let instructions = Array::new();
             let mut addr = segment.loc.start;
@@ -212,6 +218,6 @@ impl Worker {
             result.push(&segment_obj);
         }
 
-        MessageBuilder::new("disassembly").val("segments", &result).send();
+        MessageBuilder::new("code-segments").val("segments", &result).send();
     }
 }

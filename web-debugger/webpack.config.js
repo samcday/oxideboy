@@ -22,7 +22,7 @@ module.exports = {
     new HtmlWebpackPlugin({template: 'index.html'}),
     new WasmPackPlugin({
       crateDirectory: path.resolve(__dirname, 'crate'),
-      forceMode: 'production',
+      // forceMode: 'production',
     }),
     // new LoaderOptionsPlugin({
     //   options: {
