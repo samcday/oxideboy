@@ -48,7 +48,6 @@ export default class Disassembly extends React.Component<Props, State> {
     const missingSegments = this.activeSegments.filter(segment_id => !this.segments.has(segment_id));
 
     if (missingSegments.length) {
-      console.log('new segments to find:', missingSegments);
       this.props.glEventHub.emit('oxideboy:request-segments', missingSegments);
       return;
     }
@@ -71,23 +70,19 @@ export default class Disassembly extends React.Component<Props, State> {
     return (
       <div className='text-monospace'>
         { segments.map(segment => (
-          <DisassemblySegment
-            active={this.state.activeSegments.includes(segment.id)}
-            segment={segment}
-            key={segment.id} />
+          <div key={segment.id} style={{display: this.state.activeSegments.includes(segment.id) ? 'block' : 'none'}}>
+            <DisassemblySegment segment={segment} />
+          </div>
         ))}
       </div>
     );
-
-    // return (
-    // );
   }
 }
 
 export class DisassemblySegment extends React.PureComponent<{}, {}> {
   render() {
     return (
-      <div style={{display: this.props.active ? 'block' : 'none'}}>
+      <div>
         { this.props.segment.instructions.map(inst => (
           <div key={inst.addr}>
             <div className='memory-address bg-light pl-1 pr-2 mr-2'>0x{toPaddedHexString(inst.addr, 4)}</div>
