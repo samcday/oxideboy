@@ -178,11 +178,9 @@ impl Worker {
     }
 
     fn handle_keypress(&self, key: &str, pressed: bool) {
-        self.debugger
-            .borrow_mut()
-            .as_mut()
-            .unwrap()
-            .set_joypad_state(key, pressed);
+        if let Some(debugger) = self.debugger.borrow_mut().as_mut() {
+            debugger.set_joypad_state(key, pressed);
+        }
     }
 
     fn fetch_segments(&self, segments: &Array) {
