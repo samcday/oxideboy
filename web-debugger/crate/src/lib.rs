@@ -49,8 +49,8 @@ fn worker_scope() -> DedicatedWorkerGlobalScope {
         .expect("global worker scope does not exist")
 }
 
-#[wasm_bindgen(start)]
-pub fn main() {
+#[wasm_bindgen]
+pub fn run() {
     set_panic_hook();
 
     let worker = Rc::new(RefCell::new(Worker::new()));

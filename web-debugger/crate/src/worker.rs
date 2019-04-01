@@ -11,16 +11,16 @@ use wasm_bindgen::{JsCast, JsValue};
 
 fn prop_string(obj: &JsValue, prop: &str) -> String {
     Reflect::get(obj, &JsValue::from_str(prop))
-        .expect_throw(&format!("Property {} was missing on object", prop))
+        .unwrap_throw()
         .as_string()
-        .expect_throw(&format!("Property {} was incorrect type on object", prop))
+        .unwrap_throw()
 }
 
 fn prop_object<T: JsCast>(obj: &JsValue, prop: &str) -> T {
     Reflect::get(obj, &JsValue::from_str(prop))
-        .expect_throw(&format!("Property {} was missing on object", prop))
+        .unwrap_throw()
         .dyn_into::<T>()
-        .expect_throw(&format!("Property {} was incorrect type on object", prop))
+        .unwrap_throw()
 }
 
 struct ObjectBuilder {
