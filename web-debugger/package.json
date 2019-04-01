@@ -3,8 +3,8 @@
   "version": "0.0.1",
   "private": "true",
   "scripts": {
-    "start": "parcel index.html",
-    "build": "parcel build index.html"
+    "start": "webpack-dev-server -d",
+    "build": "webpack"
   },
   "devDependencies": {
     "@babel/core": "^7.3.3",
@@ -15,21 +15,35 @@
     "@babel/preset-react": "^7.0.0",
     "@babel/preset-typescript": "^7.3.3",
     "@fortawesome/fontawesome-free": "^5.7.2",
+    "@samcday/worker-loader": "^2.0.0",
     "@types/react": "^16.8.8",
     "@types/react-dom": "^16.8.2",
-    "parcel-bundler": "^1.12.3",
-    "parcel-plugin-wasm.rs": "^1.2.8",
-    "sass": "^1.17.3"
-  },
-  "dependencies": {
+    "@wasm-tool/wasm-pack-plugin": "^0.2.7",
+    "autoprefixer": "^9.4.8",
+    "babel-loader": "^8.0.5",
     "bootstrap": "^4.3.1",
+    "copy-webpack-plugin": "^5.0.0",
+    "css-loader": "^2.1.0",
+    "file-loader": "^3.0.1",
     "golden-layout": "^1.5.9",
+    "html-webpack-plugin": "^3.2.0",
     "idb-keyval": "^3.1.0",
+    "install": "^0.12.2",
     "jquery": "^3.3.1",
+    "node-sass": "^4.11.0",
     "popper.js": "^1.14.7",
+    "postcss-loader": "^3.0.0",
     "react": "^16.8.3",
     "react-dom": "^16.8.3",
     "react-window": "^1.5.2",
-    "regl": "^1.3.11"
-  }
+    "regl": "^1.3.11",
+    "sass-loader": "^7.1.0",
+    "style-loader": "^0.23.1",
+    "typescript": "^3.3.3333",
+    "url-loader": "^1.1.2",
+    "webpack": "^4.29.3",
+    "webpack-cli": "^3.1.0",
+    "webpack-dev-server": "^3.1.5"
+  },
+  "dependencies": {}
 }

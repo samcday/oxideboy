@@ -1,2 +1,1 @@
-import wasm from '../crate/Cargo.toml';
-wasm.run();
+import('../crate/pkg').catch(err => console.error('Failed to load worker.', err));

@@ -4,8 +4,9 @@ import 'golden-layout/src/css/goldenlayout-base.css';
 import 'golden-layout/src/css/goldenlayout-dark-theme.css';
 
 import '@babel/polyfill';
-import jquery from 'jquery';
+import 'jquery';
 import 'bootstrap';
+import GoldenLayout from 'golden-layout';
 
 import { toPaddedHexString } from './util';
 import React from 'react';
@@ -17,12 +18,12 @@ import Registers from './components/Registers';
 import Memory from './components/Memory';
 import Disassembly from './components/Disassembly';
 
-// GoldenLayout is a bit of a relic - it expects jQuery+React+ReactDOM to be available on global namespace.
-window.$ = jquery;
+// import Worker from '@samcday/worker-loader?name=hash.worker.js!./worker';
+import Worker from './worker';
+
+// GoldenLayout is a bit of a relic - expects React+ReactDOM to be available on global namespace.
 window.React = React;
 window.ReactDOM = ReactDOM;
-
-import GoldenLayout from 'golden-layout';
 
 // TODO: hide unhandled segments of memory (echo RAM, unused high registers).
 // TODO: visual indicator when we pause execution.
@@ -271,7 +272,7 @@ class App {
   rom?: Uint8Array = undefined;
 
   constructor() {
-    this.worker = new Worker('./worker.tsx');
+    this.worker = new Worker;
     this.worker.onmessage = this.onWorkerMessage;
 
     this.refreshRaf = requestAnimationFrame(this.requestRefresh);
