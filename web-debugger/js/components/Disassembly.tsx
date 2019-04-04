@@ -8,6 +8,8 @@ export interface Props {
 }
 
 export interface State {
+  active: boolean;
+  paused: boolean;
   activeSegments: string[];
 }
 
@@ -34,11 +36,29 @@ export default class Disassembly extends React.Component<Props, State> {
   componentDidMount() {
     this.props.glEventHub.on('oxideboy:state', this.onState);
     this.props.glEventHub.on('oxideboy:segments', this.onSegments);
+    this.props.glEventHub.on('oxideboy:rom-loaded', this.onRomLoaded);
+    this.props.glEventHub.on('oxideboy:running', this.onRunning);
+    this.props.glEventHub.on('oxideboy:paused', this.onPaused);
     this.props.glContainer.parent.element[0].querySelector('.lm_content').style['overflow-y'] = 'scroll';
   }
 
   componentWillUnmount() {
     this.props.glEventHub.off('oxideboy:state', this.onState);
+    this.props.glEventHub.off('oxideboy:rom-loaded', this.onRomLoaded);
+    this.props.glEventHub.off('oxideboy:running', this.onRunning);
+    this.props.glEventHub.off('oxideboy:paused', this.onPaused);
+  }
+
+  onRomLoaded = () => {
+    this.setState({active: true});
+  }
+
+  onRunning = () => {
+    this.setState({paused: false});
+  }
+
+  onPaused = () => {
+    this.setState({paused: true});
   }
 
   onState = (state) => {
@@ -63,17 +83,50 @@ export default class Disassembly extends React.Component<Props, State> {
     // this.setState({activeSegments: this.activeSegments});
   }
 
+  request(action) {
+    this.props.glEventHub.emit('oxideboy:request', action);
+  }
+
   render() {
     const segments = new Array(...this.segments.values());
     segments.sort((a, b) => a.addr - b.addr);
 
     return (
-      <div className='text-monospace'>
-        { segments.map(segment => (
-          <div key={segment.id} style={{display: this.state.activeSegments.includes(segment.id) ? 'block' : 'none'}}>
-            <DisassemblySegment segment={segment} />
-          </div>
-        ))}
+      <div>
+        <div className='btn-group' role='group'>
+          { this.state.paused &&
+            <button type='button' className='btn btn-outline-secondary' id='start' onClick={this.request.bind(this, 'start')} disabled={!this.state.active}>
+              <i className='fas fa-play'></i>
+            </button>
+          }
+          { !this.state.paused &&
+            <button type='button' className='btn btn-outline-secondary' id='pause' onClick={this.request.bind(this, 'pause')} disabled={!this.state.active}>
+              <i className='fas fa-pause'></i>
+            </button>
+          }
+          <button type='button' className='btn btn-outline-secondary' id='step_frame_backward' onClick={this.request.bind(this, 'frame-back')} disabled={!this.state.active || !this.state.paused}>
+            <i className='fas fa-fast-backward'></i>
+          </button>
+          <button type='button' className='btn btn-outline-secondary' id='step_backward' onClick={this.request.bind(this, 'back')} disabled={!this.state.active || !this.state.paused}>
+            <i className='fas fa-backward'></i>
+          </button>
+          <button type='button' className='btn btn-outline-secondary' id='step_forward' onClick={this.request.bind(this, 'forward')} disabled={!this.state.active || !this.state.paused}>
+            <i className='fas fa-forward'></i>
+          </button>
+          <button type='button' className='btn btn-outline-secondary' id='step_frame_forward' onClick={this.request.bind(this, 'forward-frame')} disabled={!this.state.active || !this.state.paused}>
+            <i className='fas fa-fast-forward'></i>
+          </button>
+          <button type='button' className='btn btn-outline-secondary' id='restart' onClick={this.request.bind(this, 'restart')} disabled={!this.state.active}>
+            <i className='fas fa-redo'></i>
+          </button>
+        </div>
+        <div className='text-monospace'>
+          { segments.map(segment => (
+            <div key={segment.id} style={{display: this.state.activeSegments.includes(segment.id) ? 'block' : 'none'}}>
+              <DisassemblySegment segment={segment} />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

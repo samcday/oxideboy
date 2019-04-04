@@ -40,43 +40,9 @@ class AppOld extends React.Component {
   render() {
     return (
       <div className='d-flex min-vh-100'>
-        <div className='left-sidebar min-vh-100 border-right'>
-        </div>
         <div className='flex-fill position-relative'>
-              <div className='h-100'>
-                <div className='btn-group' role='group'>
-                  { this.state.paused &&
-                    <button type='button' className='btn btn-outline-secondary' id='start' onClick={this.start.bind(this)} disabled={!this.state.active}>
-                      <i className='fas fa-play'></i>
-                    </button>
-                  }
-                  { !this.state.paused &&
-                    <button type='button' className='btn btn-outline-secondary' id='pause' onClick={this.pause.bind(this)} disabled={!this.state.active}>
-                      <i className='fas fa-pause'></i>
-                    </button>
-                  }
-                  <button type='button' className='btn btn-outline-secondary' id='step_frame_backward' onClick={this.stepFrameBack.bind(this)} disabled={!this.state.active || !this.state.paused}>
-                    <i className='fas fa-fast-backward'></i>
-                  </button>
-                  <button type='button' className='btn btn-outline-secondary' id='step_backward' onClick={this.stepBack.bind(this)} disabled={!this.state.active || !this.state.paused}>
-                    <i className='fas fa-backward'></i>
-                  </button>
-                  <button type='button' className='btn btn-outline-secondary' id='step_forward' onClick={this.stepForward.bind(this)} disabled={!this.state.active || !this.state.paused}>
-                    <i className='fas fa-forward'></i>
-                  </button>
-                  <button type='button' className='btn btn-outline-secondary' id='step_frame_forward' onClick={this.stepFrameForward.bind(this)} disabled={!this.state.active || !this.state.paused}>
-                    <i className='fas fa-fast-forward'></i>
-                  </button>
-                  <button type='button' className='btn btn-outline-secondary' id='restart' onClick={this.restart.bind(this)} disabled={!this.state.active}>
-                    <i className='fas fa-redo'></i>
-                  </button>
-                </div>
-                <InstructionViewer instructions={this.state.instructions} />
-              </div>
             <div>
               <div className='accordion min-vh-100' id='sidebar'>
-
-
                 <div className='card'>
                   <div className='card-header' id='cpuHeading'>
                     <h2 className='mb-0'>
@@ -356,6 +322,7 @@ class App {
     document.body.addEventListener('drop', this.onDrop);
 
     this.container.eventHub.on('oxideboy:request-segments', this.onRequestSegments);
+    this.container.eventHub.on('oxideboy:request', this.onRequest);
   }
 
   requestRefresh = () => {
@@ -381,6 +348,12 @@ class App {
     })
   }
 
+  onRequest = (action) => {
+    this.worker.postMessage({
+      type: action,
+    })
+  }
+
   onWorkerMessage = async (ev) => {
     const message = ev.data;
     switch (message.type) {
@@ -390,6 +363,14 @@ class App {
       }
       case 'loaded': {
         this.onRomLoaded(message);
+        break;
+      }
+      case 'running': {
+        this.container.eventHub.emit('oxideboy:running');
+        break;
+      }
+      case 'paused': {
+        this.container.eventHub.emit('oxideboy:paused');
         break;
       }
       case 'state': {
@@ -467,26 +448,9 @@ class App {
     this.container.eventHub.emit('oxideboy:frame', framebuffer);
   }
 
-  onBreakpointHit = () => {
-    console.log('todo');
-  }
-
   loadRom(rom: Uint8Array) {
     this.rom = rom;
     this.worker.postMessage({type: 'load', rom: rom});
-  }
-
-  start() {
-    this.nextFrame = requestAnimationFrame(this.runFrame.bind(this));
-    this.container.eventHub.emit('oxideboy:start');
-  }
-
-  runFrame(timestamp) {
-    let delta = 16; // Default delta amount - enough to render a frame.
-    if (this.lastFrameTimestamp) {
-      delta = Math.min(1000, timestamp - this.lastFrameTimestamp) // Don't try and emulate more than a second of time.
-    }
-    this.lastFrameTimestamp = timestamp;
   }
 }
 
