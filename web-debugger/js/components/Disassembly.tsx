@@ -53,14 +53,14 @@ export default class Disassembly extends React.Component<Props, State> {
     }
 
     // We already have all live segments, so we can render now.
-    this.setState({activeSegments: this.activeSegments});
+    // this.setState({activeSegments: this.activeSegments});
   }
 
   onSegments = (segments: Segment[]) => {
     for (const segment of segments) {
       this.segments.set(segment.id, segment);
     }
-    this.setState({activeSegments: this.activeSegments});
+    // this.setState({activeSegments: this.activeSegments});
   }
 
   render() {

@@ -18,7 +18,6 @@ import Registers from './components/Registers';
 import Memory from './components/Memory';
 import Disassembly from './components/Disassembly';
 
-// import Worker from '@samcday/worker-loader?name=hash.worker.js!./worker';
 import Worker from './worker';
 
 // GoldenLayout is a bit of a relic - expects React+ReactDOM to be available on global namespace.

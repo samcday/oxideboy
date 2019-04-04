@@ -10,7 +10,8 @@
     "jsx": "preserve",
     "lib": [
         "esnext",
-        "webworker"
+        "webworker",
+        "dom"
     ]
   }
 }
