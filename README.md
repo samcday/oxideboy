@@ -24,12 +24,12 @@ Well let's be real, I'm writing this because I want to. But here's some post-rat
 - [ ] Web-based debugger
   - [ ] Memory viewer/editor
   - [ ] Jump to location
-  - [x] CPU+HW register viewer/editor
+  - [ ] CPU+HW register viewer/editor
   - [ ] Breakpoints
-  - [x] Break
-  - [x] Step forward
-  - [x] Step frame
-  - [x] Step backward
+  - [ ] Break
+  - [ ] Step forward
+  - [ ] Step frame
+  - [ ] Step backward
   - [ ] VRAM viewer
   - [ ] Load symbol map
 - [ ] Cart memory bank controllers
