@@ -73,14 +73,14 @@ export default class Disassembly extends React.Component<Props, State> {
     }
 
     // We already have all live segments, so we can render now.
-    // this.setState({activeSegments: this.activeSegments});
+    this.setState({activeSegments: this.activeSegments});
   }
 
   onSegments = (segments: Segment[]) => {
     for (const segment of segments) {
       this.segments.set(segment.id, segment);
     }
-    // this.setState({activeSegments: this.activeSegments});
+    this.setState({activeSegments: this.activeSegments});
   }
 
   request(action) {
@@ -120,13 +120,14 @@ export default class Disassembly extends React.Component<Props, State> {
             <i className='fas fa-redo'></i>
           </button>
         </div>
-        <div className='text-monospace'>
+
+        { this.state.paused && <div className='text-monospace'>
           { segments.map(segment => (
             <div key={segment.id} style={{display: this.state.activeSegments.includes(segment.id) ? 'block' : 'none'}}>
               <DisassemblySegment segment={segment} />
             </div>
           ))}
-        </div>
+        </div> }
       </div>
     );
   }
